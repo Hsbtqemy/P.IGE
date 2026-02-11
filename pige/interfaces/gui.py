@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -18,315 +19,46 @@ from pige.core.service import PigeService, normalize_context_status
 from pige.core.storage import Storage
 from pige.utils import dates, io as io_utils, strings
 
+from pige.interfaces import gui_constants
+from pige.interfaces import gui_helpers
 
-# Types stockés (métadonnées)
-VALID_ENTRY_TYPES = ("note", "meeting", "decision", "log")
+logger = logging.getLogger(__name__)
 
-# Libellés affichés dans l'UI (majuscule + "Activity" pour log)
-TYPE_INTERNAL_TO_DISPLAY = {
-    "note": "Note",
-    "meeting": "Meeting",
-    "decision": "Decision",
-    "log": "Activity",
-}
+# Re-export constants and helpers so existing code can use the same names
+VALID_ENTRY_TYPES = gui_constants.VALID_ENTRY_TYPES
+TYPE_INTERNAL_TO_DISPLAY = gui_constants.TYPE_INTERNAL_TO_DISPLAY
+TYPE_DISPLAY_TO_INTERNAL = gui_constants.TYPE_DISPLAY_TO_INTERNAL
+DISPLAY_ENTRY_TYPES = gui_constants.DISPLAY_ENTRY_TYPES
+AVAILABLE_ENTRY_COLUMNS = gui_constants.AVAILABLE_ENTRY_COLUMNS
+AVAILABLE_PROJECT_COLUMNS = gui_constants.AVAILABLE_PROJECT_COLUMNS
+DEFAULT_PROJECT_DISPLAYCOLUMNS = gui_constants.DEFAULT_PROJECT_DISPLAYCOLUMNS
+DEFAULT_ENTRY_DISPLAYCOLUMNS = gui_constants.DEFAULT_ENTRY_DISPLAYCOLUMNS
+ENTRY_COLUMN_LABELS = gui_constants.ENTRY_COLUMN_LABELS
+UPCOMING_RANGE_LABELS = gui_constants.UPCOMING_RANGE_LABELS
+UPCOMING_RANGE_DAYS = gui_constants.UPCOMING_RANGE_DAYS
+ENTRY_BODY_TEMPLATES = gui_constants.ENTRY_BODY_TEMPLATES
+AUTOSAVE_DELAY_MS = gui_constants.AUTOSAVE_DELAY_MS
+TOOLBAR_LAYOUT_DEBOUNCE_MS = gui_constants.TOOLBAR_LAYOUT_DEBOUNCE_MS
+TOOLBAR_COMPACT_WIDTH = gui_constants.TOOLBAR_COMPACT_WIDTH
+TOOLBAR_EXPAND_WIDTH = gui_constants.TOOLBAR_EXPAND_WIDTH
 
-# Conversion UI -> stockage
-TYPE_DISPLAY_TO_INTERNAL = {v: k for k, v in TYPE_INTERNAL_TO_DISPLAY.items()}
-
-# Valeurs de la combobox (affichage)
-DISPLAY_ENTRY_TYPES = tuple(TYPE_INTERNAL_TO_DISPLAY[t] for t in VALID_ENTRY_TYPES)
-
-AVAILABLE_ENTRY_COLUMNS = [
-    "date",
-    "time",
-    "type",
-    "context",
-    "done",
-    "title",
-    "people",
-    "tags",
-]
-AVAILABLE_PROJECT_COLUMNS = ["name", "people", "tasks_open", "status"]
-DEFAULT_PROJECT_DISPLAYCOLUMNS = ["name", "people", "tasks_open", "status"]
-
-DEFAULT_ENTRY_DISPLAYCOLUMNS = [
-    "date",
-    "time",
-    "type",
-    "context",
-    "done",
-    "title",
-    "people",
-]
-ENTRY_COLUMN_LABELS = {
-    "date": "Date",
-    "time": "Time",
-    "type": "Type",
-    "context": "Context",
-    "done": "Done",
-    "title": "Title",
-    "people": "People",
-    "tags": "Tags",
-}
-
-UPCOMING_RANGE_LABELS = ("Next 7 days", "Next 14 days", "Next 30 days", "All")
-UPCOMING_RANGE_DAYS = {
-    "Next 7 days": 7,
-    "Next 14 days": 14,
-    "Next 30 days": 30,
-    "All": None,
-}
-
-ENTRY_BODY_TEMPLATES: dict[str, str] = {
-    "note": (
-        "# {title}\n\n"
-        "**Date:** {date}\n"
-        "**Project:** {project}\n"
-        "**Person/Group:** {person} {group}\n"
-        "**Tags:** {tags}\n\n"
-        "## Notes\n"
-        "- \n\n"
-        "## Next steps\n"
-        "- \n"
-    ),
-    "meeting": (
-        "# {title}\n\n"
-        "**Date:** {date}\n"
-        "**Project:** {project}\n"
-        "**People:** {person} {group}\n"
-        "**Time:** {start} - {end}\n"
-        "**Tags:** {tags}\n\n"
-        "## Agenda\n"
-        "- \n\n"
-        "## Notes\n"
-        "- \n\n"
-        "## Decisions\n"
-        "- \n\n"
-        "## Actions\n"
-        "- [ ] \n"
-    ),
-    "decision": (
-        "# {title}\n\n"
-        "**Date:** {date}\n"
-        "**Project:** {project}\n"
-        "**Person/Group:** {person} {group}\n"
-        "**Tags:** {tags}\n\n"
-        "## Context\n"
-        "- \n\n"
-        "## Decision\n"
-        "- \n\n"
-        "## Rationale\n"
-        "- \n\n"
-        "## Consequences\n"
-        "- \n\n"
-        "## Follow-up\n"
-        "- \n\n"
-        "## Status\n"
-        "- Applied/Done: \n"
-    ),
-    "log": (
-        "# {title}\n\n"
-        "**Date:** {date}\n"
-        "**Project:** {project}\n"
-        "**Person/Group:** {person} {group}\n"
-        "**Tags:** {tags}\n\n"
-        "## What was done\n"
-        "- \n\n"
-        "## Outcomes\n"
-        "- \n\n"
-        "## Blockers\n"
-        "- \n\n"
-        "## Next steps\n"
-        "- \n"
-    ),
-}
-
-AUTOSAVE_DELAY_MS = 1200
-TOOLBAR_LAYOUT_DEBOUNCE_MS = 100
-TOOLBAR_COMPACT_WIDTH = 900
-TOOLBAR_EXPAND_WIDTH = 980
-
-
-def _display_entry_type(value: str) -> str:
-    return TYPE_INTERNAL_TO_DISPLAY.get(value, value)
-
-
-def _internal_entry_type(value: str) -> str:
-    return TYPE_DISPLAY_TO_INTERNAL.get(value, value)
-
-UI_DATE_FORMAT = "%d/%m/%Y"
-_UI_DATE_PATTERN = re.compile(r"^\d{2}/\d{2}/\d{4}$")
-
-
-def format_date_ui(value: str | date | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, date):
-        return value.strftime(UI_DATE_FORMAT)
-    if isinstance(value, str):
-        cleaned = value.strip()
-        if not cleaned:
-            return ""
-        if _UI_DATE_PATTERN.match(cleaned):
-            return cleaned
-        try:
-            parsed = datetime.strptime(cleaned, UI_DATE_FORMAT).date()
-            return parsed.strftime(UI_DATE_FORMAT)
-        except Exception:
-            pass
-        try:
-            parsed = dates.parse_date(cleaned)
-            return parsed.strftime(UI_DATE_FORMAT)
-        except Exception:
-            return cleaned
-    return str(value)
-
-
-def parse_date_ui(text: str) -> date:
-    cleaned = (text or "").strip()
-    if not cleaned:
-        raise ValueError("Date is required")
-    try:
-        return datetime.strptime(cleaned, UI_DATE_FORMAT).date()
-    except ValueError:
-        pass
-    try:
-        return dates.parse_date(cleaned)
-    except Exception as exc:
-        raise ValueError("Date must be DD/MM/YYYY (or YYYY-MM-DD)") from exc
-
-
-def split_people(text: str | None) -> list[str]:
-    return strings.split_people(text)
-
-
-def join_people_storage(people: list[str]) -> str:
-    return strings.join_people_storage(people)
-
-
-def format_people_inline(text: str | None, max_items: int = 3) -> str:
-    return strings.format_people_inline(text, max_items=max_items)
-
-
-def _data_dir_from_env() -> Path:
-    env = os.environ.get("PIGE_DATA_DIR")
-    if env:
-        return Path(env).expanduser()
-    return Path.cwd() / "data"
-
-
-def _global_config_path() -> Path:
-    if sys.platform.startswith("win"):
-        base = os.environ.get("APPDATA")
-        base_path = Path(base) if base else Path.home() / "AppData" / "Roaming"
-        return base_path / "PIGE" / "config.json"
-    return Path.home() / ".config" / "pige" / "config.json"
-
-
-def _load_global_config() -> dict:
-    path = _global_config_path()
-    if not path.exists():
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        return payload if isinstance(payload, dict) else {}
-    except Exception:
-        return {}
-
-
-def _save_global_config(cfg: dict) -> None:
-    path = _global_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = Path(str(path) + ".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-        json.dump(cfg, handle, indent=2)
-        handle.write("\n")
-    os.replace(tmp_path, path)
-
-
-def _resolve_data_dir() -> Path:
-    env = os.environ.get("PIGE_DATA_DIR")
-    if env:
-        return Path(env).expanduser()
-    cfg = _load_global_config()
-    cfg_path = cfg.get("data_dir")
-    if cfg_path:
-        return Path(str(cfg_path)).expanduser()
-    return Path.cwd() / "data"
-
-
-def _is_dir_empty(path: Path) -> bool:
-    try:
-        return next(path.iterdir(), None) is None
-    except Exception:
-        return False
-
-
-def _is_subpath(child: Path, parent: Path) -> bool:
-    try:
-        child.relative_to(parent)
-        return True
-    except Exception:
-        return False
-
-
-def _count_entry_files(entries_dir: Path) -> int:
-    if not entries_dir.exists():
-        return 0
-    try:
-        return sum(
-            1
-            for item in entries_dir.iterdir()
-            if item.is_file() and item.suffix.lower() == ".md"
-        )
-    except Exception:
-        return 0
-
-
-def _detect_pige_data_dir(path: Path) -> tuple[bool, dict[str, int]]:
-    if not path.exists() or not path.is_dir():
-        return False, {}
-    core_files = (
-        (path / "projects.json").exists()
-        and (path / "entries.jsonl").exists()
-        and (path / "entries").is_dir()
-    )
-    if not core_files:
-        return False, {}
-    try:
-        storage = Storage(path)
-        recap = {
-            "projects": len(storage.read_projects()),
-            "entries": len(storage.read_entries_meta()),
-            "tasks": len(storage.read_tasks()),
-            "timelogs": len(storage.read_timelogs()),
-            "entry_files": _count_entry_files(path / "entries"),
-        }
-    except Exception:
-        return False, {}
-    return True, recap
-
-def _safe_write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = Path(str(path) + ".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-        handle.write(content)
-    os.replace(tmp_path, path)
-
-
-def _open_path(path: Path) -> bool:
-    try:
-        if sys.platform.startswith("win"):
-            os.startfile(str(path))  # type: ignore[attr-defined]
-            return True
-        if sys.platform == "darwin":
-            result = subprocess.run(["open", str(path)], check=False)
-            return result.returncode == 0
-        result = subprocess.run(["xdg-open", str(path)], check=False)
-        return result.returncode == 0
-    except Exception:
-        return False
+_menu_accel = gui_helpers._menu_accel
+_display_entry_type = gui_helpers._display_entry_type
+_internal_entry_type = gui_helpers._internal_entry_type
+format_date_ui = gui_helpers.format_date_ui
+parse_date_ui = gui_helpers.parse_date_ui
+split_people = gui_helpers.split_people
+join_people_storage = gui_helpers.join_people_storage
+format_people_inline = gui_helpers.format_people_inline
+_resolve_data_dir = gui_helpers._resolve_data_dir
+_load_global_config = gui_helpers._load_global_config
+_save_global_config = gui_helpers._save_global_config
+_is_dir_empty = gui_helpers._is_dir_empty
+_is_subpath = gui_helpers._is_subpath
+_count_entry_files = gui_helpers._count_entry_files
+_detect_pige_data_dir = gui_helpers._detect_pige_data_dir
+_safe_write_text = gui_helpers._safe_write_text
+_open_path = gui_helpers._open_path
 
 
 @dataclass
@@ -622,13 +354,21 @@ class PigeApp(tk.Tk):
         file_menu.add_command(label="New Project", command=self._new_project)
         file_menu.add_command(label="New Entry", command=self._new_entry)
         file_menu.add_separator()
-        file_menu.add_command(label="Save", command=self._save_entry)
+        file_menu.add_command(
+            label="Save",
+            command=self._save_entry,
+            accelerator=_menu_accel("S"),
+        )
         file_menu.add_command(label="Export Raw", command=self._export_raw)
         file_menu.add_separator()
         file_menu.add_command(label="Backup...", command=self._backup_data_dialog)
         file_menu.add_command(label="Restore...", command=self._restore_data_dialog)
         file_menu.add_separator()
-        file_menu.add_command(label="Quit", command=self._on_close)
+        file_menu.add_command(
+            label="Quit",
+            command=self._on_close,
+            accelerator=_menu_accel("Q"),
+        )
         menubar.add_cascade(label="File", menu=file_menu)
 
         tools_menu = tk.Menu(menubar, tearoff=0)
@@ -636,6 +376,12 @@ class PigeApp(tk.Tk):
         tools_menu.add_command(label="Open Data Folder", command=self._open_data_folder)
         tools_menu.add_command(label="Open Externally", command=self._open_current)
         tools_menu.add_command(label="Add manual time...", command=self._add_manual_time_dialog)
+        tools_menu.add_separator()
+        tools_menu.add_command(
+            label="Compact entries log...",
+            command=self._compact_entries_dialog,
+        )
+        tools_menu.add_separator()
         tools_menu.add_command(label="Restart", command=self._restart_app)
         menubar.add_cascade(label="Tools", menu=tools_menu)
 
@@ -649,6 +395,7 @@ class PigeApp(tk.Tk):
             label="Focus Mode",
             variable=self.focus_var,
             command=self._on_focus_toggle,
+            accelerator="F9",
         )
         view_menu.add_command(label="Project Columns...", command=self._edit_project_columns)
         view_menu.add_command(
@@ -693,6 +440,10 @@ class PigeApp(tk.Tk):
 
         self.export_menu = tk.Menu(self, tearoff=0)
         self.export_menu.add_command(label="Project (Raw)", command=self._export_raw)
+        self.export_menu.add_command(
+            label="Project (Raw, redacted)",
+            command=lambda: self._export_raw(redact_bodies=True),
+        )
         self.export_menu.add_command(
             label="Project (Narrative)...", command=self._export_narrative_dialog
         )
@@ -941,8 +692,16 @@ class PigeApp(tk.Tk):
         self.entry_tree.bind("<<TreeviewSelect>>", self._on_entry_select)
         self.entry_tree.bind("<Double-1>", self._on_entry_double_click)
         self.entry_context_menu = tk.Menu(self, tearoff=0)
+        self.entry_context_menu.add_command(
+            label="Open",
+            command=self._entry_context_open,
+        )
         self.entry_context_menu.add_command(label="Edit", command=self._edit_entry_details)
         self.entry_context_menu.add_command(label="Delete", command=self._delete_entry)
+        self.entry_context_menu.add_command(
+            label="Export meeting minutes...",
+            command=self._export_meeting_minutes_from_context,
+        )
         self.entry_context_menu.add_command(
             label="Mark as Actual",
             command=lambda: self._set_entry_context_status("actual"),
@@ -1826,6 +1585,8 @@ class PigeApp(tk.Tk):
     def _bind_shortcuts(self) -> None:
         self.bind_all("<Control-s>", self._on_ctrl_s_save)
         self.bind_all("<Command-s>", self._on_cmd_s_save)
+        self.bind_all("<Control-q>", self._on_quit_shortcut)
+        self.bind_all("<Command-q>", self._on_quit_shortcut)
         for sequence in ("<Delete>", "<BackSpace>", "<KP_Delete>"):
             self.bind_all(sequence, self._on_delete_key, add="+")
         self._bind_editor_zoom_shortcuts()
@@ -1846,6 +1607,11 @@ class PigeApp(tk.Tk):
         if not self.current.entry_id:
             return "break"
         self._save_entry()
+        return "break"
+
+    def _on_quit_shortcut(self, event: tk.Event) -> str:
+        if self._is_main_window_event(event):
+            self._on_close()
         return "break"
 
     def _is_main_window_event(self, event: tk.Event) -> bool:
@@ -2194,6 +1960,7 @@ class PigeApp(tk.Tk):
                 return io_utils.read_json(self.legacy_prefs_path, default={})
             return {}
         except Exception:
+            logger.exception("Failed to load GUI prefs from %s", self.prefs_path)
             return {}
 
     def _save_gui_prefs(self) -> None:
@@ -3211,8 +2978,27 @@ class PigeApp(tk.Tk):
         finally:
             self.entry_context_menu.grab_release()
 
+    def _entry_context_open(self) -> None:
+        if self.current.entry_id:
+            self._load_entry(self.current.entry_id)
+
+    def _export_meeting_minutes_from_context(self) -> None:
+        entry = self._get_selected_entry_for_export()
+        if not entry:
+            messagebox.showerror("No entry", "Select an entry first.")
+            return
+        if entry.type != "meeting":
+            messagebox.showerror(
+                "Not a meeting",
+                "Export meeting minutes only applies to meeting entries.",
+            )
+            return
+        self._export_meeting_minutes_dialog()
+
     def _update_entry_context_menu(self, has_entry: bool) -> None:
         state = "normal" if has_entry else "disabled"
+        self.entry_context_menu.entryconfigure("Open", state=state)
+        self.entry_context_menu.entryconfigure("Export meeting minutes...", state=state)
         self.entry_context_menu.entryconfigure("Move to project...", state=state)
         self.entry_context_menu.entryconfigure("Create follow-up tasks...", state=state)
         self.entry_context_menu.entryconfigure("Mark as Actual", state=state)
@@ -3226,6 +3012,10 @@ class PigeApp(tk.Tk):
             self.entry_context_menu.entryconfigure("Mark as Treated", state="disabled")
             self.entry_context_menu.entryconfigure("Mark as Created", state="disabled")
             return
+        self.entry_context_menu.entryconfigure(
+            "Export meeting minutes...",
+            state="normal" if entry.type == "meeting" else "disabled",
+        )
         context_status = normalize_context_status(getattr(entry, "context_status", None))
         if context_status == "treated":
             self.entry_context_menu.entryconfigure("Mark as Actual", state="normal")
@@ -5373,12 +5163,18 @@ class PigeApp(tk.Tk):
         ttk.Checkbutton(
             dialog, text="Internal annexes", variable=internal_var
         ).grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=6, pady=4)
+        redact_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            dialog,
+            text="Redact entry content",
+            variable=redact_var,
+        ).grid(row=4, column=0, columnspan=2, sticky=tk.W, padx=6, pady=4)
 
         ttk.Label(dialog, text="Save as").grid(
-            row=4, column=0, sticky=tk.W, padx=6, pady=4
+            row=5, column=0, sticky=tk.W, padx=6, pady=4
         )
         ttk.Entry(dialog, textvariable=out_var).grid(
-            row=4, column=1, sticky="ew", padx=6, pady=4
+            row=5, column=1, sticky="ew", padx=6, pady=4
         )
 
         def browse_out() -> None:
@@ -5392,11 +5188,11 @@ class PigeApp(tk.Tk):
                 out_var.set(path)
 
         ttk.Button(dialog, text="Browse", command=browse_out).grid(
-            row=4, column=2, padx=6, pady=4
+            row=5, column=2, padx=6, pady=4
         )
 
         button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=5, column=0, columnspan=3, sticky=tk.E, padx=6, pady=8)
+        button_frame.grid(row=6, column=0, columnspan=3, sticky=tk.E, padx=6, pady=8)
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(
             side=tk.RIGHT, padx=(6, 0)
         )
@@ -5421,6 +5217,7 @@ class PigeApp(tk.Tk):
                     include_tasks=include_tasks_var.get(),
                     window_days=window_days,
                     internal=internal_var.get(),
+                    redact_bodies=redact_var.get(),
                 )
             except ValueError as exc:
                 messagebox.showerror("Error", str(exc))
@@ -5540,13 +5337,17 @@ class PigeApp(tk.Tk):
 
         ttk.Button(button_frame, text="Export", command=submit).pack(side=tk.RIGHT)
 
-    def _export_raw(self) -> None:
+    def _export_raw(self, redact_bodies: bool = False) -> None:
         if not self.current.project_id:
             messagebox.showerror("No project", "Select a project first.")
             return
         try:
             export_path, warnings = self.service.export_project_raw(
-                self.current.project_id, None, None, None
+                self.current.project_id,
+                None,
+                None,
+                None,
+                redact_bodies=redact_bodies,
             )
         except ValueError as exc:
             messagebox.showerror("Error", str(exc))
@@ -5586,8 +5387,14 @@ class PigeApp(tk.Tk):
         ttk.Label(dialog, text="Leave both empty for full range.").grid(
             row=2, column=0, columnspan=2, sticky=tk.W, padx=6, pady=2
         )
+        redact_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            dialog,
+            text="Redact entry content (replace body with [Content redacted])",
+            variable=redact_var,
+        ).grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=6, pady=4)
         button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=3, column=0, columnspan=2, sticky=tk.E, padx=6, pady=10)
+        button_frame.grid(row=4, column=0, columnspan=2, sticky=tk.E, padx=6, pady=10)
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(
             side=tk.RIGHT, padx=(6, 0)
         )
@@ -5614,7 +5421,11 @@ class PigeApp(tk.Tk):
                 return
             try:
                 export_path = self.service.export_project_narrative(
-                    self.current.project_id, from_date, to_date, None
+                    self.current.project_id,
+                    from_date,
+                    to_date,
+                    None,
+                    redact_bodies=redact_var.get(),
                 )
             except ValueError as exc:
                 messagebox.showerror("Error", str(exc))
@@ -5682,6 +5493,31 @@ class PigeApp(tk.Tk):
             "Restore completed successfully.\n\nPlease restart PIGE.",
         )
         self._set_status("Restore complete - restart required")
+
+    def _compact_entries_dialog(self) -> None:
+        if not self._confirm_save_if_dirty():
+            return
+        if not messagebox.askyesno(
+            "Compact entries log",
+            "This will rewrite the entries log as a snapshot of current entries only.\n\n"
+            "Update and delete history will be removed. File size and load time may decrease.\n\n"
+            "Consider creating a backup first (File → Backup...).\n\n"
+            "Continue?",
+        ):
+            return
+        try:
+            recap = self.service.compact_entries()
+        except Exception as exc:
+            logger.exception("Compaction failed")
+            messagebox.showerror("Compact failed", str(exc))
+            return
+        self.refresh_projects()
+        messagebox.showinfo(
+            "Compaction complete",
+            f"Entries log compacted:\n{recap['before_lines']} lines → {recap['after_lines']} lines "
+            f"({recap['entries_count']} entries)",
+        )
+        self._set_status("Entries log compacted")
 
     def _select_data_dir(self) -> None:
         env_dir = os.environ.get("PIGE_DATA_DIR")

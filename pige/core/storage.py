@@ -3,10 +3,13 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, time, timezone
 from pathlib import Path
+import logging
 import shutil
 import tempfile
 from typing import Iterable
 import zipfile
+
+logger = logging.getLogger(__name__)
 
 from pige.core.models import EntryMeta, Project, Task, TimeLog, TimerState
 from pige.utils import dates
@@ -30,6 +33,38 @@ TIMELOG_KEYS = frozenset(
     ("id", "project_id", "start", "end", "duration_sec", "duration_min", "note", "tags")
 )
 TIMELOG_REQUIRED_KEYS = ("id", "project_id", "start", "end")
+
+TASK_KEYS = frozenset(
+    (
+        "id",
+        "project_id",
+        "title",
+        "status",
+        "created_at",
+        "done_at",
+        "due_date",
+        "tags",
+        "linked_entry_id",
+        "note",
+    )
+)
+TASK_REQUIRED_KEYS = ("id", "project_id", "title")
+
+TIMER_STATE_KEYS = frozenset(("running", "project_id", "start_ts", "note"))
+
+PROJECT_KEYS = frozenset(
+    (
+        "id",
+        "name",
+        "description",
+        "status",
+        "tags",
+        "created_at",
+        "person",
+        "group",
+        "links",
+    )
+)
 
 
 class Storage:
@@ -64,10 +99,18 @@ class Storage:
         for item in data:
             if not isinstance(item, dict):
                 continue
-            if "links" not in item or not isinstance(item.get("links"), list):
-                item = dict(item)
-                item["links"] = []
-            projects.append(Project(**item))
+            payload = {k: item[k] for k in PROJECT_KEYS if k in item}
+            if not all(payload.get(k) for k in ("id", "name")):
+                continue
+            payload.setdefault("description", None)
+            payload.setdefault("status", "active")
+            payload.setdefault("tags", [])
+            payload.setdefault("created_at", "")
+            payload.setdefault("person", None)
+            payload.setdefault("group", None)
+            links = payload.get("links")
+            payload["links"] = list(links) if isinstance(links, list) else []
+            projects.append(Project(**payload))
         return projects
 
     def write_projects(self, projects: Iterable[Project]) -> None:
@@ -114,9 +157,7 @@ class Storage:
 
     def write_entry_content(self, entry_id: str, content: str) -> Path:
         path = self.entries_dir / f"{entry_id}.md"
-        io_utils.ensure_parent(path)
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write(content)
+        io_utils.safe_write_text(path, content)
         return path
 
     def read_entry_content(self, content_path: Path) -> str:
@@ -129,11 +170,20 @@ class Storage:
         for item in data:
             if not isinstance(item, dict):
                 continue
-            status = str(item.get("status") or "").strip() or "open"
+            payload = {k: item[k] for k in TASK_KEYS if k in item}
+            if not all(payload.get(k) for k in TASK_REQUIRED_KEYS):
+                continue
+            status = str(payload.get("status") or "").strip() or "open"
             if status not in ("open", "in_progress", "done"):
                 status = "open"
-            payload = dict(item)
             payload["status"] = status
+            payload.setdefault("created_at", "")
+            payload.setdefault("done_at", None)
+            payload.setdefault("due_date", None)
+            tags = payload.get("tags")
+            payload["tags"] = list(tags) if isinstance(tags, list) else []
+            payload.setdefault("linked_entry_id", None)
+            payload.setdefault("note", None)
             tasks.append(Task(**payload))
         return tasks
 
@@ -207,8 +257,16 @@ class Storage:
         io_utils.safe_write_json(self.tasks_path, data)
 
     def read_timer_state(self) -> TimerState:
-        data = io_utils.read_json(self.timers_path, default=asdict(default_timer_state()))
-        return TimerState(**data)
+        default_data = asdict(default_timer_state())
+        data = io_utils.read_json(self.timers_path, default=default_data)
+        if not isinstance(data, dict):
+            return TimerState(**default_data)
+        payload = {k: data[k] for k in TIMER_STATE_KEYS if k in data}
+        payload.setdefault("running", False)
+        payload.setdefault("project_id", None)
+        payload.setdefault("start_ts", None)
+        payload.setdefault("note", None)
+        return TimerState(**payload)
 
     def write_timer_state(self, state: TimerState) -> None:
         io_utils.safe_write_json(self.timers_path, asdict(state))
@@ -236,6 +294,27 @@ class Storage:
     def write_timelogs(self, timelogs: Iterable[TimeLog]) -> None:
         data = (asdict(timelog) for timelog in timelogs)
         io_utils.safe_write_jsonl(self.timelogs_path, data)
+
+    def compact_entries_log(self) -> dict[str, int]:
+        """
+        Rewrite entries.jsonl as a snapshot of current entries only (one "entry"
+        event per entry). Reduces file size and replay time; removes update/delete
+        history. Returns counts: before_lines, after_lines, entries_count.
+        """
+        events = io_utils.read_jsonl(self.entries_path)
+        before_lines = len(events)
+        entries = self.read_entries_meta()
+        snapshot: list[dict[str, object]] = []
+        for entry in entries:
+            payload = asdict(entry)
+            payload["kind"] = "entry"
+            snapshot.append(payload)
+        io_utils.safe_write_jsonl(self.entries_path, snapshot)
+        return {
+            "before_lines": before_lines,
+            "after_lines": len(snapshot),
+            "entries_count": len(entries),
+        }
 
 
 def default_timer_state() -> TimerState:
@@ -304,6 +383,7 @@ def _count_entry_files(entries_dir: Path) -> int:
             if item.is_file() and item.suffix.lower() == ".md"
         )
     except Exception:
+        logger.debug("Could not count entry files in %s", entries_dir, exc_info=True)
         return 0
 
 
@@ -326,6 +406,7 @@ def _normalize_entry_ts(value: object, entry_date: object | None = None) -> str:
             dates.parse_utc_z(ts_value)
             return ts_value
         except Exception:
+            logger.debug("parse_utc_z failed for ts_value=%r", ts_value, exc_info=True)
             pass
         try:
             parsed_date = dates.parse_date(ts_value)
@@ -333,6 +414,7 @@ def _normalize_entry_ts(value: object, entry_date: object | None = None) -> str:
                 dates.UTC_Z_FORMAT
             )
         except Exception:
+            logger.debug("parse_date failed for ts_value=%r", ts_value, exc_info=True)
             pass
         parsed_dt = _parse_iso_datetime(ts_value)
         if parsed_dt is not None:
@@ -347,6 +429,7 @@ def _normalize_entry_ts(value: object, entry_date: object | None = None) -> str:
                 dates.UTC_Z_FORMAT
             )
         except Exception:
+            logger.debug("parse_date failed for entry_date=%r", entry_date, exc_info=True)
             pass
     return "1970-01-01T00:00:00Z"
 

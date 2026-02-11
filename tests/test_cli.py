@@ -75,3 +75,19 @@ class TestCLI(unittest.TestCase):
             )
             self.assertEqual(code, 1)
             self.assertIn("Invalid date range", err)
+
+    def test_compact_succeeds(self) -> None:
+        with TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            env = _env()
+            project_id = _init_and_project(cwd, env)
+            code, out, err = _run_cli(
+                ["entry", "add", project_id, "--type", "note", "--title", "T", "--body", "x"],
+                cwd,
+                env,
+            )
+            self.assertEqual(code, 0, err)
+            code, out, err = _run_cli(["compact"], cwd, env)
+            self.assertEqual(code, 0, err)
+            self.assertIn("Compacted", out)
+            self.assertIn("lines", out)

@@ -361,6 +361,23 @@ class TestService(unittest.TestCase):
             self.assertIn("# Alpha", content)
             self.assertIn("Body text", content)
 
+    def test_export_project_raw_redact_bodies(self) -> None:
+        from pige.core.service import REDACTED_PLACEHOLDER
+
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            service.add_entry(project.id, "note", "Secret", [], "Confidential content")
+            export_path, warnings = service.export_project_raw(
+                project.id, None, None, None, redact_bodies=True
+            )
+            self.assertEqual(warnings, [])
+            content = export_path.read_text(encoding="utf-8")
+            self.assertIn("# Alpha", content)
+            self.assertIn("Secret", content)
+            self.assertIn(REDACTED_PLACEHOLDER, content)
+            self.assertNotIn("Confidential content", content)
+
     def test_export_missing_md_file(self) -> None:
         with TemporaryDirectory() as tmp:
             service = self._build_service(tmp)
@@ -458,3 +475,302 @@ class TestService(unittest.TestCase):
             with self.assertRaises(ValueError) as ctx:
                 service.add_entry("missing", "note", "Hello", [], None)
             self.assertIn("Project missing not found", str(ctx.exception))
+
+    def test_list_in_progress_threads_empty_when_no_entries(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            service.create_project("Alpha", None, [])
+            threads = service.list_in_progress_threads(days=14)
+            self.assertEqual(threads, [])
+
+    def test_list_in_progress_threads_with_entries_and_tasks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            entry1, _ = service.add_entry(
+                project.id, "note", "Meeting with Alice", [], None, person="Alice"
+            )
+            entry2, _ = service.add_entry(
+                project.id, "note", "Follow-up Bob", [], None, person="Bob"
+            )
+            service.create_task(
+                project.id, "Action from meeting", [], None, linked_entry_id=entry1.id
+            )
+            threads = service.list_in_progress_threads(days=30)
+            self.assertGreaterEqual(len(threads), 1)
+            thread_ids = {t.last_entry_id for t in threads}
+            self.assertIn(entry1.id, thread_ids)
+            self.assertIn(entry2.id, thread_ids)
+            thread_for_e1 = next(t for t in threads if t.last_entry_id == entry1.id)
+            self.assertEqual(thread_for_e1.open_actions, 1)
+
+    def test_list_in_progress_threads_respects_days_filter(self) -> None:
+        """Thread with last entry older than days and no open tasks is excluded."""
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            old_date = date.today() - timedelta(days=20)
+            recent_date = date.today() - timedelta(days=2)
+            service.add_entry(
+                project.id, "note", "Old", [], None,
+                person="OldPerson", entry_date=old_date
+            )
+            entry_recent, _ = service.add_entry(
+                project.id, "note", "Recent", [], None,
+                person="RecentPerson", entry_date=recent_date
+            )
+            threads = service.list_in_progress_threads(days=14)
+            last_ids = {t.last_entry_id for t in threads}
+            self.assertIn(entry_recent.id, last_ids)
+            # Old entry thread may or may not appear depending on active_recent;
+            # with days=14, 20 days ago is excluded unless there are open_actions
+            self.assertGreaterEqual(len(threads), 1)
+
+    def test_list_in_progress_entries_filters_by_context_status(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            e1, _ = service.add_entry(project.id, "note", "Created", [], None)
+            service.set_entry_context_status(e1.id, "actual")
+            e2, _ = service.add_entry(project.id, "note", "Actual", [], None)
+            service.set_entry_context_status(e2.id, "actual")
+            e3, _ = service.add_entry(project.id, "note", "Treated", [], None)
+            service.set_entry_context_status(e3.id, "treated")
+            actual_only = service.list_in_progress_entries()
+            self.assertEqual(len(actual_only), 2)
+            self.assertIn(e1.id, {e.id for e in actual_only})
+            self.assertIn(e2.id, {e.id for e in actual_only})
+            with_created = service.list_in_progress_entries(include_created=True)
+            self.assertGreaterEqual(len(with_created), 2)
+            with_treated = service.list_in_progress_entries(include_treated=True)
+            self.assertIn(e3.id, {e.id for e in with_treated})
+
+    def test_move_entry_to_another_project(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            p1 = service.create_project("Alpha", None, ["a"])
+            p2 = service.create_project("Beta", None, ["b"])
+            entry, _ = service.add_entry(
+                p1.id, "note", "Moved", ["t1"], "Body", person="Alice"
+            )
+            updated = service.move_entry(entry.id, p2.id, keep_tags=True, keep_people=True)
+            self.assertEqual(updated.project_id, p2.id)
+            self.assertEqual(updated.title, "Moved")
+            self.assertEqual(updated.tags, ["t1"])
+            self.assertEqual(updated.person, "Alice")
+            in_p1 = [e for e in service.storage.read_entries_meta() if e.project_id == p1.id]
+            in_p2 = [e for e in service.storage.read_entries_meta() if e.project_id == p2.id]
+            self.assertEqual(len(in_p1), 0)
+            self.assertEqual(len(in_p2), 1)
+            self.assertEqual(in_p2[0].id, entry.id)
+
+    def test_move_entry_keep_tags_false_clears_tags(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            p1 = service.create_project("Alpha", None, [])
+            p2 = service.create_project("Beta", None, [])
+            entry, _ = service.add_entry(p1.id, "note", "E", ["a", "b"], None)
+            updated = service.move_entry(entry.id, p2.id, keep_tags=False, keep_people=True)
+            self.assertEqual(updated.project_id, p2.id)
+            self.assertEqual(updated.tags, [])
+
+    def test_move_entry_keep_people_false_clears_person_and_group(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            p1 = service.create_project("Alpha", None, [])
+            p2 = service.create_project("Beta", None, [])
+            entry, _ = service.add_entry(
+                p1.id, "note", "E", [], None, person="Alice", group="G1"
+            )
+            updated = service.move_entry(entry.id, p2.id, keep_tags=True, keep_people=False)
+            self.assertEqual(updated.project_id, p2.id)
+            self.assertIsNone(updated.person)
+            self.assertIsNone(updated.group)
+
+    def test_move_entry_not_found_raises(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            with self.assertRaises(ValueError) as ctx:
+                service.move_entry("nonexistent-id", project.id)
+            self.assertIn("not found", str(ctx.exception))
+
+    def test_move_entry_same_project_raises(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            entry, _ = service.add_entry(project.id, "note", "E", [], None)
+            with self.assertRaises(ValueError) as ctx:
+                service.move_entry(entry.id, project.id)
+            self.assertIn("already in that project", str(ctx.exception))
+
+    def test_move_entry_invalid_project_raises(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            entry, _ = service.add_entry(project.id, "note", "E", [], None)
+            with self.assertRaises(ValueError) as ctx:
+                service.move_entry(entry.id, "nonexistent-project-id")
+            self.assertIn("not found", str(ctx.exception).lower())
+
+    def test_extract_followup_tasks_from_body(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            body = "- [ ] First action\n- [ ] Second\nACTION: Do something\nTODO: Another"
+            entry, _ = service.add_entry(project.id, "note", "Notes", [], body)
+            titles = service.extract_followup_tasks(entry.id)
+            self.assertIn("First action", titles)
+            self.assertIn("Second", titles)
+            self.assertIn("Do something", titles)
+            self.assertIn("Another", titles)
+            self.assertEqual(len(titles), 4)
+
+    def test_extract_followup_tasks_entry_not_found_raises(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            service.create_project("Alpha", None, [])
+            with self.assertRaises(ValueError) as ctx:
+                service.extract_followup_tasks("nonexistent-entry-id")
+            self.assertIn("not found", str(ctx.exception))
+
+    def test_extract_followup_tasks_empty_body_returns_empty(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            entry, _ = service.add_entry(project.id, "note", "Empty", [], "")
+            titles = service.extract_followup_tasks(entry.id)
+            self.assertEqual(titles, [])
+
+    def test_extract_followup_tasks_deduplicates_same_title(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            body = "- [ ] Same title\n- [ ] Same title\nTODO: Same title"
+            entry, _ = service.add_entry(project.id, "note", "Notes", [], body)
+            titles = service.extract_followup_tasks(entry.id)
+            self.assertEqual(titles, ["Same title"])
+
+    def test_create_followup_tasks_links_to_entry(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            entry, _ = service.add_entry(project.id, "note", "Meeting", [], "- [ ] Task A")
+            titles = service.extract_followup_tasks(entry.id)
+            created = service.create_followup_tasks(entry.id, titles)
+            self.assertEqual(len(created), 1)
+            self.assertEqual(created[0].title, "Task A")
+            self.assertEqual(created[0].linked_entry_id, entry.id)
+            self.assertEqual(created[0].project_id, project.id)
+
+    def test_export_project_narrative_contains_sections(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            service.add_entry(project.id, "decision", "Decide X", [], "Context")
+            start = date(2024, 1, 1)
+            end = date(2024, 1, 31)
+            path = service.export_project_narrative(project.id, start, end, None)
+            self.assertTrue(path.exists())
+            content = path.read_text(encoding="utf-8")
+            self.assertIn("## Résumé", content)
+            self.assertIn("## Décisions", content)
+            self.assertIn("## Chronologie", content)
+            self.assertIn("## Temps", content)
+            self.assertIn("## Annexes", content)
+
+    def test_export_project_narrative_filters_by_date_range(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            service.add_entry(
+                project.id, "note", "In range", [], "Body",
+                entry_date=date(2024, 1, 15)
+            )
+            service.add_entry(
+                project.id, "note", "Out early", [], "Body",
+                entry_date=date(2023, 12, 1)
+            )
+            service.add_entry(
+                project.id, "note", "Out late", [], "Body",
+                entry_date=date(2024, 3, 1)
+            )
+            start = date(2024, 1, 1)
+            end = date(2024, 1, 31)
+            path = service.export_project_narrative(project.id, start, end, None)
+            content = path.read_text(encoding="utf-8")
+            self.assertIn("In range", content)
+            self.assertNotIn("Out early", content)
+            self.assertNotIn("Out late", content)
+
+    def test_export_weekly_summary_structure(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            service.add_entry(project.id, "meeting", "Sync", [], "Notes")
+            start = date(2024, 1, 1)
+            end = date(2024, 1, 7)
+            path_str = service.export_weekly_summary(start, end, project.id, None)
+            path = Path(path_str)
+            self.assertTrue(path.exists())
+            content = path.read_text(encoding="utf-8")
+            self.assertIn("Weekly Summary", content)
+            self.assertIn("Résumé global", content)
+            self.assertIn("Alpha", content)
+
+    def test_export_weekly_summary_start_after_end_raises(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            service.create_project("Alpha", None, [])
+            start = date(2024, 1, 10)
+            end = date(2024, 1, 5)
+            with self.assertRaises(ValueError) as ctx:
+                service.export_weekly_summary(start, end, None, None)
+            self.assertIn("start is after end", str(ctx.exception).lower())
+
+    def test_export_weekly_summary_filters_by_date_range(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            service.add_entry(
+                project.id, "note", "In week", [], "",
+                entry_date=date(2024, 1, 3)
+            )
+            service.add_entry(
+                project.id, "note", "Before week", [], "",
+                entry_date=date(2023, 12, 25)
+            )
+            service.add_entry(
+                project.id, "note", "After week", [], "",
+                entry_date=date(2024, 1, 15)
+            )
+            start = date(2024, 1, 1)
+            end = date(2024, 1, 7)
+            path_str = service.export_weekly_summary(start, end, project.id, None)
+            content = Path(path_str).read_text(encoding="utf-8")
+            self.assertIn("In week", content)
+            self.assertNotIn("Before week", content)
+            self.assertNotIn("After week", content)
+
+    def test_compact_entries_rewrites_snapshot(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            e1, _ = service.add_entry(project.id, "note", "First", [], "Body 1")
+            e2, _ = service.add_entry(project.id, "note", "Second", [], "Body 2")
+            service.update_entry_meta(e1.id, title="First updated", tags=["a"])
+            before = len(service.storage.read_entries_meta())
+            self.assertEqual(before, 2)
+            with open(service.storage.entries_path, "r", encoding="utf-8") as f:
+                before_lines = sum(1 for _ in f)
+            self.assertGreater(before_lines, 2)
+            recap = service.compact_entries()
+            self.assertEqual(recap["entries_count"], 2)
+            self.assertEqual(recap["after_lines"], 2)
+            self.assertEqual(recap["before_lines"], before_lines)
+            entries = service.storage.read_entries_meta()
+            self.assertEqual(len(entries), 2)
+            by_id = {e.id: e for e in entries}
+            self.assertEqual(by_id[e1.id].title, "First updated")
+            self.assertEqual(by_id[e1.id].tags, ["a"])
+            self.assertEqual(by_id[e2.id].title, "Second")

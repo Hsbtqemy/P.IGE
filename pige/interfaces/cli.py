@@ -127,6 +127,11 @@ def main(argv: list[str] | None = None) -> int:
     export_project.add_argument("--to", dest="to_date")
     export_project.add_argument("--out")
     export_project.add_argument("--mode", choices=["raw", "narrative"], default="raw")
+    export_project.add_argument(
+        "--redact",
+        action="store_true",
+        help="Replace entry body content with [Content redacted] in export",
+    )
     export_meeting = export_sub.add_parser("meeting")
     export_meeting.add_argument("--entry", required=True)
     export_meeting.add_argument("--out")
@@ -134,6 +139,11 @@ def main(argv: list[str] | None = None) -> int:
     export_meeting.add_argument("--no-tasks", action="store_true")
     export_meeting.add_argument("--window-days", type=int, default=1)
     export_meeting.add_argument("--internal", action="store_true")
+    export_meeting.add_argument(
+        "--redact",
+        action="store_true",
+        help="Replace meeting notes with [Content redacted]",
+    )
     export_weekly = export_sub.add_parser("weekly")
     export_weekly.add_argument("--from", dest="from_date", required=True)
     export_weekly.add_argument("--to", dest="to_date", required=True)
@@ -141,12 +151,25 @@ def main(argv: list[str] | None = None) -> int:
     export_weekly.add_argument("--out")
     export_weekly.add_argument("--include-time", action="store_true")
 
+    compact_parser = subparsers.add_parser(
+        "compact",
+        help="Compact entries log to a snapshot (removes update/delete history)",
+    )
+
     args = parser.parse_args(argv)
     service = build_service()
 
     try:
         if args.command == "init":
             service.init_storage()
+            return 0
+
+        if args.command == "compact":
+            recap = service.compact_entries()
+            print(
+                f"Compacted: {recap['before_lines']} lines -> {recap['after_lines']} lines "
+                f"({recap['entries_count']} entries)"
+            )
             return 0
 
         if args.command == "project":
@@ -229,14 +252,22 @@ def main(argv: list[str] | None = None) -> int:
             out_path = Path(args.out) if args.out else None
             if args.mode == "raw":
                 export_path, warnings = service.export_project_raw(
-                    args.project_id, from_date, to_date, out_path
+                    args.project_id,
+                    from_date,
+                    to_date,
+                    out_path,
+                    redact_bodies=getattr(args, "redact", False),
                 )
                 for warning in warnings:
                     _print_warning(warning)
                 print(str(export_path))
                 return 0
             export_path = service.export_project_narrative(
-                args.project_id, from_date, to_date, out_path
+                args.project_id,
+                from_date,
+                to_date,
+                out_path,
+                redact_bodies=getattr(args, "redact", False),
             )
             print(str(export_path))
             return 0
@@ -248,6 +279,7 @@ def main(argv: list[str] | None = None) -> int:
                 include_tasks=not args.no_tasks,
                 window_days=args.window_days,
                 internal=args.internal,
+                redact_bodies=getattr(args, "redact", False),
             )
             print(export_path)
             return 0

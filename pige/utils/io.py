@@ -19,6 +19,15 @@ def safe_write_json(path: Path, data: Any) -> None:
     os.replace(tmp_path, path)
 
 
+def safe_write_text(path: Path, content: str) -> None:
+    """Write text to path atomically (write to .tmp then rename)."""
+    ensure_parent(path)
+    tmp_path = Path(str(path) + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    os.replace(tmp_path, path)
+
+
 def read_json(path: Path, default: Any | None = None) -> Any:
     if not path.exists():
         if default is not None:

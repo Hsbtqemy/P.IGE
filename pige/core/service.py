@@ -3,12 +3,15 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone, date, time, timedelta
+import logging
 import os
 from pathlib import Path
 import re
 import shutil
 from typing import Iterable
 import uuid
+
+logger = logging.getLogger(__name__)
 
 from pige.core.models import EntryMeta, Project, Task, TimeLog, TimerState
 from pige.core.storage import (
@@ -17,12 +20,13 @@ from pige.core.storage import (
     default_timer_state,
     recap_data_dir,
 )
-from pige.utils import dates, ids, strings
+from pige.utils import dates, ids, io as io_utils, strings
 
 
 VALID_ENTRY_TYPES = ("note", "meeting", "decision", "log")
 VALID_CONTEXT_STATUSES = ("created", "actual", "treated")
 _UNSET = object()
+REDACTED_PLACEHOLDER = "[Content redacted]"
 
 
 def normalize_context_status(value: str | None) -> str:
@@ -86,6 +90,7 @@ class PigeService:
                 try:
                     shutil.rmtree(staging)
                 except Exception:
+                    logger.warning("Failed to remove migration staging folder %s", staging, exc_info=True)
                     pass
             if isinstance(exc, ValueError):
                 raise
@@ -512,6 +517,14 @@ class PigeService:
     def restore_data(self, zip_path: str) -> None:
         self.storage.restore_backup(Path(zip_path))
 
+    def compact_entries(self) -> dict[str, int]:
+        """
+        Compact entries.jsonl to a snapshot (one line per current entry).
+        Removes update/delete history; reduces file size and load time.
+        Returns dict with before_lines, after_lines, entries_count.
+        """
+        return self.storage.compact_entries_log()
+
     def add_entry(
         self,
         project_id: str,
@@ -917,6 +930,8 @@ class PigeService:
         from_date: date | None,
         to_date: date | None,
         out_path: Path | None,
+        *,
+        redact_bodies: bool = False,
     ) -> tuple[Path, list[str]]:
         project = self._get_project(project_id)
         entries = [
@@ -968,8 +983,7 @@ class PigeService:
         if not filtered:
             lines.append("No entries in date range.")
             content = "\n".join(lines)
-            with open(out_path, "w", encoding="utf-8") as handle:
-                handle.write(content)
+            io_utils.safe_write_text(out_path, content)
             return out_path, warnings
         for entry in filtered:
             entry_dt = dates.parse_utc_z(entry.ts).astimezone()
@@ -1014,14 +1028,16 @@ class PigeService:
             )
             content_path = self.storage.data_dir / entry.content_path
             if content_path.exists():
-                lines.append(self.storage.read_entry_content(content_path))
+                if redact_bodies:
+                    lines.append(REDACTED_PLACEHOLDER)
+                else:
+                    lines.append(self.storage.read_entry_content(content_path))
             else:
                 warnings.append(f"Missing content file for entry {entry.id}")
                 lines.append(f"[Content file missing: {entry.content_path}]")
             lines.extend(["", "---", ""])
         content = "\n".join(lines)
-        with open(out_path, "w", encoding="utf-8") as handle:
-            handle.write(content)
+        io_utils.safe_write_text(out_path, content)
         return out_path, warnings
 
     def export_project_narrative(
@@ -1030,6 +1046,8 @@ class PigeService:
         from_date: date | None,
         to_date: date | None,
         out_path: Path | None,
+        *,
+        redact_bodies: bool = False,
     ) -> Path:
         """
         SPEC: Narrative Markdown export
@@ -1137,7 +1155,10 @@ class PigeService:
                 ])
                 content_path = self.storage.data_dir / entry.content_path
                 if content_path.exists():
-                    lines.append(self.storage.read_entry_content(content_path))
+                    if redact_bodies:
+                        lines.append(REDACTED_PLACEHOLDER)
+                    else:
+                        lines.append(self.storage.read_entry_content(content_path))
                 else:
                     lines.append("[Fichier contenu manquant]")
                 lines.extend(["", "---", ""])
@@ -1160,7 +1181,10 @@ class PigeService:
                 lines.append("")
                 content_path = self.storage.data_dir / entry.content_path
                 if content_path.exists():
-                    lines.append(self.storage.read_entry_content(content_path))
+                    if redact_bodies:
+                        lines.append(REDACTED_PLACEHOLDER)
+                    else:
+                        lines.append(self.storage.read_entry_content(content_path))
                 else:
                     lines.append("[Fichier contenu manquant]")
                 lines.extend(["", "---", ""])
@@ -1220,8 +1244,7 @@ class PigeService:
         lines.append("")
 
         content = "\n".join(lines).rstrip() + "\n"
-        with open(out_path, "w", encoding="utf-8") as handle:
-            handle.write(content)
+        io_utils.safe_write_text(out_path, content)
         return out_path
 
     def export_meeting_minutes(
@@ -1233,6 +1256,7 @@ class PigeService:
         include_tasks: bool = True,
         window_days: int = 1,
         internal: bool = False,
+        redact_bodies: bool = False,
     ) -> str:
         entry = self.storage.get_entry(entry_id)
         if not entry:
@@ -1246,9 +1270,12 @@ class PigeService:
         person_group = " ".join(
             [part for part in [entry.person, entry.group] if part]
         ).strip()
-        body = self.storage.read_entry_body(entry)
-        if not body.strip():
-            body = "_No notes._"
+        if redact_bodies:
+            body = REDACTED_PLACEHOLDER
+        else:
+            body = self.storage.read_entry_body(entry)
+            if not body.strip():
+                body = "_No notes._"
 
         lines: list[str] = [
             f"# {project.name}",
@@ -1343,8 +1370,7 @@ class PigeService:
             output_path = self.storage.exports_dir / filename
         output_path.parent.mkdir(parents=True, exist_ok=True)
         content = "\n".join(lines).rstrip() + "\n"
-        with open(output_path, "w", encoding="utf-8") as handle:
-            handle.write(content)
+        io_utils.safe_write_text(output_path, content)
         return str(output_path)
 
     def export_weekly_summary(
@@ -1539,8 +1565,7 @@ class PigeService:
             output_path = self.storage.exports_dir / filename
         output_path.parent.mkdir(parents=True, exist_ok=True)
         content = "\n".join(lines).rstrip() + "\n"
-        with open(output_path, "w", encoding="utf-8") as handle:
-            handle.write(content)
+        io_utils.safe_write_text(output_path, content)
         return str(output_path)
 
     def _get_project(self, project_id: str) -> Project:

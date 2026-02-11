@@ -72,6 +72,8 @@ GUI layout highlights:
   (Project, Entry, Stats) and a bottom action bar (Timer + Save).
 - Project and entry metadata are editable in the bottom panel (date, tags,
   person/group, meeting times, decision done).
+- Keyboard shortcuts: Save (Ctrl+S / ⌘S), Quit (Ctrl+Q / ⌘Q), Focus (F9),
+  zoom editor (Ctrl/Cmd + Plus/Minus/0).
 - Preferences are stored in `data/.pige_prefs.json` (search, show archived,
   create-activity toggle, project columns order).
 
@@ -80,6 +82,24 @@ GUI layout highlights:
 Tasks are stored per project in `data/tasks.json`. Use the GUI Tasks panel
 below the editor to add, edit, and complete tasks (optionally linked to an
 entry). Tasks are included in raw exports under a "## Tasks" section.
+
+## Maintenance & sharing
+
+**Compaction** — The entries log (`entries.jsonl`) is append-only (events for create/update/delete). To reduce file size and load time, you can compact it to a snapshot (one line per current entry; history is removed). Use the GUI: Tools → Compact entries log… (with confirmation), or the CLI:
+
+```sh
+python -m pige compact
+```
+
+**Export redacted** — For sharing reports without exposing note content, use redacted exports: entry bodies are replaced with `[Content redacted]`; metadata (titles, dates, people, tags) is kept. In the GUI: choose "Project (Raw, redacted)" or check "Redact entry content" in the Narrative or Meeting minutes export dialogs. In the CLI:
+
+```sh
+python -m pige export project <PROJECT_ID> --mode raw --redact
+python -m pige export project <PROJECT_ID> --mode narrative --redact
+python -m pige export meeting --entry <ENTRY_ID> --redact
+```
+
+**Backup** — File → Backup… (GUI) or create a zip of the data folder. A backup is created automatically before Restore.
 
 ## Tests
 
