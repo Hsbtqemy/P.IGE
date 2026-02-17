@@ -194,11 +194,12 @@ PIGE évolue d'un outil de journaling local fonctionnel vers une solution produc
 **Version cible**: v0.4.0
 
 **Statut**: 🚀 EN COURS (v0.4.0-dev)
-- Hiérarchie de projets complétée (9/9 tâches principales)
-- 142 tests passants (+26 depuis Phase 2)
-- CLI et GUI hiérarchiques opérationnels
-- Export et persistance fonctionnels
-- Drag & drop reporté (optionnel Phase 4+)
+- **4/5 sous-phases complétées** (3.0, 3.1, 3.2, 3.3, 3.4) ✅
+- 177 tests passants (+77 depuis Phase 2)
+- Infrastructure scalabilité complète
+- Architecture GUI modulaire établie
+- Recherche FTS5, updates incrémentaux, pagination opérationnels
+- Reste: Phase 3.5 (Architecture MVC/MVP)
 
 ### Tâches Principales
 

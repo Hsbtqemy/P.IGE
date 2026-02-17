@@ -53,6 +53,7 @@ python -m pige export hierarchy  # Export full project tree with indentation
 # Data migration and maintenance
 python -m pige migrate  # Migrate to latest schema (adds hierarchy fields)
 python -m pige compact  # Compact entries log (remove history, keep snapshot)
+python -m pige rebuild-index  # Rebuild full-text search index (FTS5)
 ```
 
 ## Project Hierarchy
@@ -173,6 +174,18 @@ below the editor to add, edit, and complete tasks (optionally linked to an
 entry). Tasks are included in raw exports under a "## Tasks" section.
 
 ## Maintenance & sharing
+
+**Full-Text Search** — PIGE includes SQLite FTS5 for fast full-text search across entries, projects, and tasks. Build the search index manually:
+
+```sh
+python -m pige rebuild-index
+# Search index rebuilt successfully:
+#   Entries: 150
+#   Projects: 12
+#   Tasks: 85
+```
+
+Recommended after bulk imports or periodically for large databases (1000+ entries). Search is performed on titles, summaries, tags, and metadata.
 
 **Compaction** — The entries log (`entries.jsonl`) is append-only (events for create/update/delete). To reduce file size and load time, you can compact it to a snapshot (one line per current entry; history is removed). Use the GUI: Tools → Compact entries log… (with confirmation), or the CLI:
 
