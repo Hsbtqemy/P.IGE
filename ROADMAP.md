@@ -277,6 +277,14 @@ PIGE évolue d'un outil de journaling local fonctionnel vers une solution produc
 
 **Statut**: ✅ COMPLÉTÉE (mode manuel)
 
+**⚠️ ACTION REQUISE - Indexation Auto à Réactiver:**
+- **Problème**: PermissionError Windows lors fermeture connexion SQLite dans tests
+- **Cause**: Connexion non fermée proprement (Python GC timing)
+- **Solution**: Implémenter context manager (`with SearchIndex(path) as index`)
+- **Voir**: `TODO_FTS5_INDEXATION_AUTO.md` pour plan détaillé
+- **Priorité**: HAUTE (avant Phase 4)
+- **Temps estimé**: 30-45 minutes
+
 **Résultats**:
 - Module FTS5 fonctionnel et testé
 - Performance: < 100ms pour 1K entrées ✅
