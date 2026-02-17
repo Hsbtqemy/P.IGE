@@ -21,6 +21,7 @@ from pige.utils import dates, io as io_utils, strings
 
 from pige.interfaces import gui_constants
 from pige.interfaces import gui_helpers
+from pige.interfaces.gui.widgets import AutocompleteEntry
 
 logger = logging.getLogger(__name__)
 
@@ -351,8 +352,16 @@ class PigeApp(tk.Tk):
     def _build_menu(self) -> None:
         menubar = tk.Menu(self)
         file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="New Project", command=self._new_project)
-        file_menu.add_command(label="New Entry", command=self._new_entry)
+        file_menu.add_command(
+            label="New Project", 
+            command=self._new_project,
+            accelerator=_menu_accel("N")
+        )
+        file_menu.add_command(
+            label="New Entry", 
+            command=self._new_entry,
+            accelerator=_menu_accel("E")
+        )
         file_menu.add_separator()
         file_menu.add_command(
             label="Save",
@@ -402,6 +411,16 @@ class PigeApp(tk.Tk):
             label="Arrange Entry Columns...", command=self._edit_entry_columns
         )
         menubar.add_cascade(label="View", menu=view_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(
+            label="Keyboard Shortcuts...",
+            command=self._show_keyboard_shortcuts,
+            accelerator="F1"
+        )
+        help_menu.add_separator()
+        help_menu.add_command(label="About PIGE", command=self._show_about_dialog)
+        menubar.add_cascade(label="Help", menu=help_menu)
 
         self.config(menu=menubar)
 
@@ -558,10 +577,20 @@ class PigeApp(tk.Tk):
         self.project_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         project_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.project_tree.bind("<<TreeviewSelect>>", self._on_project_select)
+        self.project_tree.bind("<<TreeviewOpen>>", self._on_project_expand)
+        self.project_tree.bind("<<TreeviewClose>>", self._on_project_collapse)
         self.project_context_menu = tk.Menu(self, tearoff=0)
+        self.project_context_menu.add_command(
+            label="New Entry in Project", command=self._new_entry
+        )
+        self.project_context_menu.add_separator()
         self.project_context_menu.add_command(
             label="Edit", command=self._edit_project_details
         )
+        self.project_context_menu.add_command(
+            label="Copy Project ID", command=self._copy_project_id
+        )
+        self.project_context_menu.add_separator()
         self.project_context_menu.add_command(
             label="Delete", command=self._delete_project
         )
@@ -719,6 +748,9 @@ class PigeApp(tk.Tk):
         )
         self.entry_context_menu.add_separator()
         self.entry_context_menu.add_command(
+            label="Copy Entry ID", command=self._copy_entry_id
+        )
+        self.entry_context_menu.add_command(
             label="Move to project...", command=self._move_entry_dialog
         )
         for sequence in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
@@ -814,6 +846,7 @@ class PigeApp(tk.Tk):
             self.root_paned.sashpos(0, desired)
             self._root_sash_initialized = True
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             self.after(80, self._init_root_sash)
 
     def _init_bottom_sash(self) -> None:
@@ -826,6 +859,7 @@ class PigeApp(tk.Tk):
         try:
             self.bottom_paned.sashpos(0, int(total * 0.65))
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             pass
         self._bottom_sash_initialized = True
         self._clamp_bottom_sash()
@@ -843,6 +877,7 @@ class PigeApp(tk.Tk):
             pos = max(min_details, min(pos, total - min_tasks))
             self.bottom_paned.sashpos(0, pos)
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             return
 
     def _max_reqheight(self, widgets: tuple[tk.Widget | None, ...]) -> int:
@@ -859,6 +894,7 @@ class PigeApp(tk.Tk):
         try:
             req = int(widget.winfo_reqheight())
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             return fallback
         return req if req > 1 else fallback
 
@@ -963,8 +999,10 @@ class PigeApp(tk.Tk):
         ttk.Label(self.project_tab, text="Tags").grid(
             row=3, column=0, sticky=tk.W, padx=6, pady=4
         )
-        self.project_tags_entry = ttk.Entry(
-            self.project_tab, textvariable=self.project_tags_var
+        self.project_tags_entry = AutocompleteEntry(
+            self.project_tab,
+            get_suggestions=self._get_all_tags,
+            textvariable=self.project_tags_var
         )
         self.project_tags_entry.grid(
             row=3, column=1, columnspan=3, sticky="ew", padx=6, pady=4
@@ -1046,7 +1084,11 @@ class PigeApp(tk.Tk):
         ttk.Label(self.entry_tab, text="Tags").grid(
             row=2, column=2, sticky=tk.W, padx=6, pady=4
         )
-        self.entry_tags_entry = ttk.Entry(self.entry_tab, textvariable=self.entry_tags_var)
+        self.entry_tags_entry = AutocompleteEntry(
+            self.entry_tab,
+            get_suggestions=self._get_all_tags,
+            textvariable=self.entry_tags_var
+        )
         self.entry_tags_entry.grid(row=2, column=3, sticky="ew", padx=6, pady=4)
 
         self.entry_meeting_label = ttk.Label(self.entry_tab, text="Meeting")
@@ -1517,6 +1559,7 @@ class PigeApp(tk.Tk):
                 try:
                     self.root_paned.sashpos(0, max(0, total_h - 2))
                 except Exception:
+                    logger.exception("Exception caught in GUI operation")
                     pass
             self._shrink_main_panes()
             self._focus_active = True
@@ -1525,6 +1568,7 @@ class PigeApp(tk.Tk):
                 try:
                     self.root_paned.sashpos(0, self._focus_root_sash)
                 except Exception:
+                    logger.exception("Exception caught in GUI operation")
                     pass
             if self._focus_main_sashes is not None:
                 self._restore_main_sash_positions(self._focus_main_sashes)
@@ -1535,6 +1579,7 @@ class PigeApp(tk.Tk):
         try:
             return int(paned.sashpos(index))
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             return None
 
     def _get_main_sash_positions(self) -> tuple[int, int] | None:
@@ -1546,6 +1591,7 @@ class PigeApp(tk.Tk):
             second = int(self.paned.sashpos(1))
             return (first, second)
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             return None
 
     def _restore_main_sash_positions(self, positions: tuple[int, int]) -> None:
@@ -1553,6 +1599,7 @@ class PigeApp(tk.Tk):
             self.paned.sashpos(0, positions[0])
             self.paned.sashpos(1, positions[1])
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             pass
 
     def _shrink_main_panes(self) -> None:
@@ -1560,6 +1607,7 @@ class PigeApp(tk.Tk):
             if len(self.paned.panes()) < 3:
                 return
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             return
         total_w = self.paned.winfo_width()
         if total_w <= 1:
@@ -1575,6 +1623,7 @@ class PigeApp(tk.Tk):
             self.paned.sashpos(0, project_width)
             self.paned.sashpos(1, project_width + entry_width)
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             pass
 
     def _update_focus_button(self) -> None:
@@ -1587,6 +1636,11 @@ class PigeApp(tk.Tk):
         self.bind_all("<Command-s>", self._on_cmd_s_save)
         self.bind_all("<Control-q>", self._on_quit_shortcut)
         self.bind_all("<Command-q>", self._on_quit_shortcut)
+        self.bind_all("<Control-n>", self._on_new_project_shortcut)
+        self.bind_all("<Command-n>", self._on_new_project_shortcut)
+        self.bind_all("<Control-e>", self._on_new_entry_shortcut)
+        self.bind_all("<Command-e>", self._on_new_entry_shortcut)
+        self.bind_all("<F1>", self._on_help_shortcut)
         for sequence in ("<Delete>", "<BackSpace>", "<KP_Delete>"):
             self.bind_all(sequence, self._on_delete_key, add="+")
         self._bind_editor_zoom_shortcuts()
@@ -1614,10 +1668,25 @@ class PigeApp(tk.Tk):
             self._on_close()
         return "break"
 
+    def _on_new_project_shortcut(self, event: tk.Event) -> str:
+        if self._is_main_window_event(event):
+            self._new_project()
+        return "break"
+
+    def _on_new_entry_shortcut(self, event: tk.Event) -> str:
+        if self._is_main_window_event(event):
+            self._new_entry()
+        return "break"
+
+    def _on_help_shortcut(self, event: tk.Event) -> str:
+        self._show_keyboard_shortcuts()
+        return "break"
+
     def _is_main_window_event(self, event: tk.Event) -> bool:
         try:
             return event.widget.winfo_toplevel() is self
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             return False
 
     def _is_ctrl_s_event(self, event: tk.Event) -> bool:
@@ -2349,6 +2418,7 @@ class PigeApp(tk.Tk):
         try:
             opened = webbrowser.open(link)
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             opened = False
         if not opened:
             self._set_status("Failed to open link")
@@ -2367,6 +2437,7 @@ class PigeApp(tk.Tk):
             self.clipboard_clear()
             self.clipboard_append(link)
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             self._set_status("Failed to copy link")
             return
         self._set_status("Link copied")
@@ -2870,6 +2941,30 @@ class PigeApp(tk.Tk):
         self.refresh_entries()
         self.refresh_tasks()
         self._update_time_today()
+
+    def _on_project_expand(self, event: tk.Event) -> None:
+        """Handle project expand event - save state to prefs."""
+        try:
+            item_id = self.project_tree.focus()
+            if item_id:
+                expanded = set(self.gui_prefs.get("expanded_projects", []))
+                expanded.add(item_id)
+                self.gui_prefs["expanded_projects"] = list(expanded)
+                self._save_gui_prefs()
+        except Exception:
+            logger.exception("Failed to save expand state")
+
+    def _on_project_collapse(self, event: tk.Event) -> None:
+        """Handle project collapse event - save state to prefs."""
+        try:
+            item_id = self.project_tree.focus()
+            if item_id:
+                expanded = set(self.gui_prefs.get("expanded_projects", []))
+                expanded.discard(item_id)
+                self.gui_prefs["expanded_projects"] = list(expanded)
+                self._save_gui_prefs()
+        except Exception:
+            logger.exception("Failed to save collapse state")
         self._load_project_details(self.projects_by_id.get(project_id))
 
     def _restore_project_selection(self) -> None:
@@ -2949,6 +3044,7 @@ class PigeApp(tk.Tk):
             index = self.editor_text.index(f"@{event.x},{event.y}")
             self.editor_text.mark_set("insert", index)
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             pass
         try:
             self.editor_context_menu.tk_popup(event.x_root, event.y_root)
@@ -2966,6 +3062,19 @@ class PigeApp(tk.Tk):
         finally:
             self.project_context_menu.grab_release()
 
+    def _copy_project_id(self) -> None:
+        """Copy the current project ID to clipboard."""
+        if not self.current.project_id:
+            return
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(self.current.project_id)
+            self.save_status_var.set(f"Project ID copied: {self.current.project_id[:8]}...")
+            self.after(2000, lambda: self.save_status_var.set(""))
+        except Exception:
+            logger.exception("Exception caught in GUI operation")
+            messagebox.showerror("Error", "Failed to copy project ID to clipboard")
+
     def _show_entry_context_menu(self, event: tk.Event) -> None:
         entry_id = self.entry_tree.identify_row(event.y)
         if not entry_id:
@@ -2981,6 +3090,19 @@ class PigeApp(tk.Tk):
     def _entry_context_open(self) -> None:
         if self.current.entry_id:
             self._load_entry(self.current.entry_id)
+
+    def _copy_entry_id(self) -> None:
+        """Copy the current entry ID to clipboard."""
+        if not self.current.entry_id:
+            return
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(self.current.entry_id)
+            self.save_status_var.set(f"Entry ID copied: {self.current.entry_id[:8]}...")
+            self.after(2000, lambda: self.save_status_var.set(""))
+        except Exception:
+            logger.exception("Exception caught in GUI operation")
+            messagebox.showerror("Error", "Failed to copy entry ID to clipboard")
 
     def _export_meeting_minutes_from_context(self) -> None:
         entry = self._get_selected_entry_for_export()
@@ -3668,6 +3790,25 @@ class PigeApp(tk.Tk):
                 counts[task.project_id] = counts.get(task.project_id, 0) + 1
         return counts
 
+    def _get_all_tags(self) -> list[str]:
+        """Get all unique tags from projects, entries, and tasks."""
+        tags_set = set()
+        
+        # Collect from projects
+        for project in self.service.storage.read_projects():
+            tags_set.update(project.tags)
+        
+        # Collect from entries
+        for entry in self.service.storage.read_entries_meta():
+            tags_set.update(entry.tags)
+        
+        # Collect from tasks
+        for task in self.service.storage.read_tasks():
+            tags_set.update(task.tags)
+        
+        # Return sorted list
+        return sorted(tags_set, key=str.lower)
+
     def _set_tasks_visibility(self, has_project: bool) -> None:
         if has_project:
             if self.tasks_empty_label.winfo_ismapped():
@@ -3711,6 +3852,7 @@ class PigeApp(tk.Tk):
                     .isoformat()
                 )
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             created_label = task.created_at or "-"
             done_label = task.done_at or "-"
         self.task_created_var.set(created_label)
@@ -3865,10 +4007,12 @@ class PigeApp(tk.Tk):
             try:
                 return dates.parse_date(entry.entry_date)
             except Exception:
+                logger.exception("Exception caught in GUI operation")
                 pass
         try:
             return dates.parse_utc_z(entry.ts).astimezone().date()
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             return datetime.now().astimezone().date()
 
     def _sort_in_progress_entries(
@@ -4024,6 +4168,7 @@ class PigeApp(tk.Tk):
             try:
                 due_date = dates.parse_date(task.due_date)
             except Exception:
+                logger.exception("Exception caught in GUI operation")
                 continue
             overdue = due_date < today
             if overdue and not include_overdue:
@@ -4283,29 +4428,57 @@ class PigeApp(tk.Tk):
             projects = [
                 project for project in projects if self._project_matches_query(project, query)
             ]
+        
         self.project_tree.delete(*self.project_tree.get_children())
-        sorted_projects = self._sort_projects(projects, totals, task_counts)
-        for index, project in enumerate(sorted_projects):
+        
+        # Load expand/collapse state from prefs
+        expanded_projects = set(self.gui_prefs.get("expanded_projects", []))
+        
+        # Build hierarchical structure
+        # First pass: insert root projects (no parent)
+        def insert_project_recursive(project: Project, parent_iid: str = "", depth: int = 0) -> None:
             status_flag = "●" if project.status == "active" else "○"
             people_label = format_people_inline(project.person)
             open_tasks = task_counts.get(project.id, 0)
+            
+            # Add indentation prefix for hierarchy display
+            indent = "  " * depth
+            display_name = f"{indent}{project.name}" if depth > 0 else project.name
+            
             values = []
             for col in AVAILABLE_PROJECT_COLUMNS:
                 if col == "name":
-                    values.append(project.name)
+                    values.append(display_name)
                 elif col == "people":
                     values.append(people_label)
                 elif col == "tasks_open":
                     values.append(str(open_tasks))
                 elif col == "status":
                     values.append(status_flag)
-            self.project_tree.insert(
-                "",
+            
+            # Insert into tree
+            iid = self.project_tree.insert(
+                parent_iid,
                 tk.END,
                 iid=project.id,
                 values=values,
-                tags=("even" if index % 2 == 0 else "odd",),
+                tags=("even" if depth % 2 == 0 else "odd",),
+                open=project.id in expanded_projects,  # Restore expand state
             )
+            
+            # Insert children recursively
+            children = self.service.storage.get_project_children(project.id)
+            children = [c for c in children if c in projects]  # Filter by query/archived
+            for child in children:
+                insert_project_recursive(child, iid, depth + 1)
+        
+        # Get root projects and insert them with their children
+        root_projects = [p for p in projects if p.parent_id is None]
+        sorted_roots = sorted(root_projects, key=lambda p: p.display_order)
+        
+        for project in sorted_roots:
+            insert_project_recursive(project)
+        
         self._update_project_sort_headers()
         if self.current.project_id and self.project_tree.exists(self.current.project_id):
             self.project_tree.selection_set(self.current.project_id)
@@ -4411,7 +4584,17 @@ class PigeApp(tk.Tk):
             and include_body == self._global_search_cache_include_body
         ):
             return self._global_search_cache_projects, self._global_search_cache_entries
-        projects, entries = self.service.search(query, include_body=include_body)
+        
+        # Use advanced search if query contains field:value patterns
+        # Otherwise fallback to basic search
+        if ":" in query and any(
+            field in query.lower() 
+            for field in ["tag:", "person:", "group:", "type:", "date:", "status:", "title:"]
+        ):
+            projects, entries = self.service.advanced_search(query, include_body=include_body)
+        else:
+            projects, entries = self.service.search(query, include_body=include_body)
+        
         self._global_search_cache_query = query
         self._global_search_cache_include_body = include_body
         self._global_search_cache_projects = projects
@@ -5036,6 +5219,7 @@ class PigeApp(tk.Tk):
                 try:
                     day_value = parse_date_ui(date_text)
                 except Exception:
+                    logger.exception("Exception caught in GUI operation")
                     messagebox.showerror(
                         "Validation", "Date must be DD/MM/YYYY (or YYYY-MM-DD)"
                     )
@@ -5573,10 +5757,12 @@ class PigeApp(tk.Tk):
             try:
                 src_resolved = src_dir.resolve()
             except Exception:
+                logger.exception("Exception caught in GUI operation")
                 src_resolved = src_dir
             try:
                 dest_resolved = path.resolve()
             except Exception:
+                logger.exception("Exception caught in GUI operation")
                 dest_resolved = path
             if dest_resolved == src_resolved:
                 messagebox.showerror(
@@ -5610,6 +5796,7 @@ class PigeApp(tk.Tk):
         try:
             resolved = path.resolve()
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             resolved = path
         cfg = _load_global_config()
         cfg["data_dir"] = str(resolved)
@@ -5721,6 +5908,7 @@ class PigeApp(tk.Tk):
                 try:
                     self.after_cancel(after_id)
                 except Exception:
+                    logger.exception("Exception caught in GUI operation")
                     pass
         self._poll_after_id = None
         self._resize_after_id = None
@@ -5749,9 +5937,181 @@ class PigeApp(tk.Tk):
             project_root = Path(__file__).resolve().parents[2]  # .../Programme Journaling/
             os.chdir(project_root)
         except Exception:
+            logger.exception("Exception caught in GUI operation")
             pass
 
         os.execv(python, args)
+
+    def _show_keyboard_shortcuts(self) -> None:
+        """Show a dialog with all keyboard shortcuts."""
+        dialog = tk.Toplevel(self)
+        dialog.title("Keyboard Shortcuts - PIGE")
+        dialog.geometry("600x500")
+        dialog.resizable(True, True)
+        
+        # Create main frame with scrollbar
+        main_frame = ttk.Frame(dialog, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = ttk.Label(
+            main_frame,
+            text="Keyboard Shortcuts",
+            font=("TkDefaultFont", 14, "bold")
+        )
+        title_label.pack(pady=(0, 10))
+        
+        # Create canvas and scrollbar
+        canvas = tk.Canvas(main_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Define shortcuts by category
+        shortcuts = [
+            ("File Operations", [
+                (f"{_menu_accel('N')}", "New Project"),
+                (f"{_menu_accel('E')}", "New Entry"),
+                (f"{_menu_accel('S')}", "Save Entry"),
+                (f"{_menu_accel('Q')}", "Quit"),
+                ("Delete / Backspace", "Delete selected item"),
+            ]),
+            ("View", [
+                ("F9", "Toggle Focus Mode"),
+            ]),
+            ("Editor", [
+                ("Ctrl+Shift+X", "Toggle checkbox (Windows/Linux)"),
+                ("Cmd+Shift+X", "Toggle checkbox (macOS)"),
+                ("Ctrl++", "Zoom in (Windows/Linux)"),
+                ("Ctrl+-", "Zoom out (Windows/Linux)"),
+                ("Ctrl+0", "Reset zoom (Windows/Linux)"),
+                ("Cmd++", "Zoom in (macOS)"),
+                ("Cmd+-", "Zoom out (macOS)"),
+                ("Cmd+0", "Reset zoom (macOS)"),
+            ]),
+            ("Navigation", [
+                ("Double-click", "Open entry or toggle task"),
+                ("Enter", "Apply search filter"),
+            ]),
+            ("Help", [
+                ("F1", "Show this dialog"),
+            ]),
+        ]
+        
+        # Add shortcuts to scrollable frame
+        for category, items in shortcuts:
+            category_frame = ttk.LabelFrame(scrollable_frame, text=category, padding=10)
+            category_frame.pack(fill=tk.X, padx=5, pady=5)
+            
+            for key, description in items:
+                row = ttk.Frame(category_frame)
+                row.pack(fill=tk.X, pady=2)
+                
+                key_label = ttk.Label(
+                    row,
+                    text=key,
+                    font=("TkDefaultFont", 9, "bold"),
+                    width=25,
+                    anchor="w"
+                )
+                key_label.pack(side=tk.LEFT)
+                
+                desc_label = ttk.Label(row, text=description, anchor="w")
+                desc_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Close button
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        close_button = ttk.Button(
+            button_frame,
+            text="Close",
+            command=dialog.destroy
+        )
+        close_button.pack(side=tk.RIGHT)
+        
+        # Bind Escape and F1 to close
+        dialog.bind("<Escape>", lambda e: dialog.destroy())
+        dialog.bind("<F1>", lambda e: dialog.destroy())
+        
+        # Center dialog on parent
+        dialog.transient(self)
+        dialog.grab_set()
+        self.wait_window(dialog)
+
+    def _show_about_dialog(self) -> None:
+        """Show About PIGE dialog."""
+        dialog = tk.Toplevel(self)
+        dialog.title("About PIGE")
+        dialog.geometry("400x300")
+        dialog.resizable(False, False)
+        
+        frame = ttk.Frame(dialog, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        title_label = ttk.Label(
+            frame,
+            text="PIGE",
+            font=("TkDefaultFont", 20, "bold")
+        )
+        title_label.pack(pady=(0, 5))
+        
+        # Subtitle
+        subtitle_label = ttk.Label(
+            frame,
+            text="Project Integrated Journaling Engine",
+            font=("TkDefaultFont", 10)
+        )
+        subtitle_label.pack(pady=(0, 20))
+        
+        # Version
+        version_label = ttk.Label(
+            frame,
+            text="Version 0.2.0-dev",
+            font=("TkDefaultFont", 9)
+        )
+        version_label.pack(pady=(0, 20))
+        
+        # Description
+        desc_text = (
+            "PIGE is a local-first project journaling tool\n"
+            "that helps you organize and track your work.\n\n"
+            "Features:\n"
+            "• Project-based organization\n"
+            "• Multiple entry types (notes, meetings, decisions)\n"
+            "• Task management with time tracking\n"
+            "• Export capabilities\n"
+            "• All data stored locally in JSON/Markdown"
+        )
+        desc_label = ttk.Label(
+            frame,
+            text=desc_text,
+            justify=tk.LEFT
+        )
+        desc_label.pack(pady=(0, 20))
+        
+        # Close button
+        close_button = ttk.Button(
+            frame,
+            text="Close",
+            command=dialog.destroy
+        )
+        close_button.pack()
+        
+        # Center dialog on parent
+        dialog.transient(self)
+        dialog.grab_set()
 
 
 

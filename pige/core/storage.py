@@ -11,6 +11,8 @@ import zipfile
 
 logger = logging.getLogger(__name__)
 
+from pige.core.cache import EntryCache
+from pige.core.indexing import SearchIndex
 from pige.core.models import EntryMeta, Project, Task, TimeLog, TimerState
 from pige.utils import dates
 from pige.utils import io as io_utils
@@ -63,6 +65,8 @@ PROJECT_KEYS = frozenset(
         "person",
         "group",
         "links",
+        "parent_id",
+        "display_order",
     )
 )
 
@@ -77,6 +81,9 @@ class Storage:
         self.timers_path = data_dir / "timers.json"
         self.timelogs_path = data_dir / "timelogs.jsonl"
         self.exports_dir = data_dir / "exports"
+        self.index_path = data_dir / ".pige_index.db"
+        self._entry_cache = EntryCache()  # Cache for entry metadata
+        self._search_index: SearchIndex | None = None  # Lazy-loaded search index
 
     def init_storage(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -92,6 +99,15 @@ class Storage:
             io_utils.safe_write_json(self.timers_path, asdict(default_timer_state()))
         if not self.timelogs_path.exists():
             self.timelogs_path.touch()
+        
+        # Note: Search index is created on-demand via `rebuild-index` command
+        # Auto-indexing is disabled to avoid performance impact and test issues
+    
+    def _get_search_index(self) -> SearchIndex:
+        """Get or create search index (lazy loading)."""
+        if self._search_index is None:
+            self._search_index = SearchIndex(self.index_path)
+        return self._search_index
 
     def read_projects(self) -> list[Project]:
         data = io_utils.read_json(self.projects_path, default=[])
@@ -110,6 +126,9 @@ class Storage:
             payload.setdefault("group", None)
             links = payload.get("links")
             payload["links"] = list(links) if isinstance(links, list) else []
+            # Hierarchy fields (migration support)
+            payload.setdefault("parent_id", None)
+            payload.setdefault("display_order", 0)
             projects.append(Project(**payload))
         return projects
 
@@ -124,18 +143,39 @@ class Storage:
         payload = asdict(entry)
         payload["kind"] = "entry"
         io_utils.append_jsonl(self.entries_path, payload)
+        self.invalidate_entry_cache()
+        # Note: Auto-indexing disabled - use `rebuild-index` command
 
     def append_entry_update(self, entry_id: str, ts: str, patch: dict[str, object]) -> None:
         payload = {"kind": "entry_update", "ts": ts, "entry_id": entry_id, "patch": patch}
         io_utils.append_jsonl(self.entries_path, payload)
+        self.invalidate_entry_cache()
+        # Note: Auto-indexing disabled - use `rebuild-index` command
 
     def append_entry_delete(self, entry_id: str, ts: str) -> None:
         payload = {"kind": "entry_delete", "ts": ts, "entry_id": entry_id}
         io_utils.append_jsonl(self.entries_path, payload)
+        self.invalidate_entry_cache()
+        # Note: Auto-indexing disabled - use `rebuild-index` command
 
     def read_entries_meta(self) -> list[EntryMeta]:
+        # Check cache first
+        cached = self._entry_cache.get_entries()
+        if cached is not None:
+            return cached
+        
+        # Cache miss - read from disk
         events = io_utils.read_jsonl(self.entries_path)
-        return _fold_entry_events(events)
+        entries = _fold_entry_events(events)
+        
+        # Store in cache
+        self._entry_cache.set_entries(entries)
+        
+        return entries
+    
+    def invalidate_entry_cache(self) -> None:
+        """Invalidate the entry cache. Call this after write operations."""
+        self._entry_cache.invalidate()
 
     def list_entries(self, project_id: str | None = None) -> list[EntryMeta]:
         entries = self.read_entries_meta()
@@ -310,11 +350,213 @@ class Storage:
             payload["kind"] = "entry"
             snapshot.append(payload)
         io_utils.safe_write_jsonl(self.entries_path, snapshot)
+        self.invalidate_entry_cache()  # Invalidate after rewrite
         return {
             "before_lines": before_lines,
             "after_lines": len(snapshot),
             "entries_count": len(entries),
         }
+
+    def migrate_projects_hierarchy(self) -> dict[str, int]:
+        """
+        Migrate existing projects to include hierarchy fields (parent_id, display_order).
+        This is idempotent and safe to run multiple times.
+        Returns: dict with migration stats (total, migrated, already_migrated).
+        """
+        projects = self.read_projects()
+        migrated_count = 0
+        
+        for i, project in enumerate(projects):
+            # Only set display_order if it's at default (0) AND there are multiple projects
+            # This preserves any custom ordering that was already set
+            if project.display_order == 0 and len(projects) > 1:
+                project.display_order = i
+                migrated_count += 1
+        
+        # Only write back if changes were made
+        if migrated_count > 0:
+            self.write_projects(projects)
+        
+        return {
+            "total": len(projects),
+            "migrated": migrated_count,
+            "already_migrated": len(projects) - migrated_count,
+        }
+
+    def get_project_children(self, parent_id: str | None) -> list[Project]:
+        """
+        Get all direct children of a project (or root projects if parent_id is None).
+        Children are sorted by display_order.
+        
+        Args:
+            parent_id: Parent project ID, or None for root-level projects
+            
+        Returns:
+            List of child projects sorted by display_order
+        """
+        projects = self.read_projects()
+        children = [p for p in projects if p.parent_id == parent_id]
+        return sorted(children, key=lambda p: p.display_order)
+
+    def get_project_ancestors(self, project_id: str) -> list[Project]:
+        """
+        Get all ancestors of a project, from immediate parent to root.
+        Returns empty list if project has no parent or doesn't exist.
+        
+        Args:
+            project_id: Project ID to get ancestors for
+            
+        Returns:
+            List of ancestor projects, ordered from parent to root
+        """
+        projects_by_id = {p.id: p for p in self.read_projects()}
+        
+        if project_id not in projects_by_id:
+            return []
+        
+        ancestors: list[Project] = []
+        current = projects_by_id[project_id]
+        
+        # Walk up the hierarchy
+        while current.parent_id is not None:
+            if current.parent_id not in projects_by_id:
+                # Broken link - stop here
+                break
+            parent = projects_by_id[current.parent_id]
+            ancestors.append(parent)
+            current = parent
+        
+        return ancestors
+
+    def get_project_descendants(self, project_id: str) -> list[Project]:
+        """
+        Get all descendants (children, grandchildren, etc.) of a project.
+        
+        Args:
+            project_id: Project ID to get descendants for
+            
+        Returns:
+            List of all descendant projects (recursively)
+        """
+        projects = self.read_projects()
+        projects_by_id = {p.id: p for p in projects}
+        
+        if project_id not in projects_by_id:
+            return []
+        
+        descendants: list[Project] = []
+        to_process = [project_id]
+        
+        while to_process:
+            current_id = to_process.pop(0)
+            children = [p for p in projects if p.parent_id == current_id]
+            descendants.extend(children)
+            to_process.extend(p.id for p in children)
+        
+        return descendants
+
+    def move_project(self, project_id: str, new_parent_id: str | None) -> None:
+        """
+        Move a project to a new parent (or to root if new_parent_id is None).
+        
+        Args:
+            project_id: Project to move
+            new_parent_id: New parent ID, or None to move to root
+            
+        Raises:
+            ValueError: If project doesn't exist or move would create a cycle
+        """
+        projects = self.read_projects()
+        projects_by_id = {p.id: p for p in projects}
+        
+        if project_id not in projects_by_id:
+            raise ValueError(f"Project {project_id} not found")
+        
+        if new_parent_id is not None and new_parent_id not in projects_by_id:
+            raise ValueError(f"Parent project {new_parent_id} not found")
+        
+        # Check for cycles: new_parent_id cannot be a descendant of project_id
+        if new_parent_id is not None:
+            descendants = self.get_project_descendants(project_id)
+            if any(d.id == new_parent_id for d in descendants):
+                raise ValueError(f"Cannot move project: would create a cycle")
+        
+        # Update the project
+        project = projects_by_id[project_id]
+        project.parent_id = new_parent_id
+        
+        # Reset display_order to append at end of new parent's children
+        siblings = [p for p in projects if p.parent_id == new_parent_id and p.id != project_id]
+        project.display_order = max([s.display_order for s in siblings], default=-1) + 1
+        
+        self.write_projects(projects)
+
+    def reorder_projects(self, project_ids: list[str], parent_id: str | None = None) -> None:
+        """
+        Reorder projects within the same parent level.
+        
+        Args:
+            project_ids: List of project IDs in desired order
+            parent_id: Parent ID for these projects (None for root level)
+            
+        Raises:
+            ValueError: If any project doesn't exist or doesn't belong to this parent
+        """
+        projects = self.read_projects()
+        projects_by_id = {p.id: p for p in projects}
+        
+        # Validate all projects exist and belong to the specified parent
+        for pid in project_ids:
+            if pid not in projects_by_id:
+                raise ValueError(f"Project {pid} not found")
+            if projects_by_id[pid].parent_id != parent_id:
+                raise ValueError(f"Project {pid} does not belong to parent {parent_id}")
+        
+        # Update display_order for each project in the list
+        for i, pid in enumerate(project_ids):
+            projects_by_id[pid].display_order = i
+        
+        self.write_projects(projects)
+    
+    def rebuild_search_index(self) -> dict[str, int]:
+        """Rebuild the entire search index from scratch.
+        
+        This method reads all entries, projects, and tasks from storage
+        and rebuilds the FTS index. Useful for:
+        - Initial index creation
+        - Recovering from corrupted index
+        - Migrating existing data directories
+        
+        Returns:
+            Statistics dict with counts of indexed items
+        """
+        logger.info("Rebuilding search index from all data...")
+        
+        # Load all data
+        entries = self.read_entries_meta()
+        projects = self.read_projects()
+        tasks = self.read_tasks()
+        
+        # Prepare tasks data with context
+        projects_by_id = {p.id: p for p in projects}
+        entries_by_id = {e.id: e for e in entries}
+        
+        tasks_data = []
+        for task in tasks:
+            project_name = projects_by_id.get(task.project_id, None)
+            project_name_str = project_name.name if project_name else None
+            
+            entry_title = None
+            if task.linked_entry_id:
+                entry = entries_by_id.get(task.linked_entry_id, None)
+                entry_title = entry.title if entry else None
+            
+            tasks_data.append((task, project_name_str, entry_title))
+        
+        # Rebuild index
+        stats = self._get_search_index().rebuild(entries, projects, tasks_data)
+        logger.info(f"Search index rebuilt: {stats}")
+        return stats
 
 
 def default_timer_state() -> TimerState:

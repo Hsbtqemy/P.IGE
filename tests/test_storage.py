@@ -150,6 +150,7 @@ class TestStorage(unittest.TestCase):
                     "patch": {"title": "Updated"},
                 },
             )
+            storage.invalidate_entry_cache()  # Invalidate after manual write
             entries = storage.read_entries_meta()
             self.assertEqual(len(entries), 1)
             self.assertEqual(entries[0].id, "e1")
@@ -172,6 +173,7 @@ class TestStorage(unittest.TestCase):
                 storage.entries_path,
                 {"kind": "entry_delete", "ts": "2024-01-04T12:00:00Z", "entry_id": "e1"},
             )
+            storage.invalidate_entry_cache()  # Invalidate after manual writes
             entries = storage.read_entries_meta()
             self.assertEqual(len(entries), 1)
             self.assertEqual(entries[0].id, "e2")
@@ -285,3 +287,108 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(result[0].tags, ["a", "b"])
         self.assertEqual(result[1].id, "e2")
         self.assertEqual(result[1].title, "Second")
+
+    def test_fold_entry_events_complex_sequence(self) -> None:
+        """Test complex sequence: create, update, delete, create again with same ID."""
+        events = [
+            _minimal_entry_event("e1", "Original"),
+            {"kind": "entry_update", "ts": "2024-01-02T12:00:00Z", "entry_id": "e1", "patch": {"title": "Updated"}},
+            {"kind": "entry_delete", "ts": "2024-01-03T12:00:00Z", "entry_id": "e1"},
+            _minimal_entry_event("e1", "Recreated"),
+        ]
+        result = _fold_entry_events(events)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].id, "e1")
+        self.assertEqual(result[0].title, "Recreated")
+
+    def test_restore_backup_valid_structure(self) -> None:
+        """restore_backup with valid backup file restores data correctly."""
+        with TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / "data"
+            storage = Storage(data_dir)
+            storage.init_storage()
+            
+            # Create some data
+            projects = [{"id": "proj1", "name": "Test", "description": "Desc", "status": "active", "tags": [], "created_at": "2024-01-01T00:00:00Z", "person": None, "group": None, "links": []}]
+            io_utils.safe_write_json(storage.projects_path, projects)
+            
+            # Create backup
+            backup_path = storage.create_backup(data_dir.parent / "test_backup.zip")
+            self.assertTrue(backup_path.exists())
+            
+            # Modify data
+            projects[0]["name"] = "Modified"
+            io_utils.safe_write_json(storage.projects_path, projects)
+            
+            # Restore backup
+            storage.restore_backup(backup_path)
+            
+            # Check data is restored
+            restored_projects = storage.read_projects()
+            self.assertEqual(len(restored_projects), 1)
+            self.assertEqual(restored_projects[0].name, "Test")
+
+    def test_restore_backup_invalid_structure_raises(self) -> None:
+        """restore_backup with invalid backup raises ValueError."""
+        with TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / "data"
+            storage = Storage(data_dir)
+            storage.init_storage()
+            
+            # Create invalid zip (no backup markers)
+            invalid_zip = data_dir.parent / "invalid.zip"
+            import zipfile
+            with zipfile.ZipFile(invalid_zip, 'w') as zf:
+                zf.writestr("random_file.txt", "not a backup")
+            
+            with self.assertRaises(ValueError) as ctx:
+                storage.restore_backup(invalid_zip)
+            self.assertIn("format not recognized", str(ctx.exception).lower())
+
+    def test_compact_entries_large_volume(self) -> None:
+        """compact_entries_log handles large volume of events efficiently."""
+        with TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / "data"
+            storage = Storage(data_dir)
+            storage.init_storage()
+            
+            # Create 100 entries with multiple updates each
+            for i in range(100):
+                entry_id = f"entry{i:03d}" + "0" * 20  # Make 32 char ID
+                io_utils.append_jsonl(storage.entries_path, {
+                    "kind": "entry",
+                    "id": entry_id,
+                    "ts": f"2024-01-01T{i%24:02d}:00:00Z",
+                    "project_id": "p1",
+                    "type": "note",
+                    "title": f"Entry {i}",
+                    "tags": [],
+                    "content_path": f"entries/{entry_id}.md",
+                })
+                # Add 5 updates per entry
+                for j in range(5):
+                    io_utils.append_jsonl(storage.entries_path, {
+                        "kind": "entry_update",
+                        "ts": f"2024-01-02T{(i+j)%24:02d}:00:00Z",
+                        "entry_id": entry_id,
+                        "patch": {"title": f"Entry {i} v{j+1}"},
+                    })
+            
+            # Should have 600 lines (100 creates + 500 updates)
+            events_before = io_utils.read_jsonl(storage.entries_path)
+            self.assertEqual(len(events_before), 600)
+            
+            # Compact
+            result = storage.compact_entries_log()
+            
+            # Should have 100 lines (one per entry)
+            self.assertEqual(result["before_lines"], 600)
+            self.assertEqual(result["after_lines"], 100)
+            self.assertEqual(result["entries_count"], 100)
+            
+            # Verify entries are still readable
+            entries = storage.read_entries_meta()
+            self.assertEqual(len(entries), 100)
+            # Check last update was preserved
+            self.assertTrue(any("v5" in e.title for e in entries))
+

@@ -13,12 +13,69 @@ is open and local (JSON/JSONL + Markdown).
 ## Quick start
 
 ```sh
+# Initialize data directory
 python -m pige init
+
+# Create a project
 python -m pige project add "My Project" --desc "Context" --tags "alpha,client"
+
+# Create a sub-project (hierarchy)
+python -m pige project add "Sub-Project" --desc "Child project" --parent <PARENT_PROJECT_ID>
+
+# List projects
+python -m pige project list
+
+# Add entries with full parameters
 python -m pige entry add <PROJECT_ID> --type note --title "Kickoff" --body "Notes" --open
+python -m pige entry add <PROJECT_ID> --type meeting --title "Sprint Planning" \
+  --date 2024-01-15 --person "John Doe" --group "Dev Team" \
+  --meeting-start 10:00 --meeting-end 11:30 --tags "sprint,planning"
+python -m pige entry add <PROJECT_ID> --type decision --title "Use PostgreSQL" --decision-done
+
+# List, update, move, and delete entries
+python -m pige entry list <PROJECT_ID> --type meeting --limit 10
+python -m pige entry update <ENTRY_ID> --title "New Title" --tags "updated"
+python -m pige entry move <ENTRY_ID> <DEST_PROJECT_ID> --keep-tags --keep-people
+python -m pige entry delete <ENTRY_ID> --yes
+
+# Time tracking
 python -m pige time start <PROJECT_ID> --note "Focus block"
 python -m pige time stop
+python -m pige time today
+
+# Export project data
 python -m pige export project <PROJECT_ID> --mode raw
+python -m pige export project <PROJECT_ID> --mode narrative --from 2024-01-01 --to 2024-12-31
+python -m pige export meeting --entry <ENTRY_ID>
+python -m pige export weekly --from 2024-01-01 --to 2024-01-07
+python -m pige export hierarchy  # Export full project tree with indentation
+
+# Data migration and maintenance
+python -m pige migrate  # Migrate to latest schema (adds hierarchy fields)
+python -m pige compact  # Compact entries log (remove history, keep snapshot)
+```
+
+## Project Hierarchy
+
+PIGE supports hierarchical project organization (max 10 levels):
+
+```sh
+# Create parent project
+python -m pige project add "Client A" --desc "Main client folder"
+
+# Create child projects
+python -m pige project add "Project 1" --parent <CLIENT_A_ID>
+python -m pige project add "Project 2" --parent <CLIENT_A_ID>
+
+# Export hierarchy as indented Markdown
+python -m pige export hierarchy --include-archived
+```
+
+**Features:**
+- Maximum 10 levels of nesting (0-9)
+- Automatic cycle detection when moving projects
+- Custom display order within same level
+- Migration command for existing projects: `python -m pige migrate`
 ```
 
 ## Data layout
@@ -70,10 +127,42 @@ python -m pige gui
 GUI layout highlights:
 - Three-pane workflow (Projects, Entries, Editor) with a bottom Details panel
   (Project, Entry, Stats) and a bottom action bar (Timer + Save).
+- **Project Hierarchy**: TreeView supports parent-child relationships with expand/collapse.
+  - Click ▸/▾ to expand/collapse sub-projects
+  - Indentation shows hierarchy levels (max 10 levels)
+  - Expand/collapse state persisted in preferences
+  - Create sub-projects via CLI: `python -m pige project add "Child" --parent <PARENT_ID>`
+- **Tag Autocomplete**: Type in Tags fields to get dynamic suggestions from all existing tags.
+  - Press ↓ arrow or start typing to see suggestions
+  - Navigate with ↑/↓ arrows, select with Enter, dismiss with Esc
+  - Smart filtering: excludes already-entered tags, case-insensitive search
+  - Supports comma-separated tags with contextual completion
+- **Context Menus**: Right-click on items for quick actions:
+  - **Projects**: New Entry, Edit, Copy ID, Delete
+  - **Entries**: Open, Edit, Delete, Export Meeting, Mark Status, Create Tasks, Copy ID, Move to Project
 - Project and entry metadata are editable in the bottom panel (date, tags,
   person/group, meeting times, decision done).
-- Keyboard shortcuts: Save (Ctrl+S / ⌘S), Quit (Ctrl+Q / ⌘Q), Focus (F9),
-  zoom editor (Ctrl/Cmd + Plus/Minus/0).
+- **Advanced Search**: Use field-specific filters in the global search box:
+  - `tag:value` - Filter by tag (e.g., `tag:alpha tag:urgent`)
+  - `person:value` - Filter by person (e.g., `person:John` or `person:"Jane Doe"`)
+  - `group:value` - Filter by group
+  - `type:value` - Filter by entry type (note, meeting, decision, log)
+  - `date:YYYY-MM-DD` - Filter by exact date
+  - `date:>=YYYY-MM-DD` - Filter entries on or after date
+  - `date:<=YYYY-MM-DD` - Filter entries on or before date
+  - `status:value` - Filter by context status (created, actual, treated)
+  - `title:value` - Filter by title substring
+  - Example: `tag:sprint person:John type:meeting date:>=2024-01-01`
+- Keyboard shortcuts: 
+  - New Project (Ctrl+N / ⌘N)
+  - New Entry (Ctrl+E / ⌘E)
+  - Save (Ctrl+S / ⌘S)
+  - Quit (Ctrl+Q / ⌘Q)
+  - Focus Mode (F9)
+  - Zoom editor (Ctrl/Cmd + Plus/Minus/0)
+  - Toggle checkbox (Ctrl+Shift+X / ⌘Shift+X)
+  - Show keyboard shortcuts (F1)
+  - Delete selected item (Delete/Backspace)
 - Preferences are stored in `data/.pige_prefs.json` (search, show archived,
   create-activity toggle, project columns order).
 

@@ -13,6 +13,16 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
+from pige.core.exceptions import (
+    ProjectNotFoundError,
+    EntryNotFoundError,
+    TaskNotFoundError,
+    InvalidEntryTypeError,
+    MeetingHoursError,
+    TimerAlreadyRunningError,
+    TimerNotRunningError,
+    BackupFormatError,
+)
 from pige.core.models import EntryMeta, Project, Task, TimeLog, TimerState
 from pige.core.storage import (
     Storage,
@@ -104,12 +114,27 @@ class PigeService:
         tags: Iterable[str],
         person: str | None = None,
         group: str | None = None,
+        parent_id: str | None = None,
     ) -> Project:
         clean_name = (name or "").strip()
         if not clean_name:
             raise ValueError("Project name is required")
+        
+        # Validate parent exists if specified
+        if parent_id is not None:
+            parent = self._get_project(parent_id)
+            # Check maximum depth (prevent excessive nesting)
+            parent_depth = self.get_project_depth(parent_id)
+            if parent_depth >= 9:  # Parent at depth 9 means child would be at depth 10
+                raise ValueError(f"Cannot create project: maximum hierarchy depth (10) exceeded")
+        
         clean_person = (person or "").strip() or None
         clean_group = (group or "").strip() or None
+        
+        # Calculate display_order (append to end of siblings)
+        siblings = self.storage.get_project_children(parent_id)
+        display_order = max([s.display_order for s in siblings], default=-1) + 1
+        
         project = Project(
             id=ids.new_id(),
             name=clean_name,
@@ -119,11 +144,106 @@ class PigeService:
             created_at=dates.utc_now_iso(),
             person=clean_person,
             group=clean_group,
+            parent_id=parent_id,
+            display_order=display_order,
         )
         projects = self.storage.read_projects()
         projects.append(project)
         self.storage.write_projects(projects)
         return project
+
+    def get_project_depth(self, project_id: str) -> int:
+        """
+        Calculate the depth of a project in the hierarchy.
+        Root projects have depth 0, their children depth 1, etc.
+        
+        Args:
+            project_id: Project ID to calculate depth for
+            
+        Returns:
+            Depth level (0 for root)
+        """
+        ancestors = self.storage.get_project_ancestors(project_id)
+        return len(ancestors)
+
+    def move_project(self, project_id: str, new_parent_id: str | None) -> None:
+        """
+        Move a project to a new parent with validation.
+        
+        Args:
+            project_id: Project to move
+            new_parent_id: New parent ID, or None for root
+            
+        Raises:
+            ValueError: If validation fails (cycle, depth, not found)
+        """
+        # Validate project exists
+        project = self._get_project(project_id)
+        
+        # Validate new parent exists if specified
+        if new_parent_id is not None:
+            self._get_project(new_parent_id)
+            
+            # Check depth after move
+            new_parent_depth = self.get_project_depth(new_parent_id)
+            # Get the maximum depth of any descendant relative to the project being moved
+            descendants = self.storage.get_project_descendants(project_id)
+            if descendants:
+                current_depth = self.get_project_depth(project_id)
+                max_descendant_relative_depth = max(
+                    [self.get_project_depth(d.id) - current_depth for d in descendants]
+                )
+            else:
+                max_descendant_relative_depth = 0
+            
+            # New total depth = new parent depth + 1 (for project) + deepest descendant
+            new_total_depth = new_parent_depth + 1 + max_descendant_relative_depth
+            
+            if new_total_depth > 9:  # Max depth is 9 (levels 0-9 = 10 levels)
+                raise ValueError(
+                    f"Cannot move project: would exceed maximum depth (10). "
+                    f"New depth would be {new_total_depth + 1}"
+                )
+        
+        # Delegate to storage (which checks for cycles)
+        self.storage.move_project(project_id, new_parent_id)
+
+    def reorder_projects_in_parent(
+        self, project_ids: list[str], parent_id: str | None = None
+    ) -> None:
+        """
+        Reorder projects within the same parent level.
+        
+        Args:
+            project_ids: List of project IDs in desired order
+            parent_id: Parent ID (None for root level)
+        """
+        # Validate all projects exist
+        for pid in project_ids:
+            self._get_project(pid)
+        
+        # Delegate to storage
+        self.storage.reorder_projects(project_ids, parent_id)
+
+    def get_project_tree(self) -> list[dict]:
+        """
+        Get hierarchical project tree structure.
+        
+        Returns:
+            List of dicts with 'project' and 'children' keys
+        """
+        def build_tree(parent_id: str | None) -> list[dict]:
+            children_projects = self.storage.get_project_children(parent_id)
+            result = []
+            for child in children_projects:
+                result.append({
+                    "project": child,
+                    "children": build_tree(child.id),
+                    "depth": self.get_project_depth(child.id),
+                })
+            return result
+        
+        return build_tree(None)
 
     def list_projects(self, status: str = "active") -> list[Project]:
         projects = self.storage.read_projects()
@@ -172,6 +292,66 @@ class PigeService:
         entries.sort(key=lambda item: (_entry_local_date(item), item.ts), reverse=True)
         return projects, entries
 
+    def advanced_search(
+        self, query: str, *, include_body: bool = False
+    ) -> tuple[list[Project], list[EntryMeta]]:
+        """Advanced search with field-specific filters.
+        
+        Supports queries like:
+        - tag:alpha person:John type:meeting
+        - date:>=2024-01-01 date:<=2024-12-31
+        - person:"Jane Doe" status:actual
+        
+        Args:
+            query: Search query with field:value syntax
+            include_body: If True, also search in entry body content
+            
+        Returns:
+            Tuple of (matching_projects, matching_entries)
+        """
+        from pige.core.search import parse_search_query, apply_search_filters
+        
+        if not query or not query.strip():
+            return [], []
+        
+        # Parse the query
+        filters = parse_search_query(query)
+        
+        # For projects, use basic search on free text if present
+        projects: list[Project] = []
+        if filters.free_text:
+            needle = filters.free_text.lower()
+            for project in self.storage.read_projects():
+                haystack = " ".join(
+                    [
+                        project.name,
+                        project.description or "",
+                        " ".join(project.tags),
+                        project.person or "",
+                        project.group or "",
+                    ]
+                ).lower()
+                if needle in haystack:
+                    projects.append(project)
+            projects.sort(key=lambda item: item.name.lower())
+        
+        # For entries, apply structured filters
+        entries = self.storage.read_entries_meta()
+        entries = apply_search_filters(entries, filters)
+        
+        # If include_body is True and there's free text, also search in body
+        if include_body and filters.free_text:
+            needle = filters.free_text.lower()
+            filtered_entries = []
+            for entry in entries:
+                body = self.storage.read_entry_body(entry)
+                if needle in body.lower():
+                    filtered_entries.append(entry)
+            entries = filtered_entries
+        
+        entries.sort(key=lambda item: (_entry_local_date(item), item.ts), reverse=True)
+        return projects, entries
+
     def update_project(
         self,
         project_id: str,
@@ -217,7 +397,7 @@ class PigeService:
             projects[idx] = updated
             break
         if updated is None:
-            raise ValueError(f"Project {project_id} not found")
+            raise ProjectNotFoundError(project_id)
         self.storage.write_projects(projects)
         return updated
 
@@ -225,7 +405,7 @@ class PigeService:
         projects = self.storage.read_projects()
         project = next((item for item in projects if item.id == project_id), None)
         if not project:
-            raise ValueError(f"Project {project_id} not found")
+            raise ProjectNotFoundError(project_id)
 
         delete_ts = dates.utc_now_iso()
         entries = [
@@ -544,8 +724,7 @@ class PigeService:
         if not clean_title:
             raise ValueError("Entry title is required")
         if entry_type not in VALID_ENTRY_TYPES:
-            valid_types = ", ".join(VALID_ENTRY_TYPES)
-            raise ValueError(f"Invalid entry type {entry_type}. Valid types: {valid_types}")
+            raise InvalidEntryTypeError(entry_type, VALID_ENTRY_TYPES)
         if decision_done is not None and entry_type != "decision":
             raise ValueError("Decision flag only valid for decision entries")
         if decision_done is not None and not isinstance(decision_done, bool):
@@ -558,7 +737,7 @@ class PigeService:
             start_dt = datetime.strptime(normalized_start, "%H:%M")
             end_dt = datetime.strptime(normalized_end, "%H:%M")
             if start_dt > end_dt:
-                raise ValueError("Meeting start must be before end")
+                raise MeetingHoursError("Meeting start must be before end")
         entry_date_value = entry_date or datetime.now().astimezone().date()
         if entry_date is not None:
             ts_value = dates.local_date_midday_to_utc_z(entry_date_value)
@@ -822,7 +1001,7 @@ class PigeService:
         state = self.storage.read_timer_state()
         if state.running:
             running_id = state.project_id or "unknown"
-            raise ValueError(f"Timer already running for project {running_id}")
+            raise TimerAlreadyRunningError(running_id)
         project = self._get_project(project_id)
         new_state = TimerState(
             running=True,
@@ -836,7 +1015,7 @@ class PigeService:
     def time_stop(self, create_activity: bool = False) -> tuple[TimeLog, Project]:
         state = self.storage.read_timer_state()
         if not state.running:
-            raise ValueError("Timer is not running")
+            raise TimerNotRunningError()
         if not state.project_id or not state.start_ts:
             raise ValueError("Timer state is invalid")
         project = self._get_project(state.project_id)
@@ -1572,7 +1751,7 @@ class PigeService:
         for project in self.storage.read_projects():
             if project.id == project_id:
                 return project
-        raise ValueError(f"Project {project_id} not found")
+        raise ProjectNotFoundError(project_id)
 
     def _ensure_project_exists(self, project_id: str) -> Project:
         return self._get_project(project_id)
@@ -1598,6 +1777,108 @@ class PigeService:
             entry_date=entry_date,
         )
         return entry
+
+    def export_project_hierarchy(
+        self,
+        out_path: Path | None = None,
+        *,
+        include_archived: bool = False,
+    ) -> Path:
+        """
+        Export project hierarchy as indented Markdown.
+        
+        Args:
+            out_path: Output file path (default: exports/project_hierarchy.md)
+            include_archived: Include archived projects
+            
+        Returns:
+            Path to generated file
+        """
+        if out_path is None:
+            out_path = self.storage.exports_dir / "project_hierarchy.md"
+        
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Get project tree
+        tree = self.get_project_tree()
+        
+        lines: list[str] = [
+            "# Project Hierarchy",
+            "",
+            f"**Generated:** {dates.local_now_iso()}",
+            "",
+            "---",
+            "",
+        ]
+        
+        if not tree:
+            lines.append("No projects found.")
+        else:
+            # Recursive function to format tree with indentation
+            def format_tree_node(node: dict, indent_level: int = 0) -> None:
+                project = node["project"]
+                children = node["children"]
+                
+                # Skip archived if not included
+                if not include_archived and project.status == "archived":
+                    return
+                
+                # Format project line with indentation
+                indent = "  " * indent_level
+                icon = "Folder" if children else "File"
+                status_icon = "Active" if project.status == "active" else "Archived"
+                
+                # Count entries
+                entries = [e for e in self.storage.read_entries_meta() if e.project_id == project.id]
+                entry_count = len(entries)
+                
+                # Count tasks
+                tasks = [t for t in self.storage.read_tasks() if t.project_id == project.id]
+                open_tasks = sum(1 for t in tasks if t.status in ("open", "in_progress"))
+                
+                lines.append(
+                    f"{indent}- **{project.name}** [{status_icon}, {icon}] "
+                    f"({entry_count} entries, {open_tasks} open tasks)"
+                )
+                
+                # Add metadata
+                if project.description:
+                    lines.append(f"{indent}  *{project.description}*")
+                
+                if project.tags:
+                    lines.append(f"{indent}  Tags: {', '.join(project.tags)}")
+                
+                if project.person:
+                    lines.append(f"{indent}  Person: {project.person}")
+                
+                if project.group:
+                    lines.append(f"{indent}  Group: {project.group}")
+                
+                lines.append("")
+                
+                # Recursively format children
+                for child_node in children:
+                    format_tree_node(child_node, indent_level + 1)
+            
+            # Format each root node
+            for root_node in tree:
+                format_tree_node(root_node, 0)
+        
+        # Add legend
+        lines.extend([
+            "---",
+            "",
+            "**Legend:**",
+            "- Folder: Project with children",
+            "- File: Project without children",
+            "- Active/Archived: Project status",
+            "",
+        ])
+        
+        content = "\n".join(lines)
+        io_utils.safe_write_text(out_path, content)
+        
+        return out_path
 
 
 def _normalize_time(value: str | None) -> str | None:

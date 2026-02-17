@@ -15,6 +15,8 @@ class Project:
     person: Optional[str] = None
     group: Optional[str] = None
     links: list[str] = field(default_factory=list)
+    parent_id: Optional[str] = None  # Parent project ID for hierarchy
+    display_order: int = 0  # Custom display order within same level
 
 
 @dataclass

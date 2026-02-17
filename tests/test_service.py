@@ -3,6 +3,13 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from pige.core.exceptions import (
+    ProjectNotFoundError,
+    InvalidEntryTypeError,
+    MeetingHoursError,
+    TimerAlreadyRunningError,
+    TimerNotRunningError,
+)
 from pige.core.models import TimeLog, TimerState
 from pige.core.service import PigeService
 from pige.core.storage import Storage
@@ -342,9 +349,11 @@ class TestService(unittest.TestCase):
             service.storage.write_timer_state(
                 TimerState(True, project.id, dates.utc_now_iso(), None)
             )
-            with self.assertRaises(ValueError) as ctx:
+            with self.assertRaises(TimerAlreadyRunningError) as ctx:
                 service.time_start(project.id, None)
-            self.assertIn("Timer already running", str(ctx.exception))
+            msg = str(ctx.exception).lower()
+            self.assertIn("timer", msg)
+            self.assertIn("already running", msg)
 
     def test_export_project_raw(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -474,7 +483,8 @@ class TestService(unittest.TestCase):
             service = self._build_service(tmp)
             with self.assertRaises(ValueError) as ctx:
                 service.add_entry("missing", "note", "Hello", [], None)
-            self.assertIn("Project missing not found", str(ctx.exception))
+            self.assertIn("Project 'missing' not found", str(ctx.exception))
+            self.assertIn("Tip:", str(ctx.exception))
 
     def test_list_in_progress_threads_empty_when_no_entries(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -774,3 +784,64 @@ class TestService(unittest.TestCase):
             self.assertEqual(by_id[e1.id].title, "First updated")
             self.assertEqual(by_id[e1.id].tags, ["a"])
             self.assertEqual(by_id[e2.id].title, "Second")
+
+    def test_custom_exceptions_project_not_found(self) -> None:
+        """Test ProjectNotFoundError has helpful message."""
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            with self.assertRaises(ProjectNotFoundError) as ctx:
+                service._get_project("nonexistent")
+            msg = str(ctx.exception)
+            self.assertIn("nonexistent", msg)
+            self.assertIn("Tip:", msg)
+            self.assertIn("python -m pige project list", msg)
+
+    def test_custom_exceptions_invalid_entry_type(self) -> None:
+        """Test InvalidEntryTypeError lists valid types."""
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Test", None, [])
+            with self.assertRaises(InvalidEntryTypeError) as ctx:
+                service.add_entry(project.id, "invalid_type", "Title", [], "")
+            msg = str(ctx.exception)
+            self.assertIn("invalid_type", msg)
+            self.assertIn("note", msg)
+            self.assertIn("meeting", msg)
+
+    def test_custom_exceptions_timer_already_running(self) -> None:
+        """Test TimerAlreadyRunningError shows which project."""
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project1 = service.create_project("Project1", None, [])
+            project2 = service.create_project("Project2", None, [])
+            service.time_start(project1.id, None)
+            with self.assertRaises(TimerAlreadyRunningError) as ctx:
+                service.time_start(project2.id, None)
+            msg = str(ctx.exception)
+            self.assertIn(project1.id, msg)
+            self.assertIn("Tip:", msg)
+
+    def test_custom_exceptions_timer_not_running(self) -> None:
+        """Test TimerNotRunningError has helpful message."""
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            with self.assertRaises(TimerNotRunningError) as ctx:
+                service.time_stop()
+            msg = str(ctx.exception).lower()
+            self.assertIn("no timer", msg)
+            self.assertIn("tip:", msg)
+
+    def test_custom_exceptions_meeting_hours_error(self) -> None:
+        """Test MeetingHoursError when start > end."""
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Test", None, [])
+            with self.assertRaises(MeetingHoursError) as ctx:
+                service.add_entry(
+                    project.id, "meeting", "Meeting", [], "",
+                    start_time="15:00", end_time="14:00"
+                )
+            msg = str(ctx.exception)
+            self.assertIn("start must be before end", msg.lower())
+            self.assertIn("HH:MM", msg)
+

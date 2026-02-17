@@ -90,6 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     project_add.add_argument("name")
     project_add.add_argument("--desc")
     project_add.add_argument("--tags")
+    project_add.add_argument("--parent", help="Parent project ID (for hierarchy)")
     project_list = project_sub.add_parser("list")
     project_list.add_argument(
         "--status",
@@ -99,13 +100,52 @@ def main(argv: list[str] | None = None) -> int:
 
     entry_parser = subparsers.add_parser("entry")
     entry_sub = entry_parser.add_subparsers(dest="entry_cmd", required=True)
+    
+    # entry add - Enhanced with all parameters
     entry_add = entry_sub.add_parser("add")
     entry_add.add_argument("project_id")
-    entry_add.add_argument("--type", required=True)
+    entry_add.add_argument("--type", required=True, choices=["note", "meeting", "decision", "log"])
     entry_add.add_argument("--title", required=True)
-    entry_add.add_argument("--tags")
-    entry_add.add_argument("--body")
-    entry_add.add_argument("--open", action="store_true")
+    entry_add.add_argument("--tags", help="Comma-separated list of tags")
+    entry_add.add_argument("--body", help="Entry body content")
+    entry_add.add_argument("--date", dest="entry_date", help="Entry date (YYYY-MM-DD, default: today)")
+    entry_add.add_argument("--person", help="Person associated with entry")
+    entry_add.add_argument("--group", help="Group associated with entry")
+    entry_add.add_argument("--meeting-start", dest="meeting_start", help="Meeting start time (HH:MM)")
+    entry_add.add_argument("--meeting-end", dest="meeting_end", help="Meeting end time (HH:MM)")
+    entry_add.add_argument("--decision-done", dest="decision_done", action="store_true", help="Mark decision as done")
+    entry_add.add_argument("--open", action="store_true", help="Open entry file after creation")
+
+    # entry update - New command
+    entry_update = entry_sub.add_parser("update")
+    entry_update.add_argument("entry_id", help="Entry ID to update")
+    entry_update.add_argument("--title", help="New title")
+    entry_update.add_argument("--tags", help="New tags (comma-separated)")
+    entry_update.add_argument("--date", dest="entry_date", help="New entry date (YYYY-MM-DD)")
+    entry_update.add_argument("--person", help="New person")
+    entry_update.add_argument("--group", help="New group")
+    entry_update.add_argument("--meeting-start", dest="meeting_start", help="New meeting start time (HH:MM)")
+    entry_update.add_argument("--meeting-end", dest="meeting_end", help="New meeting end time (HH:MM)")
+    entry_update.add_argument("--decision-done", dest="decision_done", type=lambda x: x.lower() in ('true', '1', 'yes'), help="Decision done status (true/false)")
+    entry_update.add_argument("--context-status", dest="context_status", choices=["created", "actual", "treated"], help="Context status")
+
+    # entry delete - New command
+    entry_delete = entry_sub.add_parser("delete")
+    entry_delete.add_argument("entry_id", help="Entry ID to delete")
+    entry_delete.add_argument("--yes", action="store_true", help="Skip confirmation")
+
+    # entry move - New command
+    entry_move = entry_sub.add_parser("move")
+    entry_move.add_argument("entry_id", help="Entry ID to move")
+    entry_move.add_argument("dest_project_id", help="Destination project ID")
+    entry_move.add_argument("--keep-tags", action="store_true", help="Keep tags when moving")
+    entry_move.add_argument("--keep-people", action="store_true", help="Keep person/group when moving")
+
+    # entry list - New command
+    entry_list = entry_sub.add_parser("list")
+    entry_list.add_argument("project_id", help="Project ID to list entries from")
+    entry_list.add_argument("--type", help="Filter by entry type")
+    entry_list.add_argument("--limit", type=int, default=20, help="Maximum number of entries to show")
 
     log_parser = subparsers.add_parser("log")
     log_sub = log_parser.add_subparsers(dest="log_cmd", required=True)
@@ -151,9 +191,27 @@ def main(argv: list[str] | None = None) -> int:
     export_weekly.add_argument("--out")
     export_weekly.add_argument("--include-time", action="store_true")
 
+    export_hierarchy = export_sub.add_parser("hierarchy", help="Export project hierarchy tree")
+    export_hierarchy.add_argument("--out", help="Output file path")
+    export_hierarchy.add_argument(
+        "--include-archived",
+        action="store_true",
+        help="Include archived projects in export"
+    )
+
     compact_parser = subparsers.add_parser(
         "compact",
         help="Compact entries log to a snapshot (removes update/delete history)",
+    )
+
+    migrate_parser = subparsers.add_parser(
+        "migrate",
+        help="Migrate data to latest schema (adds hierarchy fields to projects)",
+    )
+    
+    rebuild_index_parser = subparsers.add_parser(
+        "rebuild-index",
+        help="Rebuild full-text search index from all data",
     )
 
     args = parser.parse_args(argv)
@@ -171,12 +229,37 @@ def main(argv: list[str] | None = None) -> int:
                 f"({recap['entries_count']} entries)"
             )
             return 0
+        
+        if args.command == "migrate":
+            stats = service.storage.migrate_projects_hierarchy()
+            print(f"Migration complete:")
+            print(f"  Total projects: {stats['total']}")
+            print(f"  Migrated: {stats['migrated']}")
+            print(f"  Already migrated: {stats['already_migrated']}")
+            return 0
+        
+        if args.command == "rebuild-index":
+            print("Rebuilding search index...")
+            stats = service.storage.rebuild_search_index()
+            print(f"Search index rebuilt successfully:")
+            print(f"  Entries: {stats['entries']}")
+            print(f"  Projects: {stats['projects']}")
+            print(f"  Tasks: {stats['tasks']}")
+            return 0
 
         if args.command == "project":
             if args.project_cmd == "add":
                 tags = strings.parse_tags(args.tags)
-                project = service.create_project(args.name, args.desc, tags)
+                parent_id = getattr(args, "parent", None)
+                project = service.create_project(
+                    args.name, 
+                    args.desc, 
+                    tags,
+                    parent_id=parent_id
+                )
                 print(f"Project created: {project.id}")
+                if parent_id:
+                    print(f"  Parent: {parent_id}")
                 return 0
             if args.project_cmd == "list":
                 projects = service.list_projects(args.status)
@@ -187,18 +270,117 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 return 0
 
-        if args.command == "entry" and args.entry_cmd == "add":
-            tags = strings.parse_tags(args.tags)
-            entry, md_path = service.add_entry(
-                args.project_id, args.type, args.title, tags, args.body
-            )
-            print(f"Entry created: {entry.id}")
-            if args.open:
-                if not _open_file(md_path):
+        if args.command == "entry":
+            if args.entry_cmd == "add":
+                tags = strings.parse_tags(args.tags)
+                # Parse optional parameters
+                entry_date = _parse_date_arg(getattr(args, 'entry_date', None))
+                person = getattr(args, 'person', None) or None
+                group = getattr(args, 'group', None) or None
+                start_time = getattr(args, 'meeting_start', None) or None
+                end_time = getattr(args, 'meeting_end', None) or None
+                decision_done = getattr(args, 'decision_done', False)
+                
+                entry, md_path = service.add_entry(
+                    args.project_id, 
+                    args.type, 
+                    args.title, 
+                    tags, 
+                    args.body,
+                    entry_date=entry_date,
+                    person=person,
+                    group=group,
+                    start_time=start_time,
+                    end_time=end_time,
+                    decision_done=decision_done if args.type == "decision" else None
+                )
+                print(f"Entry created: {entry.id}")
+                if args.open:
+                    if not _open_file(md_path):
+                        print(str(md_path))
+                else:
                     print(str(md_path))
-            else:
-                print(str(md_path))
-            return 0
+                return 0
+
+            if args.entry_cmd == "update":
+                # Prepare update parameters (only non-None values)
+                update_kwargs = {}
+                if args.title:
+                    update_kwargs['title'] = args.title
+                if args.tags is not None:
+                    update_kwargs['tags'] = strings.parse_tags(args.tags)
+                if hasattr(args, 'entry_date') and args.entry_date:
+                    update_kwargs['entry_date'] = _parse_date_arg(args.entry_date)
+                if hasattr(args, 'person') and args.person is not None:
+                    update_kwargs['person'] = args.person
+                if hasattr(args, 'group') and args.group is not None:
+                    update_kwargs['group'] = args.group
+                if hasattr(args, 'meeting_start') and args.meeting_start:
+                    update_kwargs['start_time'] = args.meeting_start
+                if hasattr(args, 'meeting_end') and args.meeting_end:
+                    update_kwargs['end_time'] = args.meeting_end
+                if hasattr(args, 'decision_done') and args.decision_done is not None:
+                    update_kwargs['decision_done'] = args.decision_done
+                if hasattr(args, 'context_status') and args.context_status:
+                    update_kwargs['context_status'] = args.context_status
+                
+                if not update_kwargs:
+                    _print_error("No fields to update. Specify at least one --field option.")
+                    return 1
+                
+                entry = service.update_entry_meta(args.entry_id, **update_kwargs)
+                print(f"Entry updated: {entry.id}")
+                return 0
+
+            if args.entry_cmd == "delete":
+                if not args.yes:
+                    # Get entry info for confirmation
+                    entries = service.storage.read_entries_meta()
+                    entry = next((e for e in entries if e.id == args.entry_id), None)
+                    if not entry:
+                        _print_error(f"Entry not found: {args.entry_id}")
+                        return 1
+                    print(f"About to delete entry: {entry.title} ({entry.type})")
+                    response = input("Are you sure? (yes/no): ")
+                    if response.lower() not in ('yes', 'y'):
+                        print("Cancelled.")
+                        return 0
+                
+                service.delete_entry(args.entry_id)
+                print(f"Entry deleted: {args.entry_id}")
+                return 0
+
+            if args.entry_cmd == "move":
+                service.move_entry(
+                    args.entry_id,
+                    args.dest_project_id,
+                    keep_tags=args.keep_tags,
+                    keep_people=args.keep_people
+                )
+                print(f"Entry moved to project: {args.dest_project_id}")
+                return 0
+
+            if args.entry_cmd == "list":
+                entries = service.storage.read_entries_meta()
+                # Filter by project
+                entries = [e for e in entries if e.project_id == args.project_id]
+                # Filter by type if specified
+                if args.type:
+                    entries = [e for e in entries if e.type == args.type]
+                # Sort by date (newest first)
+                entries.sort(key=lambda e: e.entry_date, reverse=True)
+                # Limit results
+                entries = entries[:args.limit]
+                
+                if not entries:
+                    print("No entries found.")
+                    return 0
+                
+                for entry in entries:
+                    tags_str = strings.format_tags(entry.tags)
+                    status_str = f" [{entry.context_status}]" if entry.context_status != "created" else ""
+                    print(f"{entry.id} | {entry.entry_date} | {entry.type} | {entry.title}{status_str} | tags: {tags_str}")
+                return 0
 
         if args.command == "log" and args.log_cmd == "today":
             grouped = service.log_today()
@@ -301,6 +483,15 @@ def main(argv: list[str] | None = None) -> int:
                 include_time=args.include_time,
             )
             print(export_path)
+            return 0
+        
+        if args.command == "export" and args.export_cmd == "hierarchy":
+            out_path = Path(args.out) if args.out else None
+            export_path = service.export_project_hierarchy(
+                out_path,
+                include_archived=args.include_archived,
+            )
+            print(f"Project hierarchy exported to: {export_path}")
             return 0
 
         _print_error("Not implemented")
