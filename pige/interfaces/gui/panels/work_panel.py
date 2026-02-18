@@ -633,9 +633,11 @@ class WorkPanel(ttk.Frame):
             # Refresh explorer
             self._refresh_explorer()
             
-            # Expand the new project in tree
-            self.explorer_tree.item(f"project:{project.id}", open=True)
-            self.explorer_tree.selection_set(f"project:{project.id}")
+            # Expand the new project in tree (if it exists)
+            new_item = f"project:{project.id}"
+            if self.explorer_tree.exists(new_item):
+                self.explorer_tree.item(new_item, open=True)
+                self.explorer_tree.selection_set(new_item)
             
             messagebox.showinfo("Succès", f"Projet '{name}' créé!")
         except Exception as e:
@@ -689,9 +691,15 @@ class WorkPanel(ttk.Frame):
             # Refresh explorer
             self._refresh_explorer()
             
-            # Expand parent and select new project
-            self.explorer_tree.item(f"project:{parent_id}", open=True)
-            self.explorer_tree.selection_set(f"project:{project.id}")
+            # Expand parent and select new project (if they exist in tree)
+            parent_item = f"project:{parent_id}"
+            new_item = f"project:{project.id}"
+            
+            if self.explorer_tree.exists(parent_item):
+                self.explorer_tree.item(parent_item, open=True)
+            
+            if self.explorer_tree.exists(new_item):
+                self.explorer_tree.selection_set(new_item)
             
             messagebox.showinfo("Succès", f"Sous-projet '{name}' créé sous '{parent_project.name}'!")
         except Exception as e:
