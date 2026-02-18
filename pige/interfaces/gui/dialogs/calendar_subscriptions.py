@@ -373,16 +373,22 @@ class NewSubscriptionDialog(tk.Toplevel):
         
         # Project
         ttk.Label(form_frame, text="Projet cible:").grid(row=3, column=0, sticky=tk.W, pady=5)
-        self.project_var = tk.StringVar()
-        self.project_combo = ttk.Combobox(form_frame, textvariable=self.project_var, state="readonly", width=38)
-        self.project_combo.grid(row=3, column=1, sticky=tk.EW, pady=5)
         
-        # Load projects
+        project_frame = ttk.Frame(form_frame)
+        project_frame.grid(row=3, column=1, sticky=tk.EW, pady=5)
+        
+        self.project_var = tk.StringVar()
+        self.project_combo = ttk.Combobox(project_frame, textvariable=self.project_var, state="readonly", width=30)
+        self.project_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Load projects with "Créer nouveau projet" option
         projects = self.service.list_projects(status="all")
         self.projects_by_name = {p.name: p.id for p in projects}
-        self.project_combo["values"] = list(self.projects_by_name.keys())
-        if projects:
-            self.project_combo.current(0)
+        self.projects_by_name["➕ Créer un nouveau projet pour ce calendrier"] = None
+        
+        project_names = ["➕ Créer un nouveau projet pour ce calendrier"] + [p.name for p in projects]
+        self.project_combo["values"] = project_names
+        self.project_combo.current(0)  # Default to create new project
         
         # Options
         ttk.Separator(form_frame, orient=tk.HORIZONTAL).grid(row=4, column=0, columnspan=2, sticky=tk.EW, pady=15)
@@ -438,6 +444,7 @@ class NewSubscriptionDialog(tk.Toplevel):
             return
         
         project_id = self.projects_by_name[project_name]
+        create_new_project = (project_id is None)
         
         try:
             sub = self.sync_manager.create_subscription(
@@ -445,7 +452,8 @@ class NewSubscriptionDialog(tk.Toplevel):
                 source_url=source,
                 project_id=project_id,
                 import_past_events=self.import_past_var.get(),
-                auto_sync=self.auto_sync_var.get()
+                auto_sync=self.auto_sync_var.get(),
+                create_project_per_calendar=create_new_project
             )
             
             # Optionally sync immediately
@@ -456,9 +464,19 @@ class NewSubscriptionDialog(tk.Toplevel):
             
             if result:
                 stats = self.sync_manager.sync_subscription(sub.id)
+                
+                # Get project name for display
+                if sub.project_id:
+                    projects = self.service.list_projects(status="all")
+                    project = next((p for p in projects if p.id == sub.project_id), None)
+                    project_name = project.name if project else "Projet créé"
+                else:
+                    project_name = "Aucun projet"
+                
                 messagebox.showinfo(
                     "Synchronisation initiale",
-                    f"✓ {stats['added']} événement(s) importé(s)"
+                    f"✓ {stats['added']} événement(s) importé(s)\n"
+                    f"Projet: {project_name}"
                 )
             
             self.destroy()

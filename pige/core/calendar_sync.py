@@ -45,7 +45,8 @@ class CalendarSyncManager:
                 created_at=item.get("created_at", ""),
                 event_mapping=item.get("event_mapping", {}),
                 import_past_events=item.get("import_past_events", False),
-                auto_sync=item.get("auto_sync", False)
+                auto_sync=item.get("auto_sync", False),
+                create_project_per_calendar=item.get("create_project_per_calendar", True)
             )
             subscriptions.append(sub)
         
@@ -68,7 +69,8 @@ class CalendarSyncManager:
                 "created_at": sub.created_at,
                 "event_mapping": sub.event_mapping,
                 "import_past_events": sub.import_past_events,
-                "auto_sync": sub.auto_sync
+                "auto_sync": sub.auto_sync,
+                "create_project_per_calendar": sub.create_project_per_calendar
             })
         
         safe_write_json(self.subscriptions_file, data)
@@ -78,13 +80,23 @@ class CalendarSyncManager:
         self,
         name: str,
         source_url: str,
-        project_id: str,
+        project_id: str | None = None,
         import_past_events: bool = False,
-        auto_sync: bool = False
+        auto_sync: bool = False,
+        create_project_per_calendar: bool = True
     ) -> CalendarSubscription:
         """Create a new calendar subscription."""
         from pige.core.models import CalendarSubscription
         import uuid
+        
+        # If no project specified and create_project_per_calendar, create one
+        if not project_id and create_project_per_calendar:
+            project = self.service.create_project(
+                name=f"📅 {name}",
+                description=f"Calendrier externe synchronisé: {name}",
+                tags=["calendar-sync", "external"]
+            )
+            project_id = project.id
         
         sub = CalendarSubscription(
             id=str(uuid.uuid4()),
@@ -94,7 +106,8 @@ class CalendarSyncManager:
             active=True,
             created_at=datetime.now().isoformat(),
             import_past_events=import_past_events,
-            auto_sync=auto_sync
+            auto_sync=auto_sync,
+            create_project_per_calendar=create_project_per_calendar
         )
         
         # Save
@@ -165,6 +178,24 @@ class CalendarSyncManager:
         
         if not subscription or not subscription.active:
             return {"added": 0, "updated": 0, "deleted": 0, "errors": ["Subscription not found or inactive"]}
+        
+        # Ensure project exists (create if needed)
+        if not subscription.project_id:
+            if subscription.create_project_per_calendar:
+                project = self.service.create_project(
+                    name=f"📅 {subscription.name}",
+                    description=f"Calendrier externe synchronisé: {subscription.name}",
+                    tags=["calendar-sync", "external"]
+                )
+                subscription.project_id = project.id
+                # Save subscription with new project_id
+                for sub in subs:
+                    if sub.id == subscription_id:
+                        sub.project_id = project.id
+                        break
+                self.save_subscriptions(subs)
+            else:
+                return {"added": 0, "updated": 0, "deleted": 0, "errors": ["No target project specified"]}
         
         try:
             # Import icalendar

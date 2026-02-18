@@ -86,7 +86,7 @@ class CalendarSubscription:
     id: str
     name: str
     source_url: str  # URL or file path to ICS
-    project_id: str  # Target project for imported entries
+    project_id: Optional[str] = None  # Target project (None = auto-create per calendar)
     active: bool = True
     last_sync: Optional[str] = None  # ISO timestamp
     sync_interval_minutes: int = 60  # Auto-sync interval
@@ -96,4 +96,5 @@ class CalendarSubscription:
     # Options
     import_past_events: bool = False  # Import events before today
     auto_sync: bool = False  # Enable automatic sync
+    create_project_per_calendar: bool = True  # Create separate project for this calendar
 
