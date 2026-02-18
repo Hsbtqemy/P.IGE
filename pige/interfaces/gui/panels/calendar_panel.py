@@ -658,145 +658,210 @@ class CalendarPanel(ttk.Frame):
             widget.bind("<Button-1>", lambda e, d=day_date: self._on_day_click(d))
     
     def _render_week_view(self) -> None:
-        """Render week calendar view with hourly slots."""
+        """Render week calendar view with proper grid alignment."""
         # Clear container
         for widget in self.view_container.winfo_children():
             widget.destroy()
         
-        week_frame = ttk.Frame(self.view_container)
-        week_frame.pack(fill=tk.BOTH, expand=True)
+        # Main container
+        main_frame = ttk.Frame(self.view_container)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Create scrollable canvas
-        canvas = tk.Canvas(week_frame, bg="white")
-        scrollbar = ttk.Scrollbar(week_frame, orient=tk.VERTICAL, command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
-        
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Day headers
-        headers_frame = ttk.Frame(scrollable_frame)
-        headers_frame.grid(row=0, column=0, columnspan=8, sticky="ew", pady=(0, 5))
-        
-        ttk.Label(headers_frame, text="", width=8).grid(row=0, column=0)  # Time column
-        
+        # Day headers with fixed width
+        day_names = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
         today = date.today()
-        for i in range(7):
-            day_date = self.current_week_start + timedelta(days=i)
-            day_name = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"][i]
-            
+        
+        for col in range(7):
+            day_date = self.current_week_start + timedelta(days=col)
+            day_name = day_names[col]
             is_today = day_date == today
-            is_weekend = i >= 5
+            is_weekend = col >= 5
             
+            # Header with date
             header_text = f"{day_name}\n{day_date.day}/{day_date.month}"
             if is_today:
-                header_text = f"🔵 {header_text}"
+                header_text = f"🔵 {day_name}\n{day_date.day}/{day_date.month}"
             
-            label = ttk.Label(
-                headers_frame,
+            header = tk.Label(
+                main_frame,
                 text=header_text,
-                font=("TkDefaultFont", 9, "bold" if is_today else "normal"),
-                anchor=tk.CENTER,
-                foreground="#0066cc" if is_today else ("#888" if is_weekend else "#333")
-            )
-            label.grid(row=0, column=i+1, sticky="ew", padx=1)
-            headers_frame.columnconfigure(i+1, weight=1)
-        
-        # Week grid with day cells
-        for i in range(7):
-            day_date = self.current_week_start + timedelta(days=i)
-            date_str = day_date.isoformat()
-            
-            is_today = day_date == today
-            is_weekend = i >= 5
-            is_selected = day_date == self.selected_date
-            
-            # Choose background
-            if is_today:
-                bg = self.colors["today"]
-            elif is_selected:
-                bg = self.colors["selected"]
-            elif is_weekend:
-                bg = self.colors["weekend"]
-            else:
-                bg = self.colors["default"]
-            
-            # Day cell
-            day_cell = tk.Frame(
-                scrollable_frame,
-                bg=bg,
+                font=("TkDefaultFont", 10, "bold" if is_today else "normal"),
+                bg="#e0e0e0",
+                fg="#0066cc" if is_today else ("#666" if is_weekend else "#333"),
                 relief=tk.RAISED,
                 borderwidth=1,
-                cursor="hand2"
+                anchor=tk.CENTER,
+                padx=5,
+                pady=8
             )
-            day_cell.grid(row=1, column=i+1, sticky="nsew", padx=1, pady=1)
-            scrollable_frame.columnconfigure(i+1, weight=1)
+            header.grid(row=0, column=col, sticky="nsew", padx=1, pady=1)
+            main_frame.columnconfigure(col, weight=1, uniform="day")
+        
+        # Single row for week view
+        main_frame.rowconfigure(1, weight=1, uniform="week")
+        
+        # Create day cells
+        for col in range(7):
+            day_date = self.current_week_start + timedelta(days=col)
+            self._create_week_day_cell(main_frame, day_date, 1, col, today)
+    
+    def _create_week_day_cell(self, parent, day_date: date, row: int, col: int, today: date) -> None:
+        """Create a single day cell for week view with rounded corners."""
+        is_weekend = col >= 5
+        date_str = day_date.isoformat()
+        
+        # Determine background color
+        if day_date == today:
+            bg_color = self.colors["today"]
+        elif day_date == self.selected_date:
+            bg_color = self.colors["selected"]
+        elif is_weekend:
+            bg_color = self.colors["weekend"]
+        elif date_str in self._entries_by_date or date_str in self._tasks_by_date:
+            bg_color = self.colors["has_items"]
+        else:
+            bg_color = self.colors["default"]
+        
+        # Check for overdue tasks
+        tasks = self._tasks_by_date.get(date_str, [])
+        has_overdue = any(t.status != "done" and day_date < today for t in tasks)
+        if has_overdue:
+            bg_color = self.colors["overdue"]
+        
+        # Create canvas for rounded rectangle
+        canvas = tk.Canvas(
+            parent,
+            bg=self.view_container.cget("bg"),
+            highlightthickness=0,
+            cursor="hand2"
+        )
+        canvas.grid(row=row, column=col, sticky="nsew", padx=2, pady=2)
+        
+        def draw_cell():
+            """Draw rounded rectangle cell with content."""
+            canvas.delete("all")
+            width = canvas.winfo_width()
+            height = canvas.winfo_height()
             
-            # Add entries
+            if width <= 1 or height <= 1:
+                canvas.after(50, draw_cell)
+                return
+            
+            radius = 8
+            
+            # Draw rounded rectangle background
+            self._draw_rounded_rectangle(
+                canvas, 0, 0, width, height, radius,
+                fill=bg_color, outline="#ccc", width=1
+            )
+            
+            # Content area with scrollable if needed
+            y_offset = 10
+            
+            # Entries
             entries = self._entries_by_date.get(date_str, [])
-            for entry in entries[:5]:  # Limit to 5 visible
+            for i, entry in enumerate(entries[:8]):  # Limit to 8 visible
                 project = self._projects_by_id.get(entry.project_id)
                 icon = {"note": "📄", "meeting": "👥", "decision": "⚖️", "activity": "🎯"}.get(entry.type, "📝")
-                text = f"{icon} {entry.title[:30]}"
                 
-                entry_label = tk.Label(
-                    day_cell,
-                    text=text,
-                    bg=bg,
-                    fg="#0066cc",
-                    font=("TkDefaultFont", 8),
-                    anchor=tk.W,
-                    cursor="hand2"
-                )
-                entry_label.pack(fill=tk.X, padx=2, pady=1)
-                entry_label.bind("<Button-1>", lambda e, d=day_date: self._on_day_click(d))
-            
-            if len(entries) > 5:
-                tk.Label(
-                    day_cell,
-                    text=f"+ {len(entries)-5} autres...",
-                    bg=bg,
-                    fg="#666",
-                    font=("TkDefaultFont", 7, "italic")
-                ).pack(padx=2)
-            
-            # Add tasks
-            tasks = self._tasks_by_date.get(date_str, [])
-            for task in tasks[:5]:
-                icon = "✅" if task.status == "done" else "⬜"
-                text = f"{icon} {task.title[:30]}"
+                # Truncate title
+                title = entry.title[:35] + "..." if len(entry.title) > 35 else entry.title
+                text = f"{icon} {title}"
                 
-                task_label = tk.Label(
-                    day_cell,
+                canvas.create_text(
+                    10, y_offset,
                     text=text,
-                    bg=bg,
-                    fg="#00aa00" if task.status == "done" else "#ff6600",
-                    font=("TkDefaultFont", 8),
+                    font=("TkDefaultFont", 9),
+                    fill="#0066cc",
                     anchor=tk.W
                 )
-                task_label.pack(fill=tk.X, padx=2, pady=1)
+                y_offset += 20
             
-            if len(tasks) > 5:
-                tk.Label(
-                    day_cell,
-                    text=f"+ {len(tasks)-5} autres...",
-                    bg=bg,
-                    fg="#666",
-                    font=("TkDefaultFont", 7, "italic")
-                ).pack(padx=2)
+            if len(entries) > 8:
+                canvas.create_text(
+                    10, y_offset,
+                    text=f"+ {len(entries) - 8} autres...",
+                    font=("TkDefaultFont", 8, "italic"),
+                    fill="#666",
+                    anchor=tk.W
+                )
+                y_offset += 20
             
-            # Bind click
-            day_cell.bind("<Button-1>", lambda e, d=day_date: self._on_day_click(d))
+            # Separator if both entries and tasks
+            if entries and tasks:
+                y_offset += 5
+                canvas.create_line(10, y_offset, width-10, y_offset, fill="#ddd", width=1)
+                y_offset += 10
+            
+            # Tasks
+            for i, task in enumerate(tasks[:8]):  # Limit to 8 visible
+                icon = "✅" if task.status == "done" else "⬜"
+                title = task.title[:35] + "..." if len(task.title) > 35 else task.title
+                text = f"{icon} {title}"
+                
+                color = "#00aa00" if task.status == "done" else "#ff6600"
+                
+                canvas.create_text(
+                    10, y_offset,
+                    text=text,
+                    font=("TkDefaultFont", 9),
+                    fill=color,
+                    anchor=tk.W
+                )
+                y_offset += 20
+            
+            if len(tasks) > 8:
+                canvas.create_text(
+                    10, y_offset,
+                    text=f"+ {len(tasks) - 8} autres...",
+                    font=("TkDefaultFont", 8, "italic"),
+                    fill="#666",
+                    anchor=tk.W
+                )
         
-        scrollable_frame.rowconfigure(1, weight=1)
+        # Draw after widget is mapped
+        canvas.bind("<Configure>", lambda e: draw_cell())
+        
+        # Hover effects
+        def on_enter(e):
+            canvas.delete("all")
+            width = canvas.winfo_width()
+            height = canvas.winfo_height()
+            radius = 8
+            
+            # Draw with highlight
+            self._draw_rounded_rectangle(
+                canvas, 0, 0, width, height, radius,
+                fill=bg_color, outline="#0066cc", width=2
+            )
+            
+            # Redraw simplified content on hover (just counts)
+            entries_count = len(self._entries_by_date.get(date_str, []))
+            tasks_count = len(tasks)
+            
+            canvas.create_text(
+                width//2, height//2 - 10,
+                text=f"📝 {entries_count} entries",
+                font=("TkDefaultFont", 11, "bold"),
+                fill="#0066cc",
+                anchor=tk.CENTER
+            )
+            
+            canvas.create_text(
+                width//2, height//2 + 10,
+                text=f"✓ {tasks_count} tasks",
+                font=("TkDefaultFont", 11, "bold"),
+                fill="#ff6600",
+                anchor=tk.CENTER
+            )
+        
+        def on_leave(e):
+            draw_cell()
+        
+        canvas.bind("<Enter>", on_enter)
+        canvas.bind("<Leave>", on_leave)
+        canvas.bind("<Button-1>", lambda e, d=day_date: self._on_day_click(d))
+
     
     def _on_day_click(self, day_date: date) -> None:
         """Handle day click."""
