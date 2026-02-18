@@ -97,4 +97,7 @@ class CalendarSubscription:
     import_past_events: bool = False  # Import events before today
     auto_sync: bool = False  # Enable automatic sync
     create_project_per_calendar: bool = True  # Create separate project for this calendar
+    # Authentication (optional)
+    username: Optional[str] = None  # For HTTP Basic Auth
+    password: Optional[str] = None  # For HTTP Basic Auth (stored as plain text - TODO: encrypt)
 

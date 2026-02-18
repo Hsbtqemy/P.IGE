@@ -46,7 +46,9 @@ class CalendarSyncManager:
                 event_mapping=item.get("event_mapping", {}),
                 import_past_events=item.get("import_past_events", False),
                 auto_sync=item.get("auto_sync", False),
-                create_project_per_calendar=item.get("create_project_per_calendar", True)
+                create_project_per_calendar=item.get("create_project_per_calendar", True),
+                username=item.get("username"),
+                password=item.get("password")
             )
             subscriptions.append(sub)
         
@@ -70,7 +72,9 @@ class CalendarSyncManager:
                 "event_mapping": sub.event_mapping,
                 "import_past_events": sub.import_past_events,
                 "auto_sync": sub.auto_sync,
-                "create_project_per_calendar": sub.create_project_per_calendar
+                "create_project_per_calendar": sub.create_project_per_calendar,
+                "username": sub.username,
+                "password": sub.password
             })
         
         safe_write_json(self.subscriptions_file, data)
@@ -83,7 +87,9 @@ class CalendarSyncManager:
         project_id: str | None = None,
         import_past_events: bool = False,
         auto_sync: bool = False,
-        create_project_per_calendar: bool = True
+        create_project_per_calendar: bool = True,
+        username: str | None = None,
+        password: str | None = None
     ) -> CalendarSubscription:
         """Create a new calendar subscription."""
         from pige.core.models import CalendarSubscription
@@ -107,7 +113,9 @@ class CalendarSyncManager:
             created_at=datetime.now().isoformat(),
             import_past_events=import_past_events,
             auto_sync=auto_sync,
-            create_project_per_calendar=create_project_per_calendar
+            create_project_per_calendar=create_project_per_calendar,
+            username=username,
+            password=password
         )
         
         # Save
@@ -205,11 +213,15 @@ class CalendarSyncManager:
                 return {"added": 0, "updated": 0, "deleted": 0, "errors": ["icalendar library not installed"]}
             
             # Fetch ICS data
-            ics_data = self._fetch_ics(subscription.source_url)
+            ics_data = self._fetch_ics(subscription.source_url, subscription.username, subscription.password)
             if not ics_data:
                 error_msg = f"Impossible de récupérer les données ICS depuis: {subscription.source_url[:100]}"
                 if subscription.source_url.startswith(("http://", "https://")):
                     error_msg += "\n\nVérifiez que l'URL est correcte et accessible."
+                    if not subscription.username:
+                        error_msg += "\n\n⚠️ Si le calendrier nécessite une authentification:"
+                        error_msg += "\n1. Éditez l'abonnement"
+                        error_msg += "\n2. Ajoutez votre nom d'utilisateur et mot de passe"
                     error_msg += "\n\nPour Google Calendar:"
                     error_msg += "\n1. Ouvrez les paramètres du calendrier"
                     error_msg += "\n2. Copiez l'URL 'Adresse secrète au format iCal'"
@@ -344,7 +356,7 @@ class CalendarSyncManager:
             logger.error(f"Sync error for subscription {subscription_id}: {e}", exc_info=True)
             return {"added": 0, "updated": 0, "deleted": 0, "errors": [str(e)]}
     
-    def _fetch_ics(self, source_url: str) -> bytes | None:
+    def _fetch_ics(self, source_url: str, username: str | None = None, password: str | None = None) -> bytes | None:
         """Fetch ICS data from URL or file path."""
         try:
             # Handle webcal and webcals protocols (convert to http/https)
@@ -357,20 +369,27 @@ class CalendarSyncManager:
                 # Fetch from URL
                 import urllib.request
                 import ssl
+                import base64
                 
                 logger.info(f"Fetching ICS from URL: {source_url[:50]}...")
                 
                 # Create SSL context (some calendars need this)
                 ssl_context = ssl.create_default_context()
                 
-                # Add User-Agent header (some servers require it)
-                req = urllib.request.Request(
-                    source_url,
-                    headers={
-                        'User-Agent': 'PIGE-Calendar-Sync/1.0',
-                        'Accept': 'text/calendar,text/plain,*/*'
-                    }
-                )
+                # Build headers
+                headers = {
+                    'User-Agent': 'PIGE-Calendar-Sync/1.0',
+                    'Accept': 'text/calendar,text/plain,*/*'
+                }
+                
+                # Add Basic Auth if credentials provided
+                if username and password:
+                    logger.info(f"Using Basic Auth with username: {username}")
+                    credentials = f"{username}:{password}"
+                    encoded_credentials = base64.b64encode(credentials.encode()).decode()
+                    headers['Authorization'] = f'Basic {encoded_credentials}'
+                
+                req = urllib.request.Request(source_url, headers=headers)
                 
                 with urllib.request.urlopen(req, timeout=30, context=ssl_context) as response:
                     data = response.read()
@@ -390,7 +409,10 @@ class CalendarSyncManager:
                 return data
                 
         except urllib.error.HTTPError as e:
-            logger.error(f"HTTP Error {e.code} fetching ICS from {source_url}: {e.reason}")
+            if e.code == 401:
+                logger.error(f"HTTP 401 Unauthorized - Authentication required for {source_url}")
+            else:
+                logger.error(f"HTTP Error {e.code} fetching ICS from {source_url}: {e.reason}")
             return None
         except urllib.error.URLError as e:
             logger.error(f"URL Error fetching ICS from {source_url}: {e.reason}")

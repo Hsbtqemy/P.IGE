@@ -401,19 +401,37 @@ class NewSubscriptionDialog(tk.Toplevel):
         # Options
         ttk.Separator(form_frame, orient=tk.HORIZONTAL).grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=15)
         
+        # Authentication (optional, collapsed by default)
+        auth_label = ttk.Label(form_frame, text="🔐 Authentification (optionnelle):", font=("TkDefaultFont", 9, "bold"))
+        auth_label.grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=(5, 5))
+        
+        ttk.Label(form_frame, text="Nom d'utilisateur:", font=("TkDefaultFont", 8)).grid(row=7, column=0, sticky=tk.W, padx=(10, 0))
+        self.username_var = tk.StringVar()
+        ttk.Entry(form_frame, textvariable=self.username_var, width=38).grid(row=7, column=1, sticky=tk.EW, pady=2)
+        
+        ttk.Label(form_frame, text="Mot de passe:", font=("TkDefaultFont", 8)).grid(row=8, column=0, sticky=tk.W, padx=(10, 0))
+        self.password_var = tk.StringVar()
+        ttk.Entry(form_frame, textvariable=self.password_var, show="*", width=38).grid(row=8, column=1, sticky=tk.EW, pady=2)
+        
+        ttk.Label(form_frame, text="(Nécessaire pour certains calendriers universitaires)", font=("TkDefaultFont", 7, "italic")).grid(
+            row=9, column=1, sticky=tk.W, pady=(0, 10)
+        )
+        
+        ttk.Separator(form_frame, orient=tk.HORIZONTAL).grid(row=10, column=0, columnspan=2, sticky=tk.EW, pady=10)
+        
         self.import_past_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             form_frame,
             text="Importer les événements passés",
             variable=self.import_past_var
-        ).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=5)
+        ).grid(row=11, column=0, columnspan=2, sticky=tk.W, pady=5)
         
         self.auto_sync_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             form_frame,
             text="Activer la synchronisation automatique",
             variable=self.auto_sync_var
-        ).grid(row=7, column=0, columnspan=2, sticky=tk.W, pady=5)
+        ).grid(row=12, column=0, columnspan=2, sticky=tk.W, pady=5)
         
         form_frame.columnconfigure(1, weight=1)
         
@@ -492,6 +510,10 @@ sur votre ordinateur
         project_id = self.projects_by_name[project_name]
         create_new_project = (project_id is None)
         
+        # Get optional auth credentials
+        username = self.username_var.get().strip() or None
+        password = self.password_var.get().strip() or None
+        
         try:
             sub = self.sync_manager.create_subscription(
                 name=name,
@@ -499,7 +521,9 @@ sur votre ordinateur
                 project_id=project_id,
                 import_past_events=self.import_past_var.get(),
                 auto_sync=self.auto_sync_var.get(),
-                create_project_per_calendar=create_new_project
+                create_project_per_calendar=create_new_project,
+                username=username,
+                password=password
             )
             
             # Optionally sync immediately
