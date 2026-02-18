@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from datetime import date, datetime
 from pathlib import Path
@@ -140,8 +139,8 @@ class CalendarSyncManager:
         self.save_subscriptions(subs)
         logger.info(f"Updated subscription {subscription_id}")
     
-    def delete_subscription(self, subscription_id: str, delete_entries: bool = False) -> None:
-        """Delete a subscription and optionally its imported entries."""
+    def delete_subscription(self, subscription_id: str, delete_events: bool = False) -> None:
+        """Delete a subscription and optionally its imported events."""
         subs = self.list_subscriptions()
         sub_to_delete = None
         
@@ -153,13 +152,10 @@ class CalendarSyncManager:
         if not sub_to_delete:
             return
         
-        # Delete imported entries if requested
-        if delete_entries:
-            for entry_id in sub_to_delete.event_mapping.values():
-                try:
-                    self.service.delete_entry(entry_id)
-                except Exception as e:
-                    logger.warning(f"Failed to delete entry {entry_id}: {e}")
+        # Delete imported events if requested
+        if delete_events:
+            from pige.core.storage import delete_calendar_events_by_subscription
+            delete_calendar_events_by_subscription(self.service.storage, subscription_id)
         
         # Remove subscription
         subs = [s for s in subs if s.id != subscription_id]
@@ -171,11 +167,14 @@ class CalendarSyncManager:
         """Synchronize a calendar subscription.
         
         Returns dict with sync statistics:
-        - added: number of new entries created
-        - updated: number of entries updated
-        - deleted: number of entries deleted
+        - added: number of new events created
+        - updated: number of events updated
+        - deleted: number of events deleted
         - errors: list of error messages
         """
+        from pige.core.models import CalendarEvent
+        from pige.core.storage import read_calendar_events, write_calendar_events
+        
         subs = self.list_subscriptions()
         subscription = None
         
@@ -187,7 +186,7 @@ class CalendarSyncManager:
         if not subscription or not subscription.active:
             return {"added": 0, "updated": 0, "deleted": 0, "errors": ["Subscription not found or inactive"]}
         
-        # Ensure project exists (create if needed)
+        # Ensure project exists if needed (create if needed)
         if not subscription.project_id:
             if subscription.create_project_per_calendar:
                 project = self.service.create_project(
@@ -202,8 +201,6 @@ class CalendarSyncManager:
                         sub.project_id = project.id
                         break
                 self.save_subscriptions(subs)
-            else:
-                return {"added": 0, "updated": 0, "deleted": 0, "errors": ["No target project specified"]}
         
         try:
             # Import icalendar
@@ -244,6 +241,7 @@ class CalendarSyncManager:
                     
                     summary = str(component.get('summary', 'Sans titre'))
                     description = str(component.get('description', ''))
+                    location = str(component.get('location', '')) if component.get('location') else None
                     dtstart = component.get('dtstart')
                     dtend = component.get('dtend')
                     
@@ -251,100 +249,122 @@ class CalendarSyncManager:
                         continue
                     
                     event_date = dtstart.dt
+                    start_time = None
+                    end_date = None
+                    end_time = None
+                    
+                    # Extract date/time information
                     if isinstance(event_date, datetime):
-                        event_date = event_date.date()
+                        start_date_str = event_date.date().isoformat()
+                        start_time = event_date.time().isoformat()
+                        event_date_obj = event_date.date()
+                    else:
+                        start_date_str = event_date.isoformat()
+                        event_date_obj = event_date
+                    
+                    if dtend:
+                        if isinstance(dtend.dt, datetime):
+                            end_date = dtend.dt.date().isoformat()
+                            end_time = dtend.dt.time().isoformat()
+                        else:
+                            end_date = dtend.dt.isoformat()
                     
                     # Skip past events if configured
-                    if not subscription.import_past_events and event_date < today:
+                    if not subscription.import_past_events and event_date_obj < today:
                         continue
-                    
-                    # Calculate hash for change detection
-                    event_hash = self._hash_event(summary, description, event_date)
                     
                     current_events[uid] = {
                         "summary": summary,
                         "description": description,
-                        "date": event_date,
-                        "hash": event_hash,
-                        "dtstart": dtstart,
-                        "dtend": dtend
+                        "location": location,
+                        "start_date": start_date_str,
+                        "start_time": start_time,
+                        "end_date": end_date,
+                        "end_time": end_time,
                     }
+            
+            # Load existing calendar events
+            all_events = read_calendar_events(self.service.storage)
+            subscription_events = {e.id: e for e in all_events if e.subscription_id == subscription_id}
             
             # Synchronize
             stats = {"added": 0, "updated": 0, "deleted": 0, "errors": []}
+            now = datetime.now().isoformat()
             
             # Check for new and updated events
             for uid, event_data in current_events.items():
-                entry_id = subscription.event_mapping.get(uid)
+                existing_event = subscription_events.get(uid)
                 
-                if not entry_id:
-                    # New event - create entry
+                if not existing_event:
+                    # New event - create CalendarEvent
                     try:
-                        entry = self.service.add_entry(
-                            project_id=subscription.project_id,
-                            entry_type="activity",
+                        new_event = CalendarEvent(
+                            id=uid,
+                            subscription_id=subscription_id,
                             title=event_data["summary"],
-                            body=self._format_event_body(event_data),
-                            tags=["calendar-sync", subscription.name],
-                            entry_date=event_data["date"]
+                            description=event_data["description"] if event_data["description"] else None,
+                            start_date=event_data["start_date"],
+                            end_date=event_data["end_date"],
+                            start_time=event_data["start_time"],
+                            end_time=event_data["end_time"],
+                            location=event_data["location"],
+                            created_at=now,
+                            updated_at=now
                         )
-                        subscription.event_mapping[uid] = entry.id
+                        
+                        from pige.core.storage import upsert_calendar_event
+                        upsert_calendar_event(self.service.storage, new_event)
                         stats["added"] += 1
                     except Exception as e:
-                        stats["errors"].append(f"Failed to create entry for '{event_data['summary']}': {e}")
+                        stats["errors"].append(f"Failed to create event for '{event_data['summary']}': {e}")
                 else:
                     # Existing event - check for updates
                     try:
-                        entries = self.service.storage.read_entries_meta()
-                        entry = next((e for e in entries if e.id == entry_id), None)
+                        needs_update = (
+                            existing_event.title != event_data["summary"] or
+                            existing_event.description != event_data["description"] or
+                            existing_event.start_date != event_data["start_date"] or
+                            existing_event.end_date != event_data["end_date"] or
+                            existing_event.start_time != event_data["start_time"] or
+                            existing_event.end_time != event_data["end_time"] or
+                            existing_event.location != event_data["location"]
+                        )
                         
-                        if entry:
-                            # Check if content changed (simplified - check title and date)
-                            needs_update = (
-                                entry.title != event_data["summary"] or
-                                entry.entry_date != event_data["date"].isoformat()
+                        if needs_update:
+                            # Update event
+                            updated_event = CalendarEvent(
+                                id=existing_event.id,
+                                subscription_id=subscription_id,
+                                title=event_data["summary"],
+                                description=event_data["description"] if event_data["description"] else None,
+                                start_date=event_data["start_date"],
+                                end_date=event_data["end_date"],
+                                start_time=event_data["start_time"],
+                                end_time=event_data["end_time"],
+                                location=event_data["location"],
+                                created_at=existing_event.created_at,
+                                updated_at=now,
+                                linked_entry_id=existing_event.linked_entry_id
                             )
                             
-                            if needs_update:
-                                # Update entry
-                                self.service.update_entry_meta(
-                                    entry_id=entry_id,
-                                    updates={
-                                        "title": event_data["summary"],
-                                        "entry_date": event_data["date"].isoformat()
-                                    }
-                                )
-                                
-                                # Update body
-                                body_path = self.service.storage.data_dir / "entries" / f"{entry_id}.md"
-                                new_body = self._format_event_body(event_data)
-                                from pige.utils.io import write_text
-                                write_text(body_path, new_body)
-                                
-                                stats["updated"] += 1
-                        else:
-                            # Entry was deleted locally, remove from mapping
-                            del subscription.event_mapping[uid]
+                            from pige.core.storage import upsert_calendar_event
+                            upsert_calendar_event(self.service.storage, updated_event)
+                            stats["updated"] += 1
                     except Exception as e:
-                        stats["errors"].append(f"Failed to update entry {entry_id}: {e}")
+                        stats["errors"].append(f"Failed to update event {uid}: {e}")
             
-            # Check for deleted events (in mapping but not in current ICS)
-            uids_to_remove = []
-            for uid, entry_id in subscription.event_mapping.items():
+            # Check for deleted events (in storage but not in current ICS)
+            for uid, event in subscription_events.items():
                 if uid not in current_events:
                     try:
-                        self.service.delete_entry(entry_id)
-                        uids_to_remove.append(uid)
+                        from pige.core.storage import delete_calendar_event
+                        delete_calendar_event(self.service.storage, uid)
                         stats["deleted"] += 1
                     except Exception as e:
-                        stats["errors"].append(f"Failed to delete entry {entry_id}: {e}")
-            
-            # Clean up mapping
-            for uid in uids_to_remove:
-                del subscription.event_mapping[uid]
+                        stats["errors"].append(f"Failed to delete event {uid}: {e}")
             
             # Update last sync time
-            subscription.last_sync = datetime.now().isoformat()
+            subscription.last_sync = now
             
             # Save updated subscription
             self.save_subscriptions(subs)
@@ -420,24 +440,6 @@ class CalendarSyncManager:
         except Exception as e:
             logger.error(f"Failed to fetch ICS from {source_url}: {type(e).__name__}: {e}", exc_info=True)
             return None
-    
-    def _hash_event(self, summary: str, description: str, event_date: date) -> str:
-        """Calculate hash of event for change detection."""
-        content = f"{summary}|{description}|{event_date.isoformat()}"
-        return hashlib.md5(content.encode()).hexdigest()
-    
-    def _format_event_body(self, event_data: dict) -> str:
-        """Format event data as markdown body."""
-        body = f"# {event_data['summary']}\n\n"
-        body += f"**Date**: {event_data['date'].strftime('%d/%m/%Y')}\n\n"
-        
-        if event_data.get("description"):
-            body += f"## Description\n\n{event_data['description']}\n\n"
-        
-        body += "---\n\n"
-        body += "*Synchronisé depuis calendrier externe*\n"
-        
-        return body
     
     def sync_all_active(self) -> dict[str, dict]:
         """Sync all active subscriptions with auto_sync enabled.
