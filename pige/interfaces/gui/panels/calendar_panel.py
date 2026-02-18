@@ -15,9 +15,16 @@ logger = logging.getLogger(__name__)
 class CalendarPanel(ttk.Frame):
     """Panel for displaying entries and tasks in calendar views (month/week)."""
     
-    def __init__(self, parent: tk.Widget, service: PigeService, **kwargs) -> None:
+    def __init__(
+        self, 
+        parent: tk.Widget, 
+        service: PigeService, 
+        on_entry_open=None,
+        **kwargs
+    ) -> None:
         super().__init__(parent, **kwargs)
         self.service = service
+        self.on_entry_open = on_entry_open  # Callback to open entry in WorkPanel
         
         # Current view state
         today = date.today()
@@ -1059,7 +1066,12 @@ class CalendarPanel(ttk.Frame):
         if idx < len(self._current_entries):
             entry = self._current_entries[idx]
             logger.info(f"Entry double-clicked: {entry.id}")
-            messagebox.showinfo("TODO", f"Ouvrir éditeur pour entry: {entry.title}\n\n(À connecter au WorkPanel)")
+            
+            # Call callback to open in WorkPanel
+            if self.on_entry_open:
+                self.on_entry_open(entry.id)
+            else:
+                messagebox.showinfo("Info", f"Ouvrir entry: {entry.title}\n\n(Callback non configuré)")
     
     def _on_event_double_click(self, event: tk.Event) -> None:
         """Handle double-click on calendar event."""

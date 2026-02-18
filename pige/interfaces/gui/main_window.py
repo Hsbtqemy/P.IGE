@@ -146,7 +146,8 @@ class PigeMainWindow(tk.Tk):
         # Tab 4: Calendar (vue mensuelle)
         self.calendar_panel = CalendarPanel(
             self.notebook,
-            self.service
+            self.service,
+            on_entry_open=self._on_open_entry_from_calendar
         )
         self.notebook.add(self.calendar_panel, text="📅 Calendrier")
         
@@ -204,6 +205,20 @@ class PigeMainWindow(tk.Tk):
         logger.info(f"Search result selected: {result_type} - {result_id}")
         # TODO: Navigate to the selected item in appropriate panel
         # For now, just log it
+    
+    def _on_open_entry_from_calendar(self, entry_id: str) -> None:
+        """Open an entry in the WorkPanel from the calendar.
+        
+        Args:
+            entry_id: ID of the entry to open
+        """
+        logger.info(f"Opening entry {entry_id} from calendar")
+        
+        # Switch to Work tab
+        self.notebook.select(self.work_panel)
+        
+        # Load entry in WorkPanel editor
+        self.work_panel._load_entry_in_editor(entry_id)
     
     def _show_keyboard_shortcuts(self) -> None:
         """Show keyboard shortcuts dialog."""
