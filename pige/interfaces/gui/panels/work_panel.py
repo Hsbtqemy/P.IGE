@@ -531,14 +531,14 @@ class WorkPanel(ttk.Frame):
                 if entry.title != title:
                     patch["title"] = title
                 
-                # Parse and update people, groups, tags
-                people = [p.strip() for p in self.entry_people_var.get().split(",") if p.strip()]
-                if people != entry.people:
-                    patch["person"] = people
+                # Update person, group, tags
+                person = self.entry_people_var.get().strip()
+                if person != (entry.person or ""):
+                    patch["person"] = person if person else None
                 
-                groups = [g.strip() for g in self.entry_groups_var.get().split(",") if g.strip()]
-                if groups != entry.groups:
-                    patch["group"] = groups
+                group = self.entry_groups_var.get().strip()
+                if group != (entry.group or ""):
+                    patch["group"] = group if group else None
                 
                 tags = [t.strip() for t in self.entry_tags_var.get().split(",") if t.strip()]
                 if tags != entry.tags:
@@ -737,8 +737,8 @@ class WorkPanel(ttk.Frame):
             
             # Update metadata
             self.entry_date_var.set(entry.entry_date or "")
-            self.entry_people_var.set(", ".join(entry.people) if entry.people else "")
-            self.entry_groups_var.set(", ".join(entry.groups) if entry.groups else "")
+            self.entry_people_var.set(entry.person or "")
+            self.entry_groups_var.set(entry.group or "")
             self.entry_tags_var.set(", ".join(entry.tags) if entry.tags else "")
             
             self.entry_body_text.delete("1.0", tk.END)
