@@ -412,16 +412,15 @@ class CalendarPanel(ttk.Frame):
                 self._create_day_cell_grid(main_frame, day_num, week_idx + 1, day_idx, today)
     
     def _create_day_cell_grid(self, parent, day_num: int, row: int, col: int, today: date) -> None:
-        """Create a single day cell for month view using grid layout."""
+        """Create a single day cell for month view using grid layout with rounded corners."""
         is_weekend = col >= 5
         
         # Empty day (prev/next month)
         if day_num == 0:
-            empty_cell = tk.Frame(
+            empty_cell = tk.Canvas(
                 parent,
                 bg="#f5f5f5" if is_weekend else "#fafafa",
-                relief=tk.FLAT,
-                borderwidth=1
+                highlightthickness=0
             )
             empty_cell.grid(row=row, column=col, sticky="nsew", padx=1, pady=1)
             return
@@ -447,70 +446,139 @@ class CalendarPanel(ttk.Frame):
         if has_overdue:
             bg_color = self.colors["overdue"]
         
-        # Create cell frame
-        cell = tk.Frame(
+        # Create canvas for rounded rectangle
+        canvas = tk.Canvas(
             parent,
-            bg=bg_color,
-            relief=tk.RAISED,
-            borderwidth=1,
-            cursor="hand2",
-            highlightthickness=2,
-            highlightbackground="#ccc",
-            highlightcolor="#0066cc"
+            bg=self.view_container.cget("bg"),
+            highlightthickness=0,
+            cursor="hand2"
         )
-        cell.grid(row=row, column=col, sticky="nsew", padx=1, pady=1)
+        canvas.grid(row=row, column=col, sticky="nsew", padx=2, pady=2)
         
-        # Inner container for proper padding
-        inner = tk.Frame(cell, bg=bg_color)
-        inner.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Store canvas for updates
+        canvas_id = f"day_{row}_{col}"
         
-        # Day number
-        day_label = tk.Label(
-            inner,
-            text=str(day_num),
-            font=("TkDefaultFont", 12, "bold"),
-            bg=bg_color,
-            fg="#333" if not is_weekend else "#888",
-            anchor=tk.NW
-        )
-        day_label.pack(anchor=tk.NW)
+        def draw_cell():
+            """Draw rounded rectangle cell."""
+            canvas.delete("all")
+            width = canvas.winfo_width()
+            height = canvas.winfo_height()
+            
+            if width <= 1 or height <= 1:
+                canvas.after(50, draw_cell)
+                return
+            
+            radius = 8  # Corner radius
+            
+            # Draw rounded rectangle
+            self._draw_rounded_rectangle(
+                canvas, 0, 0, width, height, radius, 
+                fill=bg_color, outline="#ccc", width=1
+            )
+            
+            # Day number
+            canvas.create_text(
+                10, 10,
+                text=str(day_num),
+                font=("TkDefaultFont", 12, "bold"),
+                fill="#333" if not is_weekend else "#888",
+                anchor=tk.NW
+            )
+            
+            # Indicators
+            y_offset = 35
+            
+            # Entries indicator
+            entries_count = len(self._entries_by_date.get(date_str, []))
+            if entries_count > 0:
+                canvas.create_text(
+                    10, y_offset,
+                    text=f"📝 {entries_count}",
+                    font=("TkDefaultFont", 9),
+                    fill="#0066cc",
+                    anchor=tk.W
+                )
+                y_offset += 18
+            
+            # Tasks indicator
+            tasks_done = len([t for t in tasks if t.status == "done"])
+            tasks_total = len(tasks)
+            if tasks_total > 0:
+                color = "#00aa00" if tasks_done == tasks_total else ("#cc0000" if has_overdue else "#ff9800")
+                icon = "✅" if tasks_done == tasks_total else ("⚠️" if has_overdue else "✓")
+                canvas.create_text(
+                    10, y_offset,
+                    text=f"{icon} {tasks_done}/{tasks_total}",
+                    font=("TkDefaultFont", 9),
+                    fill=color,
+                    anchor=tk.W
+                )
         
-        # Indicators container
-        indicators = tk.Frame(inner, bg=bg_color)
-        indicators.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+        # Draw after widget is mapped
+        canvas.bind("<Configure>", lambda e: draw_cell())
         
-        # Entries indicator
-        entries_count = len(self._entries_by_date.get(date_str, []))
-        if entries_count > 0:
-            tk.Label(
-                indicators,
-                text=f"📝 {entries_count}",
-                font=("TkDefaultFont", 9),
-                bg=bg_color,
-                fg="#0066cc",
-                anchor=tk.W
-            ).pack(anchor=tk.W, pady=1)
+        # Hover effects
+        def on_enter(e):
+            canvas.delete("all")
+            width = canvas.winfo_width()
+            height = canvas.winfo_height()
+            radius = 8
+            
+            # Draw with highlight
+            self._draw_rounded_rectangle(
+                canvas, 0, 0, width, height, radius,
+                fill=bg_color, outline="#0066cc", width=2
+            )
+            
+            # Redraw content
+            canvas.create_text(
+                10, 10,
+                text=str(day_num),
+                font=("TkDefaultFont", 12, "bold"),
+                fill="#333" if not is_weekend else "#888",
+                anchor=tk.NW
+            )
+            
+            y_offset = 35
+            entries_count = len(self._entries_by_date.get(date_str, []))
+            if entries_count > 0:
+                canvas.create_text(10, y_offset, text=f"📝 {entries_count}",
+                                 font=("TkDefaultFont", 9), fill="#0066cc", anchor=tk.W)
+                y_offset += 18
+            
+            tasks_done = len([t for t in tasks if t.status == "done"])
+            tasks_total = len(tasks)
+            if tasks_total > 0:
+                color = "#00aa00" if tasks_done == tasks_total else ("#cc0000" if has_overdue else "#ff9800")
+                icon = "✅" if tasks_done == tasks_total else ("⚠️" if has_overdue else "✓")
+                canvas.create_text(10, y_offset, text=f"{icon} {tasks_done}/{tasks_total}",
+                                 font=("TkDefaultFont", 9), fill=color, anchor=tk.W)
         
-        # Tasks indicator
-        tasks_done = len([t for t in tasks if t.status == "done"])
-        tasks_total = len(tasks)
-        if tasks_total > 0:
-            color = "#00aa00" if tasks_done == tasks_total else ("#cc0000" if has_overdue else "#ff9800")
-            icon = "✅" if tasks_done == tasks_total else ("⚠️" if has_overdue else "✓")
-            tk.Label(
-                indicators,
-                text=f"{icon} {tasks_done}/{tasks_total}",
-                font=("TkDefaultFont", 9),
-                bg=bg_color,
-                fg=color,
-                anchor=tk.W
-            ).pack(anchor=tk.W, pady=1)
+        def on_leave(e):
+            draw_cell()
         
-        # Bind click events
-        for widget in [cell, inner, day_label]:
-            widget.bind("<Button-1>", lambda e, d=day_date: self._on_day_click(d))
-            widget.bind("<Enter>", lambda e, c=cell: c.config(highlightbackground="#0066cc"))
-            widget.bind("<Leave>", lambda e, c=cell: c.config(highlightbackground="#ccc"))
+        canvas.bind("<Enter>", on_enter)
+        canvas.bind("<Leave>", on_leave)
+        canvas.bind("<Button-1>", lambda e, d=day_date: self._on_day_click(d))
+    
+    def _draw_rounded_rectangle(self, canvas, x1, y1, x2, y2, radius, **kwargs):
+        """Draw a rounded rectangle on canvas."""
+        points = [
+            x1+radius, y1,
+            x2-radius, y1,
+            x2, y1,
+            x2, y1+radius,
+            x2, y2-radius,
+            x2, y2,
+            x2-radius, y2,
+            x1+radius, y2,
+            x1, y2,
+            x1, y2-radius,
+            x1, y1+radius,
+            x1, y1
+        ]
+        
+        return canvas.create_polygon(points, smooth=True, **kwargs)
     
     def _create_day_cell(self, parent, day_num: int, day_idx: int, today: date) -> None:
         """Create a single day cell for month view."""
