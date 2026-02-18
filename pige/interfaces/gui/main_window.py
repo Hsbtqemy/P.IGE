@@ -11,6 +11,7 @@ from pige.core.service import PigeService
 from pige.core.storage import Storage
 from pige.interfaces import gui_helpers
 from pige.interfaces.gui.dialogs import show_about_dialog, show_keyboard_shortcuts
+from pige.interfaces.gui.panels import SearchPanel
 from pige.utils import io as io_utils
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,15 @@ class PigeMainWindow(tk.Tk):
             command=self.quit
         )
         
+        # Search menu
+        search_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Search", menu=search_menu)
+        search_menu.add_command(
+            label="Find...",
+            accelerator=gui_helpers._menu_accel("F"),
+            command=self._on_search
+        )
+        
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
@@ -103,18 +113,29 @@ class PigeMainWindow(tk.Tk):
     
     def _setup_main_layout(self) -> None:
         """Create the main window layout."""
-        # TODO: Create panels (projects, entries, tasks, details)
-        # For now, just a placeholder
-        main_frame = ttk.Frame(self)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Create notebook (tabbed interface)
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        placeholder = ttk.Label(
-            main_frame,
-            text="PIGE Main Window - Under Construction\n\nPanels will be loaded here.",
-            font=("TkDefaultFont", 14),
+        # Tab 1: Search
+        self.search_panel = SearchPanel(
+            self.notebook,
+            self.service,
+            on_result_selected=self._on_search_result_selected
+        )
+        self.notebook.add(self.search_panel, text="Search")
+        
+        # Tab 2: Placeholder for other panels
+        placeholder_frame = ttk.Frame(self.notebook)
+        self.notebook.add(placeholder_frame, text="Projects")
+        
+        placeholder_label = ttk.Label(
+            placeholder_frame,
+            text="Other panels (Projects, Entries, Tasks) will be added here.",
+            font=("TkDefaultFont", 12),
             justify=tk.CENTER
         )
-        placeholder.pack(expand=True)
+        placeholder_label.pack(expand=True)
     
     def _setup_keybindings(self) -> None:
         """Setup keyboard shortcuts."""
@@ -125,6 +146,10 @@ class PigeMainWindow(tk.Tk):
         self.bind_all("<Command-e>", lambda e: self._on_new_entry())
         self.bind_all("<Control-q>", lambda e: self.quit())
         self.bind_all("<Command-q>", lambda e: self.quit())
+        
+        # Search
+        self.bind_all("<Control-f>", lambda e: self._on_search())
+        self.bind_all("<Command-f>", lambda e: self._on_search())
         
         # Help
         self.bind_all("<F1>", lambda e: self._show_keyboard_shortcuts())
@@ -140,6 +165,24 @@ class PigeMainWindow(tk.Tk):
         """Handle New Entry action."""
         logger.info("New Entry action triggered")
         # TODO: Open new entry dialog
+    
+    def _on_search(self) -> None:
+        """Handle Search action (Ctrl+F)."""
+        logger.info("Search action triggered")
+        # Switch to search tab and focus search input
+        self.notebook.select(self.search_panel)
+        self.search_panel.focus_search()
+    
+    def _on_search_result_selected(self, result_type: str, result_id: str) -> None:
+        """Handle when a search result is selected.
+        
+        Args:
+            result_type: Type of result (entry, project, task)
+            result_id: ID of the selected item
+        """
+        logger.info(f"Search result selected: {result_type} - {result_id}")
+        # TODO: Navigate to the selected item in appropriate panel
+        # For now, just log it
     
     def _show_keyboard_shortcuts(self) -> None:
         """Show keyboard shortcuts dialog."""

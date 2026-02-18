@@ -344,11 +344,45 @@ PIGE évolue d'un outil de journaling local fonctionnel vers une solution produc
 
 **Gain**: Affichage rapide 10K+ entrées
 
-#### 3.5 Architecture MVC/MVP (2 semaines)
+#### 3.9 Intégration & Polish (1 semaine) - ⏳ EN COURS
+**Objectif**: Intégrer les infrastructures Phase 3 dans GUI pour valeur utilisateur immédiate
+
+##### 3.9.1 Recherche FTS5 dans GUI (2-3 jours)
+- [ ] Créer `SearchPanel` (input, résultats TreeView)
+- [ ] Intégrer dans `main_window.py`
+- [ ] Menu "Search → Find..." (Ctrl+F)
+- [ ] Widget `HighlightedText` pour highlighting
+- [ ] Tests unitaires search functionality
+
+##### 3.9.2 Pagination GUI (1-2 jours)
+- [ ] Intégrer `PaginationControl` dans `ProjectsPanel`
+- [ ] Intégrer `PaginationControl` dans `gui_legacy.py`
+- [ ] Sauvegarder/restaurer préférences pagination
+
+##### 3.9.3 Tree Diff Fluide (1 jour)
+- [ ] Utiliser `IncrementalTreeView` dans `ProjectsPanel`
+- [ ] Utiliser `IncrementalTreeView` dans `gui_legacy.py`
+- [ ] Tests préservation sélection/scroll
+
+**Statut**: ⏳ PLANIFIÉE - Plan détaillé dans `PLAN_PHASE_3.9.md`
+
+**Impact attendu**:
+- Recherche full-text accessible dans GUI (<50ms)
+- Pagination fonctionnelle pour grandes listes
+- GUI fluide sans flickering
+- Préférences utilisateur sauvegardées
+
+**Gain**: Application **professionnelle** et **scalable** pour utilisateurs! 🚀
+
+---
+
+#### 3.5 Architecture MVC/MVP (2 semaines) - REPORTÉE
 - [ ] Package `pige/interfaces/gui/presenters/`
 - [ ] Presenters: ProjectPresenter, EntryPresenter, TaskPresenter
 - [ ] Views: pure affichage Tkinter
 - [ ] Tests unitaires Presenters (sans Tkinter)
+
+**Statut**: REPORTÉE après Phase 4 (priorité features utilisateur)
 
 **Gain**: Code testable, séparation responsabilités
 
@@ -357,17 +391,16 @@ PIGE évolue d'un outil de journaling local fonctionnel vers une solution produc
 - GUI modulaire (fichiers < 800 lignes chacun)
 - Recherche full-text < 50ms (10K entrées)
 - UI fluide sans clignotement
-- Tests Presenters sans dépendance Tkinter
-- Architecture MVC documentée
+- Pagination fonctionnelle
+- Infrastructure réutilisable (FTS, pagination, tree diff)
 
 ### Livrables Phase 3
 
 - GUI restructurée (panels/dialogs/widgets)
-- Index FTS5 fonctionnel
-- Mise à jour incrémentale trees
-- Pagination implémentée
-- Architecture MVC/MVP
-- CHANGELOG v0.4.0
+- Index FTS5 fonctionnel + UI de recherche ⏳
+- Mise à jour incrémentale trees + intégration GUI ⏳
+- Pagination implémentée + intégration GUI ⏳
+- CHANGELOG v0.4.1
 
 ---
 
