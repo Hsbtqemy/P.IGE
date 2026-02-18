@@ -458,7 +458,12 @@ class NewSubscriptionDialog(tk.Toplevel):
 1. Ouvrez iCloud.com > Calendrier
 2. Cliquez sur l'icône de partage à côté du calendrier
 3. Activez "Calendrier public"
-4. Copiez l'URL webcal:// (sera auto-converti en https://)
+4. Copiez l'URL webcal:// ou webcals://
+   (sera auto-converti en http:// ou https://)
+
+🏫 Calendriers universitaires (Zimbra, etc.):
+Les URLs webcals:// sont automatiquement supportées.
+Exemple: webcals://mail.univ.fr/home/user@univ.fr/Calendar
 
 💡 Fichier local:
 Utilisez le bouton 📁 pour sélectionner un fichier .ics

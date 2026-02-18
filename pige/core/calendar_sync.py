@@ -347,14 +347,16 @@ class CalendarSyncManager:
     def _fetch_ics(self, source_url: str) -> bytes | None:
         """Fetch ICS data from URL or file path."""
         try:
+            # Handle webcal and webcals protocols (convert to http/https)
+            if source_url.startswith("webcal://"):
+                source_url = source_url.replace("webcal://", "http://")
+            elif source_url.startswith("webcals://"):
+                source_url = source_url.replace("webcals://", "https://")
+            
             if source_url.startswith(("http://", "https://")):
                 # Fetch from URL
                 import urllib.request
                 import ssl
-                
-                # Handle Google Calendar secret URLs (webcal://)
-                if source_url.startswith("webcal://"):
-                    source_url = source_url.replace("webcal://", "https://")
                 
                 logger.info(f"Fetching ICS from URL: {source_url[:50]}...")
                 
