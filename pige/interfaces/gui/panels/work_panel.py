@@ -263,22 +263,31 @@ class WorkPanel(ttk.Frame):
     
     def _refresh_timer(self) -> None:
         """Refresh timer display."""
-        projects = self.service.list_projects(status="all")
-        active_timer = next((p for p in projects if p.timer_start), None)
+        # Check timer state from storage
+        state = self.service.storage.read_timer_state()
         
-        if active_timer:
-            start_time = datetime.fromisoformat(active_timer.timer_start.replace('Z', '+00:00'))
-            elapsed = datetime.now(start_time.tzinfo) - start_time
-            hours = int(elapsed.total_seconds() // 3600)
-            minutes = int((elapsed.total_seconds() % 3600) // 60)
+        if state.running and state.project_id:
+            # Get project info
+            project = self._projects_by_id.get(state.project_id)
             
-            self.timer_var.set(f"⏱️ {active_timer.name} - {hours:02d}:{minutes:02d}")
-            self.btn_start_timer.config(state=tk.DISABLED)
-            self.btn_stop_timer.config(state=tk.NORMAL)
-        else:
-            self.timer_var.set("Aucun timer actif")
-            self.btn_start_timer.config(state=tk.NORMAL)
-            self.btn_stop_timer.config(state=tk.DISABLED)
+            if project and state.start_time:
+                try:
+                    start_time = datetime.fromisoformat(state.start_time.replace('Z', '+00:00'))
+                    elapsed = datetime.now(start_time.tzinfo) - start_time
+                    hours = int(elapsed.total_seconds() // 3600)
+                    minutes = int((elapsed.total_seconds() % 3600) // 60)
+                    
+                    self.timer_var.set(f"⏱️ {project.name} - {hours:02d}:{minutes:02d}")
+                    self.btn_start_timer.config(state=tk.DISABLED)
+                    self.btn_stop_timer.config(state=tk.NORMAL)
+                    return
+                except Exception as e:
+                    logger.error(f"Failed to parse timer: {e}")
+        
+        # No timer running
+        self.timer_var.set("Aucun timer actif")
+        self.btn_start_timer.config(state=tk.NORMAL)
+        self.btn_stop_timer.config(state=tk.DISABLED)
     
     def _refresh_tasks(self) -> None:
         """Refresh tasks list for current project."""
