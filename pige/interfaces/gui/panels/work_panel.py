@@ -654,14 +654,32 @@ class WorkPanel(ttk.Frame):
         # Ask for project name
         name = simpledialog.askstring(
             "Nouveau Sous-Projet",
-            f"Nom du sous-projet sous '{parent_project.name}':"
+            f"Nom du sous-projet sous '{parent_project.name}':",
+            parent=self
         )
         if not name:
             return
         
+        # Ask for description (optional)
+        desc = simpledialog.askstring(
+            "Description",
+            "Description (optionnelle):",
+            parent=self
+        )
+        
+        # Ask for tags (optional)
+        tags_str = simpledialog.askstring(
+            "Tags",
+            "Tags (séparés par virgules, optionnel):",
+            parent=self
+        )
+        tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else []
+        
         try:
             project = self.service.create_project(
                 name=name,
+                description=desc if desc else None,
+                tags=tags,
                 parent_id=parent_id
             )
             
