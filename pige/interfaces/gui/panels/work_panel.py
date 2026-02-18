@@ -504,6 +504,12 @@ class WorkPanel(ttk.Frame):
             entry_id = source.replace("entry:", "")
             target_project_id = target.replace("project:", "")
             self._move_entry_to_project(entry_id, target_project_id)
+        
+        elif source.startswith("project:") and target.startswith("project:"):
+            # Move project under another project (change parent)
+            source_project_id = source.replace("project:", "")
+            target_project_id = target.replace("project:", "")
+            self._move_project_under(source_project_id, target_project_id)
     
     def _start_timer_for_project(self, item_id: str) -> None:
         """Start timer for a project."""
@@ -564,6 +570,55 @@ class WorkPanel(ttk.Frame):
                 messagebox.showinfo("Succès", "Entry supprimée")
             except Exception as e:
                 messagebox.showerror("Erreur", f"Impossible de supprimer:\n{e}")
+    
+    def _move_project_under(self, source_project_id: str, target_project_id: str) -> None:
+        """Move a project to become a sub-project of another project."""
+        source_project = self._projects_by_id.get(source_project_id)
+        target_project = self._projects_by_id.get(target_project_id)
+        
+        if not source_project or not target_project:
+            return
+        
+        # Prevent circular hierarchy
+        if target_project_id == source_project_id:
+            messagebox.showwarning("Attention", "Un projet ne peut pas être son propre parent!")
+            return
+        
+        # Check if target is a descendant of source (would create cycle)
+        current = target_project
+        while current and current.parent_id:
+            if current.parent_id == source_project_id:
+                messagebox.showwarning(
+                    "Attention",
+                    f"Impossible: '{target_project.name}' est déjà un sous-projet de '{source_project.name}'!"
+                )
+                return
+            current = self._projects_by_id.get(current.parent_id)
+        
+        # Confirm move
+        result = messagebox.askyesno(
+            "Déplacer projet",
+            f"Déplacer '{source_project.name}'\n\nComme sous-projet de: {target_project.name}"
+        )
+        
+        if result:
+            try:
+                # Update project parent
+                self.service.update_project(
+                    project_id=source_project_id,
+                    updates={"parent_id": target_project_id}
+                )
+                
+                self._refresh_explorer()
+                
+                # Expand target to show the moved project
+                target_item = f"project:{target_project_id}"
+                if self.explorer_tree.exists(target_item):
+                    self.explorer_tree.item(target_item, open=True)
+                
+                messagebox.showinfo("Succès", f"Projet déplacé sous '{target_project.name}'")
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de déplacer:\n{e}")
     
     def _move_entry_to_project(self, entry_id: str, target_project_id: str) -> None:
         """Move entry to a different project."""

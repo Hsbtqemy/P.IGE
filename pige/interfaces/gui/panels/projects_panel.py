@@ -43,6 +43,9 @@ class ProjectsPanel(ttk.Frame):
         self._sort_column: str = "name"
         self._sort_reverse: bool = False
         
+        # Drag & drop state
+        self._drag_data: dict = {"item": None, "x": 0, "y": 0}
+        
         # Setup UI
         self._setup_toolbar()
         self._setup_tree()
@@ -100,6 +103,11 @@ class ProjectsPanel(ttk.Frame):
         
         # Bind events
         self.tree.bind("<Double-Button-1>", self._on_double_click)
+        
+        # Drag & drop bindings
+        self.tree.bind("<ButtonPress-1>", self._on_drag_start)
+        self.tree.bind("<B1-Motion>", self._on_drag_motion)
+        self.tree.bind("<ButtonRelease-1>", self._on_drag_release)
         
         # Setup incremental tree for smooth updates
         self.incremental_tree = IncrementalTreeView(self.tree)
@@ -251,3 +259,89 @@ class ProjectsPanel(ttk.Frame):
         project_id = selection[0]
         logger.info(f"Project double-clicked: {project_id}")
         # TODO: Open project details or trigger callback
+    
+    def _on_drag_start(self, event) -> None:
+        """Start drag operation."""
+        item = self.tree.identify_row(event.y)
+        if item:
+            self._drag_data["item"] = item
+            self._drag_data["x"] = event.x
+            self._drag_data["y"] = event.y
+    
+    def _on_drag_motion(self, event) -> None:
+        """Handle drag motion (visual feedback)."""
+        if self._drag_data["item"]:
+            # Highlight potential drop target
+            target = self.tree.identify_row(event.y)
+            if target and target != self._drag_data["item"]:
+                self.tree.selection_set(target)
+    
+    def _on_drag_release(self, event) -> None:
+        """Handle drop operation."""
+        if not self._drag_data["item"]:
+            return
+        
+        # Get target item
+        target = self.tree.identify_row(event.y)
+        source = self._drag_data["item"]
+        
+        # Reset drag data
+        self._drag_data["item"] = None
+        
+        if not target or source == target:
+            return
+        
+        # Move project under target (change parent)
+        self._move_project_under(source, target)
+    
+    def _move_project_under(self, source_project_id: str, target_project_id: str) -> None:
+        """Move a project to become a sub-project of another project."""
+        from tkinter import messagebox
+        
+        source_project = self._projects_by_id.get(source_project_id)
+        target_project = self._projects_by_id.get(target_project_id)
+        
+        if not source_project or not target_project:
+            return
+        
+        # Prevent circular hierarchy
+        if target_project_id == source_project_id:
+            messagebox.showwarning("Attention", "Un projet ne peut pas être son propre parent!")
+            return
+        
+        # Check if target is a descendant of source (would create cycle)
+        current = target_project
+        while current and current.parent_id:
+            if current.parent_id == source_project_id:
+                messagebox.showwarning(
+                    "Attention",
+                    f"Impossible: '{target_project.name}' est déjà un sous-projet de '{source_project.name}'!"
+                )
+                return
+            current = self._projects_by_id.get(current.parent_id)
+        
+        # Confirm move
+        result = messagebox.askyesno(
+            "Déplacer projet",
+            f"Déplacer '{source_project.name}'\n\nComme sous-projet de: {target_project.name}"
+        )
+        
+        if result:
+            try:
+                # Update project parent
+                self.service.update_project(
+                    project_id=source_project_id,
+                    updates={"parent_id": target_project_id}
+                )
+                
+                # Refresh to show new hierarchy
+                self.refresh()
+                
+                # Expand target to show the moved project
+                if self.tree.exists(target_project_id):
+                    self.tree.item(target_project_id, open=True)
+                
+                messagebox.showinfo("Succès", f"Projet déplacé sous '{target_project.name}'")
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de déplacer:\n{e}")
+
