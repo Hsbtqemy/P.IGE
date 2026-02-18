@@ -23,8 +23,8 @@ class EntriesPanel(ttk.Frame):
         self._filtered_entries: list = []
         self._projects_by_id: dict = {}
         
-        # Pagination
-        self.pagination = PaginationState(page_size=initial_page_size)
+        # Store initial page size for pagination setup
+        self.initial_page_size = initial_page_size
         
         # Setup UI
         self._setup_toolbar()
@@ -151,12 +151,13 @@ class EntriesPanel(ttk.Frame):
     
     def _setup_pagination(self) -> None:
         """Setup pagination control."""
-        self.pagination_control = PaginationControl(
+        self.pagination = PaginationControl(
             self,
-            self.pagination,
-            on_page_change=self._on_page_change
+            on_page_change=self._on_page_change,
+            initial_page_size=self.initial_page_size,
+            show_all_option=True
         )
-        self.pagination_control.pack(fill=tk.X, padx=5, pady=5)
+        self.pagination.pack(fill=tk.X, padx=5, pady=5)
     
     def _setup_status(self) -> None:
         """Setup status bar."""
