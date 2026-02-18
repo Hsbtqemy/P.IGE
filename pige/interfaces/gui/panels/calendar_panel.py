@@ -164,6 +164,10 @@ class CalendarPanel(ttk.Frame):
         details_frame = ttk.LabelFrame(self.main_splitter, text="📋 Détails", padding=10)
         self.main_splitter.add(details_frame, weight=1)
         
+        # Set minimum size for details panel
+        details_frame.update_idletasks()
+        self.main_splitter.sashpos(0, 700)  # Set initial split position
+        
         # Selected date label
         self.selected_date_label = ttk.Label(
             details_frame,
@@ -518,34 +522,63 @@ class CalendarPanel(ttk.Frame):
                 anchor=tk.NW
             )
             
-            # Indicators
+            # Indicators and titles
             y_offset = 35
+            max_width = width - 20  # Leave margin
             
-            # Calendar events indicator
-            events_count = len(self._events_by_date.get(date_str, []))
-            if events_count > 0:
+            # Calendar events (show first 2 with titles)
+            events = self._events_by_date.get(date_str, [])
+            for i, event in enumerate(events[:2]):
+                title = event.title
+                if len(title) > 15:
+                    title = title[:12] + "..."
+                time_str = f" {event.start_time[:5]}" if event.start_time else ""
                 canvas.create_text(
                     10, y_offset,
-                    text=f"📅 {events_count}",
-                    font=("TkDefaultFont", 9),
+                    text=f"📅{time_str} {title}",
+                    font=("TkDefaultFont", 8),
                     fill="#9c27b0",
                     anchor=tk.W
                 )
-                y_offset += 18
+                y_offset += 16
             
-            # Entries indicator
-            entries_count = len(self._entries_by_date.get(date_str, []))
-            if entries_count > 0:
+            if len(events) > 2:
                 canvas.create_text(
                     10, y_offset,
-                    text=f"📝 {entries_count}",
-                    font=("TkDefaultFont", 9),
+                    text=f"+ {len(events) - 2} autres...",
+                    font=("TkDefaultFont", 7, "italic"),
+                    fill="#9c27b0",
+                    anchor=tk.W
+                )
+                y_offset += 14
+            
+            # Entries (show first 2 with titles)
+            entries = self._entries_by_date.get(date_str, [])
+            for i, entry in enumerate(entries[:2]):
+                title = entry.title
+                if len(title) > 15:
+                    title = title[:12] + "..."
+                icon = {"note": "📄", "meeting": "👥", "decision": "⚖️", "activity": "🎯"}.get(entry.type, "📝")
+                canvas.create_text(
+                    10, y_offset,
+                    text=f"{icon} {title}",
+                    font=("TkDefaultFont", 8),
                     fill="#0066cc",
                     anchor=tk.W
                 )
-                y_offset += 18
+                y_offset += 16
             
-            # Tasks indicator
+            if len(entries) > 2:
+                canvas.create_text(
+                    10, y_offset,
+                    text=f"+ {len(entries) - 2} autres...",
+                    font=("TkDefaultFont", 7, "italic"),
+                    fill="#0066cc",
+                    anchor=tk.W
+                )
+                y_offset += 14
+            
+            # Tasks indicator (keep as counter)
             tasks_done = len([t for t in tasks if t.status == "done"])
             tasks_total = len(tasks)
             if tasks_total > 0:
@@ -554,7 +587,7 @@ class CalendarPanel(ttk.Frame):
                 canvas.create_text(
                     10, y_offset,
                     text=f"{icon} {tasks_done}/{tasks_total}",
-                    font=("TkDefaultFont", 9),
+                    font=("TkDefaultFont", 8),
                     fill=color,
                     anchor=tk.W
                 )
@@ -585,17 +618,37 @@ class CalendarPanel(ttk.Frame):
             )
             
             y_offset = 35
-            events_count = len(self._events_by_date.get(date_str, []))
-            if events_count > 0:
-                canvas.create_text(10, y_offset, text=f"📅 {events_count}",
-                                 font=("TkDefaultFont", 9), fill="#9c27b0", anchor=tk.W)
-                y_offset += 18
             
-            entries_count = len(self._entries_by_date.get(date_str, []))
-            if entries_count > 0:
-                canvas.create_text(10, y_offset, text=f"📝 {entries_count}",
-                                 font=("TkDefaultFont", 9), fill="#0066cc", anchor=tk.W)
-                y_offset += 18
+            # Show titles on hover too
+            events = self._events_by_date.get(date_str, [])
+            for i, event in enumerate(events[:2]):
+                title = event.title
+                if len(title) > 15:
+                    title = title[:12] + "..."
+                time_str = f" {event.start_time[:5]}" if event.start_time else ""
+                canvas.create_text(10, y_offset, text=f"📅{time_str} {title}",
+                                 font=("TkDefaultFont", 8), fill="#9c27b0", anchor=tk.W)
+                y_offset += 16
+            
+            if len(events) > 2:
+                canvas.create_text(10, y_offset, text=f"+ {len(events) - 2} autres...",
+                                 font=("TkDefaultFont", 7, "italic"), fill="#9c27b0", anchor=tk.W)
+                y_offset += 14
+            
+            entries = self._entries_by_date.get(date_str, [])
+            for i, entry in enumerate(entries[:2]):
+                title = entry.title
+                if len(title) > 15:
+                    title = title[:12] + "..."
+                icon = {"note": "📄", "meeting": "👥", "decision": "⚖️", "activity": "🎯"}.get(entry.type, "📝")
+                canvas.create_text(10, y_offset, text=f"{icon} {title}",
+                                 font=("TkDefaultFont", 8), fill="#0066cc", anchor=tk.W)
+                y_offset += 16
+            
+            if len(entries) > 2:
+                canvas.create_text(10, y_offset, text=f"+ {len(entries) - 2} autres...",
+                                 font=("TkDefaultFont", 7, "italic"), fill="#0066cc", anchor=tk.W)
+                y_offset += 14
             
             tasks_done = len([t for t in tasks if t.status == "done"])
             tasks_total = len(tasks)
@@ -603,7 +656,7 @@ class CalendarPanel(ttk.Frame):
                 color = "#00aa00" if tasks_done == tasks_total else ("#cc0000" if has_overdue else "#ff9800")
                 icon = "✅" if tasks_done == tasks_total else ("⚠️" if has_overdue else "✓")
                 canvas.create_text(10, y_offset, text=f"{icon} {tasks_done}/{tasks_total}",
-                                 font=("TkDefaultFont", 9), fill=color, anchor=tk.W)
+                                 font=("TkDefaultFont", 8), fill=color, anchor=tk.W)
         
         def on_leave(e):
             draw_cell()
@@ -938,6 +991,7 @@ class CalendarPanel(ttk.Frame):
             return
         
         date_str = self.selected_date.isoformat()
+        logger.info(f"Updating details panel for date: {date_str}")
         
         # Update label
         day_name = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"][self.selected_date.weekday()]
@@ -949,6 +1003,7 @@ class CalendarPanel(ttk.Frame):
         self.events_listbox.delete(0, tk.END)
         events = self._events_by_date.get(date_str, [])
         self._current_events = events  # Store for double-click
+        logger.info(f"Found {len(events)} events for {date_str}")
         for event in events:
             time_str = f" {event.start_time[:5]}" if event.start_time else ""
             location_str = f" 📍 {event.location}" if event.location else ""
@@ -961,6 +1016,7 @@ class CalendarPanel(ttk.Frame):
         self.entries_listbox.delete(0, tk.END)
         entries = self._entries_by_date.get(date_str, [])
         self._current_entries = entries  # Store for double-click
+        logger.info(f"Found {len(entries)} entries for {date_str}")
         for entry in entries:
             type_icon = {"note": "📄", "meeting": "👥", "decision": "⚖️", "activity": "🎯"}.get(entry.type, "📝")
             project = self._projects_by_id.get(entry.project_id)
@@ -974,6 +1030,7 @@ class CalendarPanel(ttk.Frame):
         self.tasks_listbox.delete(0, tk.END)
         tasks = self._tasks_by_date.get(date_str, [])
         self._current_tasks = tasks  # Store for double-click
+        logger.info(f"Found {len(tasks)} tasks for {date_str}")
         for task in tasks:
             status_icon = "✅" if task.status == "done" else "⬜"
             self.tasks_listbox.insert(tk.END, f"{status_icon} {task.title}")
