@@ -11,7 +11,7 @@ from pige.core.service import PigeService
 from pige.core.storage import Storage
 from pige.interfaces import gui_helpers
 from pige.interfaces.gui.dialogs import show_about_dialog, show_keyboard_shortcuts
-from pige.interfaces.gui.panels import ProjectsPanel, SearchPanel
+from pige.interfaces.gui.panels import DashboardPanel, ProjectsPanel, SearchPanel
 from pige.utils import io as io_utils
 
 logger = logging.getLogger(__name__)
@@ -120,7 +120,15 @@ class PigeMainWindow(tk.Tk):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Tab 1: Projects (with pagination & incremental updates)
+        # Tab 1: Dashboard (vue par défaut) - NEW!
+        self.dashboard_panel = DashboardPanel(
+            self.notebook,
+            self.service,
+            initial_days=7
+        )
+        self.notebook.add(self.dashboard_panel, text="Dashboard")
+        
+        # Tab 2: Projects (with pagination & incremental updates)
         self.projects_panel = ProjectsPanel(
             self.notebook,
             self.service,
@@ -128,7 +136,7 @@ class PigeMainWindow(tk.Tk):
         )
         self.notebook.add(self.projects_panel, text="Projects")
         
-        # Tab 2: Search
+        # Tab 3: Search
         self.search_panel = SearchPanel(
             self.notebook,
             self.service,
@@ -136,7 +144,7 @@ class PigeMainWindow(tk.Tk):
         )
         self.notebook.add(self.search_panel, text="Search")
         
-        # Tab 3: Placeholder for other panels
+        # Tab 4: Placeholder for Entries
         placeholder_frame = ttk.Frame(self.notebook)
         self.notebook.add(placeholder_frame, text="Entries")
         

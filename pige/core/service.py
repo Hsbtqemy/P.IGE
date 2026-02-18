@@ -2095,3 +2095,155 @@ def _format_task_line(task: Task, done: bool) -> str:
     if task.linked_entry_id:
         parts.append(f"(source entry: {task.linked_entry_id})")
     return f"- [{checkbox}] " + " ".join(parts)
+
+
+# ===== Dashboard Methods =====
+
+    def get_in_progress_items(self, days: int = 7) -> dict[str, list]:
+        """Get items currently in progress.
+        
+        Returns entries and tasks that are actively being worked on.
+        
+        Args:
+            days: Consider entries from last N days as potentially in progress
+            
+        Returns:
+            Dict with 'entries' and 'tasks' lists
+        """
+        from datetime import datetime, timedelta
+        
+        cutoff_date = datetime.now().date() - timedelta(days=days)
+        
+        # Get recent entries (heuristic for "in progress")
+        all_entries = self.storage.read_entries_meta()
+        
+        # Filter: recent entries (last N days) that aren't meetings or decisions
+        in_progress_entries = [
+            e for e in all_entries
+            if e.entry_date and e.entry_date >= cutoff_date.isoformat()
+            and e.type not in ("meeting", "decision")
+        ]
+        
+        # Sort by date descending (most recent first)
+        in_progress_entries.sort(key=lambda e: e.entry_date or "", reverse=True)
+        
+        # Get in-progress tasks from all projects
+        in_progress_tasks = []
+        projects = self.list_projects()
+        
+        for project in projects:
+            tasks = self.list_tasks(project_id=project.id, status="in_progress")
+            in_progress_tasks.extend(tasks)
+        
+        return {
+            "entries": in_progress_entries,
+            "tasks": in_progress_tasks
+        }
+    
+    def get_pending_items(self) -> dict[str, list]:
+        """Get items that are pending or blocked.
+        
+        Returns:
+            Dict with 'entries' and 'tasks' lists
+        """
+        # Get pending/open tasks from all projects
+        pending_tasks = []
+        projects = self.list_projects()
+        
+        for project in projects:
+            # Get tasks with "open" status (waiting to be started)
+            tasks = self.list_tasks(project_id=project.id, status="open")
+            pending_tasks.extend(tasks)
+        
+        # TODO: Could also filter entries with "waiting" or "blocked" tags
+        pending_entries = []
+        
+        return {
+            "entries": pending_entries,
+            "tasks": pending_tasks
+        }
+    
+    def get_upcoming_items(self, days: int = 7) -> list[dict]:
+        """Get upcoming items in the next N days.
+        
+        Args:
+            days: Look ahead N days
+            
+        Returns:
+            List of dicts with: date, type, title, project_id, item_id
+        """
+        from datetime import datetime, timedelta
+        
+        today = datetime.now().date()
+        end_date = today + timedelta(days=days)
+        
+        upcoming = []
+        
+        # Get meetings in date range
+        all_entries = self.storage.read_entries_meta()
+        meetings = [
+            e for e in all_entries
+            if e.type == "meeting"
+            and e.entry_date
+            and today.isoformat() <= e.entry_date <= end_date.isoformat()
+        ]
+        
+        for meeting in meetings:
+            project = self._projects_by_id.get(meeting.project_id)
+            upcoming.append({
+                "date": meeting.entry_date,
+                "type": "Meeting",
+                "title": meeting.title,
+                "project_name": project.name if project else meeting.project_id,
+                "project_id": meeting.project_id,
+                "item_id": meeting.id
+            })
+        
+        # Sort by date
+        upcoming.sort(key=lambda x: x["date"])
+        
+        return upcoming
+    
+    def get_focus_suggestions(self) -> dict:
+        """Calculate focus suggestions based on current state.
+        
+        Returns:
+            Dict with suggestions and metrics
+        """
+        projects = self.list_projects()
+        
+        # Find project with most open tasks
+        busiest_project = None
+        max_open_tasks = 0
+        
+        for project in projects:
+            if project.status != "active":
+                continue
+            
+            tasks = self.list_tasks(project_id=project.id, status="open")
+            in_progress_tasks = self.list_tasks(project_id=project.id, status="in_progress")
+            total_open = len(tasks) + len(in_progress_tasks)
+            
+            if total_open > max_open_tasks:
+                max_open_tasks = total_open
+                busiest_project = (project, total_open)
+        
+        # Find oldest in-progress items
+        in_progress = self.get_in_progress_items(days=30)
+        oldest_entry = None
+        
+        if in_progress["entries"]:
+            # Sort by date ascending (oldest first)
+            sorted_entries = sorted(
+                in_progress["entries"],
+                key=lambda e: e.entry_date or "9999-99-99"
+            )
+            oldest_entry = sorted_entries[0] if sorted_entries else None
+        
+        return {
+            "busiest_project": busiest_project,
+            "oldest_entry": oldest_entry,
+            "total_in_progress": len(in_progress["entries"]) + len(in_progress["tasks"]),
+            "total_pending": len(self.get_pending_items()["tasks"])
+        }
+
