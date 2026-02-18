@@ -143,14 +143,21 @@ python -m pige gui
 ```
 
 **Features:**
-- 🔍 **Search Tab**: Full-text search with instant results (Ctrl+F)
+- 📊 **Dashboard Tab**: Overview of work status (default view)
+  - **En Cours**: Recent entries + in-progress tasks
+  - **En Attente**: Open/pending tasks
+  - **À Venir**: Timeline for next 7/14/30 days (meetings)
+  - **Focus Suggéré**: Smart recommendations (busiest project, oldest items)
+  - Timeline filter (7/14/30 days)
+  - Double-click to open details
 - 📂 **Projects Tab**: Hierarchical view with pagination (50/100/200/500/1K/All)
+- 🔍 **Search Tab**: Full-text search with instant results (Ctrl+F)
 - ⚡ **Smooth UX**: Incremental tree updates (no flickering)
-- 💾 **Preferences**: Pagination settings auto-saved
-- 📋 **Context Menus**: Right-click for quick actions
+- 💾 **Preferences**: Settings auto-saved (pagination, etc.)
 - ⌨️ **Keyboard Shortcuts**: Full navigation (F1 for shortcuts list)
 
 **Keyboard Shortcuts:**
+- `Ctrl+D`: Go to Dashboard (or just launch GUI)
 - `Ctrl+F`: Open search
 - `Ctrl+N`: New project
 - `Ctrl+E`: New entry

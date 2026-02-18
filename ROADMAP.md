@@ -401,6 +401,53 @@ PIGE évolue d'un outil de journaling local fonctionnel vers une solution produc
 
 ---
 
+## Phase 4: Features Avancées (EN COURS)
+
+**Objectif**: Ajouter capacités avancées pour workflow quotidien optimisé.
+
+**Version cible**: v0.5.0
+
+---
+
+### 4.0 Dashboard Vue d'Ensemble (2 jours) - ✅ COMPLÉTÉE
+
+**Objectif**: Hub de pilotage quotidien - répondre à "Que dois-je faire maintenant?"
+
+#### Fonctionnalités
+- [x] `DashboardPanel` avec 4 sections (500+ lignes)
+- [x] Section **📋 En Cours**: Entries récentes + tasks in_progress
+- [x] Section **⏸️ En Attente**: Tasks open/pending
+- [x] Section **📅 À Venir**: Timeline meetings (7/14/30 jours)
+- [x] Section **🎯 Focus Suggéré**: Recommendations intelligentes
+- [x] Filtre période dynamique (dropdown)
+- [x] Double-click pour ouvrir détails (messagebox)
+- [x] Intégré comme Tab 1 (vue par défaut)
+
+#### Méthodes Service (4 nouvelles)
+- [x] `get_in_progress_items(days)`: Heuristique entries N derniers jours
+- [x] `get_pending_items()`: Tasks open
+- [x] `get_upcoming_items(days)`: Timeline meetings
+- [x] `get_focus_suggestions()`: Projet chargé + oldest items
+
+**Statut**: ✅ COMPLÉTÉE - Dashboard fonctionnel!
+
+**Résultats**:
+- Vue d'ensemble centralisée au lancement
+- 4 sections avec données réelles
+- Calculs temps réel (âge, délais, jours jusqu'à)
+- Suggestions basées sur état projet
+- 177 tests passants (100%)
+
+**Impact utilisateur**:
+- ✅ Visibilité immédiate état global
+- ✅ Priorisation guidée (focus suggéré)
+- ✅ Timeline claire des 7 prochains jours
+- ✅ Aucun item oublié
+
+**Gain**: Dashboard = **hub quotidien** pour pilotage travail! 🎯
+
+---
+
 #### 3.5 Architecture MVC/MVP (2 semaines) - REPORTÉE
 - [ ] Package `pige/interfaces/gui/presenters/`
 - [ ] Presenters: ProjectPresenter, EntryPresenter, TaskPresenter

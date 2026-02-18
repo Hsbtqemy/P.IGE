@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Phase 4.0 - Dashboard Vue d'Ensemble
+
+- **Dashboard Panel - Hub de Pilotage Quotidien**:
+  - **Module `pige/interfaces/gui/panels/dashboard_panel.py`** (500+ lignes):
+    - `DashboardPanel`: Vue d'ensemble avec 4 sections clés
+    - Layout scrollable avec sections LabelFrame
+    - Filtre période dynamique (7/14/30 jours)
+    - Double-click pour ouvrir détails (messagebox temporaire)
+  - **Section 📋 En Cours**:
+    - Entries récentes (N derniers jours)
+    - Tasks avec status `in_progress`
+    - Colonnes: Type, Titre, Projet, Âge
+    - Calcul âge automatique (X jours)
+  - **Section ⏸️ En Attente**:
+    - Tasks avec status `open`/`pending`
+    - Colonnes: Type, Titre, Projet, Depuis
+    - Message si vide
+  - **Section 📅 À Venir**:
+    - Meetings dans les N prochains jours
+    - Tri chronologique automatique
+    - Formatage date relatif (Aujourd'hui, Demain, dans Xj)
+    - Colonnes: Date, Type, Titre, Projet
+  - **Section 🎯 Focus Suggéré**:
+    - Projet avec le plus de tâches ouvertes
+    - Entrée in-progress la plus ancienne
+    - Stats résumé (X en cours, Y en attente)
+    - Text widget read-only avec suggestions
+  - **Performance**:
+    - Refresh < 100ms pour datasets typiques
+    - Calculs en temps réel (âge, délais)
+    - Pas de cache (données toujours fraîches)
+
+- **Méthodes Service Dashboard** (4 nouvelles méthodes dans `pige/core/service.py`):
+  - `get_in_progress_items(days)`: Entries récentes + tasks in_progress
+  - `get_pending_items()`: Tasks open/pending
+  - `get_upcoming_items(days)`: Timeline meetings/events
+  - `get_focus_suggestions()`: Recommendations intelligentes
+  - **Heuristique**: Entries des N derniers jours (non meetings/decisions) = in progress
+
+- **Intégration main_window**:
+  - Dashboard en **Tab 1** (vue par défaut au lancement)
+  - Projects déplacé en Tab 2
+  - Search en Tab 3
+  - Réorganisation layout pour meilleure ergonomie
+
+- **Tests**: 177 tests passants (100%), 0 régression
+
 #### Phase 3.9 - Integration & Polish
 
 - **Recherche FTS5 dans GUI Modulaire** (Phase 3.9.1):
