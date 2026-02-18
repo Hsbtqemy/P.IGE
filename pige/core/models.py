@@ -101,3 +101,21 @@ class CalendarSubscription:
     username: Optional[str] = None  # For HTTP Basic Auth
     password: Optional[str] = None  # For HTTP Basic Auth (stored as plain text - TODO: encrypt)
 
+
+@dataclass
+class CalendarEvent:
+    """External calendar event (synchronized from ICS)."""
+    id: str  # ICS UID
+    subscription_id: str  # Which subscription imported this
+    title: str
+    description: Optional[str] = None
+    start_date: str = ""  # ISO date
+    end_date: Optional[str] = None  # ISO date
+    start_time: Optional[str] = None  # ISO time
+    end_time: Optional[str] = None  # ISO time
+    location: Optional[str] = None
+    created_at: str = ""
+    updated_at: str = ""
+    # Link to PIGE entry (optional)
+    linked_entry_id: Optional[str] = None
+

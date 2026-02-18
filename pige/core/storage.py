@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 from pige.core.cache import EntryCache
 from pige.core.indexing import SearchIndex
-from pige.core.models import EntryMeta, Project, Task, TimeLog, TimerState
+from pige.core.models import EntryMeta, Project, Task, TimeLog, TimerState, CalendarEvent
 from pige.utils import dates
 from pige.utils import io as io_utils
 
@@ -80,6 +80,7 @@ class Storage:
         self.tasks_path = data_dir / "tasks.json"
         self.timers_path = data_dir / "timers.json"
         self.timelogs_path = data_dir / "timelogs.jsonl"
+        self.calendar_events_path = data_dir / "calendar_events.json"  # NEW
         self.exports_dir = data_dir / "exports"
         self.index_path = data_dir / ".pige_index.db"
         self._entry_cache = EntryCache()  # Cache for entry metadata
@@ -98,6 +99,8 @@ class Storage:
             io_utils.safe_write_json(self.timers_path, asdict(default_timer_state()))
         if not self.timelogs_path.exists():
             self.timelogs_path.touch()
+        if not self.calendar_events_path.exists():  # NEW
+            io_utils.safe_write_json(self.calendar_events_path, [])
         
         # Search index is created on-demand (first write or rebuild-index command)
     
@@ -757,3 +760,84 @@ def _apply_entry_patch(entry: EntryMeta, patch: dict[str, object]) -> EntryMeta:
     for key, value in patch.items():
         data[key] = value
     return EntryMeta(**data)
+
+
+# ===== Calendar Events Methods (NEW) =====
+def read_calendar_events(storage: Storage) -> list[CalendarEvent]:
+    """Read all calendar events."""
+    data = io_utils.read_json(storage.calendar_events_path, default=[])
+    events = []
+    for item in data:
+        event = CalendarEvent(
+            id=item["id"],
+            subscription_id=item["subscription_id"],
+            title=item["title"],
+            description=item.get("description"),
+            start_date=item.get("start_date", ""),
+            end_date=item.get("end_date"),
+            start_time=item.get("start_time"),
+            end_time=item.get("end_time"),
+            location=item.get("location"),
+            created_at=item.get("created_at", ""),
+            updated_at=item.get("updated_at", ""),
+            linked_entry_id=item.get("linked_entry_id")
+        )
+        events.append(event)
+    return events
+
+
+def write_calendar_events(storage: Storage, events: list[CalendarEvent]) -> None:
+    """Write calendar events to disk."""
+    data = []
+    for event in events:
+        data.append({
+            "id": event.id,
+            "subscription_id": event.subscription_id,
+            "title": event.title,
+            "description": event.description,
+            "start_date": event.start_date,
+            "end_date": event.end_date,
+            "start_time": event.start_time,
+            "end_time": event.end_time,
+            "location": event.location,
+            "created_at": event.created_at,
+            "updated_at": event.updated_at,
+            "linked_entry_id": event.linked_entry_id
+        })
+    io_utils.safe_write_json(storage.calendar_events_path, data)
+    logger.info(f"Saved {len(events)} calendar events")
+
+
+def upsert_calendar_event(storage: Storage, event: CalendarEvent) -> None:
+    """Insert or update a calendar event."""
+    events = read_calendar_events(storage)
+    
+    # Find existing event
+    existing_idx = None
+    for idx, e in enumerate(events):
+        if e.id == event.id:
+            existing_idx = idx
+            break
+    
+    if existing_idx is not None:
+        events[existing_idx] = event
+    else:
+        events.append(event)
+    
+    write_calendar_events(storage, events)
+
+
+def delete_calendar_event(storage: Storage, event_id: str) -> None:
+    """Delete a calendar event by ID."""
+    events = read_calendar_events(storage)
+    events = [e for e in events if e.id != event_id]
+    write_calendar_events(storage, events)
+
+
+def delete_calendar_events_by_subscription(storage: Storage, subscription_id: str) -> None:
+    """Delete all events from a specific subscription."""
+    events = read_calendar_events(storage)
+    events = [e for e in events if e.subscription_id != subscription_id]
+    write_calendar_events(storage, events)
+    logger.info(f"Deleted all events for subscription {subscription_id}")
+
