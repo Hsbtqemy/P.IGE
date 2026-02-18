@@ -318,7 +318,7 @@ class DashboardPanel(ttk.Frame):
             # Calculate age
             from datetime import datetime
             if task.created_at:
-                created_date = datetime.fromisoformat(task.created_at)
+                created_date = datetime.fromisoformat(task.created_at).replace(tzinfo=None)
                 age_days = (datetime.now() - created_date).days
                 age_str = f"{age_days}j" if age_days > 0 else "Aujourd'hui"
             else:
@@ -362,7 +362,7 @@ class DashboardPanel(ttk.Frame):
             # Calculate time since creation
             from datetime import datetime
             if task.created_at:
-                created_date = datetime.fromisoformat(task.created_at)
+                created_date = datetime.fromisoformat(task.created_at).replace(tzinfo=None)
                 days_since = (datetime.now() - created_date).days
                 since_str = f"{days_since}j" if days_since > 0 else "Aujourd'hui"
             else:
