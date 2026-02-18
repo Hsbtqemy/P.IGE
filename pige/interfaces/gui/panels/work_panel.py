@@ -97,6 +97,12 @@ class WorkPanel(ttk.Frame):
         
         ttk.Button(
             toolbar,
+            text="📂 Projet",
+            command=self._on_new_project
+        ).pack(side=tk.LEFT, padx=(5, 0))
+        
+        ttk.Button(
+            toolbar,
             text="➕ Entry",
             command=self._on_new_entry_from_explorer
         ).pack(side=tk.LEFT, padx=(5, 0))
@@ -411,18 +417,25 @@ class WorkPanel(ttk.Frame):
         """Show context menu on right-click."""
         # Select item under cursor
         item = self.explorer_tree.identify_row(event.y)
-        if not item:
-            return
-        
-        self.explorer_tree.selection_set(item)
         
         # Create context menu
         menu = tk.Menu(self, tearoff=0)
+        
+        if not item:
+            # Right-click on empty space
+            menu.add_command(label="📂 Nouveau Projet", command=self._on_new_project)
+            menu.add_command(label="🔄 Rafraîchir", command=self.refresh)
+            menu.post(event.x_root, event.y_root)
+            return
+        
+        self.explorer_tree.selection_set(item)
         
         if item.startswith("project:"):
             # Project context menu
             menu.add_command(label="➕ Nouvelle Entry", command=self._on_new_entry_from_explorer)
             menu.add_command(label="➕ Nouvelle Task", command=self._on_add_task)
+            menu.add_separator()
+            menu.add_command(label="📂 Nouveau Sous-Projet", command=lambda: self._on_new_subproject(item))
             menu.add_separator()
             menu.add_command(label="⏱️ Start Timer", command=lambda: self._start_timer_for_project(item))
             menu.add_separator()
@@ -573,6 +586,81 @@ class WorkPanel(ttk.Frame):
                 messagebox.showinfo("Succès", f"Entry déplacée vers {target_project.name}")
             except Exception as e:
                 messagebox.showerror("Erreur", f"Impossible de déplacer:\n{e}")
+    
+    def _on_new_project(self) -> None:
+        """Create a new project."""
+        from tkinter import simpledialog
+        
+        # Ask for project name
+        name = simpledialog.askstring("Nouveau Projet", "Nom du projet:")
+        if not name:
+            return
+        
+        # Ask for description (optional)
+        desc = simpledialog.askstring("Description", "Description (optionnelle):", parent=self)
+        
+        # Ask for tags (optional)
+        tags_str = simpledialog.askstring("Tags", "Tags (séparés par virgules, optionnel):", parent=self)
+        tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else []
+        
+        try:
+            project = self.service.create_project(
+                name=name,
+                description=desc if desc else None,
+                tags=tags
+            )
+            
+            # Select the new project
+            self.current_project_id = project.id
+            
+            # Refresh explorer
+            self._refresh_explorer()
+            
+            # Expand the new project in tree
+            self.explorer_tree.item(f"project:{project.id}", open=True)
+            self.explorer_tree.selection_set(f"project:{project.id}")
+            
+            messagebox.showinfo("Succès", f"Projet '{name}' créé!")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de créer le projet:\n{e}")
+    
+    def _on_new_subproject(self, parent_item_id: str) -> None:
+        """Create a new sub-project."""
+        from tkinter import simpledialog
+        
+        parent_id = parent_item_id.replace("project:", "")
+        parent_project = self._projects_by_id.get(parent_id)
+        
+        if not parent_project:
+            return
+        
+        # Ask for project name
+        name = simpledialog.askstring(
+            "Nouveau Sous-Projet",
+            f"Nom du sous-projet sous '{parent_project.name}':"
+        )
+        if not name:
+            return
+        
+        try:
+            project = self.service.create_project(
+                name=name,
+                parent_id=parent_id
+            )
+            
+            # Select the new project
+            self.current_project_id = project.id
+            
+            # Refresh explorer
+            self._refresh_explorer()
+            
+            # Expand parent and select new project
+            self.explorer_tree.item(f"project:{parent_id}", open=True)
+            self.explorer_tree.selection_set(f"project:{project.id}")
+            
+            messagebox.showinfo("Succès", f"Sous-projet '{name}' créé sous '{parent_project.name}'!")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de créer le sous-projet:\n{e}")
     
     def _on_new_entry_from_explorer(self) -> None:
         """Create new entry from explorer."""
