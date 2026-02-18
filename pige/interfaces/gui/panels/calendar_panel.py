@@ -48,6 +48,9 @@ class CalendarPanel(ttk.Frame):
         self._setup_view_container()
         self._setup_details_panel()
         
+        # Set splitter position after UI is rendered
+        self.after(100, self._set_initial_splitter_position)
+        
         # Load initial data
         self.refresh()
     
@@ -157,16 +160,25 @@ class CalendarPanel(ttk.Frame):
         
         # View container (will hold month or week view)
         self.view_container = ttk.Frame(self.main_splitter)
-        self.main_splitter.add(self.view_container, weight=2)
+        self.main_splitter.add(self.view_container, weight=3)
+    
+    def _set_initial_splitter_position(self) -> None:
+        """Set initial splitter position to show details panel."""
+        try:
+            # Get total width
+            total_width = self.main_splitter.winfo_width()
+            if total_width > 1:
+                # Set splitter to show 60% calendar, 40% details
+                split_pos = int(total_width * 0.6)
+                self.main_splitter.sashpos(0, split_pos)
+                logger.info(f"Set splitter position to {split_pos} (total width: {total_width})")
+        except Exception as e:
+            logger.error(f"Failed to set splitter position: {e}")
     
     def _setup_details_panel(self) -> None:
         """Setup details panel for selected date."""
         details_frame = ttk.LabelFrame(self.main_splitter, text="📋 Détails", padding=10)
-        self.main_splitter.add(details_frame, weight=1)
-        
-        # Set minimum size for details panel
-        details_frame.update_idletasks()
-        self.main_splitter.sashpos(0, 700)  # Set initial split position
+        self.main_splitter.add(details_frame, weight=2)
         
         # Selected date label
         self.selected_date_label = ttk.Label(
