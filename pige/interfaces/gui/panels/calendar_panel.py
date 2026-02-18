@@ -154,31 +154,30 @@ class CalendarPanel(ttk.Frame):
     
     def _setup_view_container(self) -> None:
         """Setup container for calendar views (month/week)."""
-        # Main splitter
-        self.main_splitter = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
-        self.main_splitter.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Main container with grid layout (more reliable than PanedWindow)
+        main_container = ttk.Frame(self)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Configure grid weights (60% calendar, 40% details)
+        main_container.columnconfigure(0, weight=3, minsize=400)
+        main_container.columnconfigure(1, weight=2, minsize=300)
+        main_container.rowconfigure(0, weight=1)
         
         # View container (will hold month or week view)
-        self.view_container = ttk.Frame(self.main_splitter)
-        self.main_splitter.add(self.view_container, weight=3)
+        self.view_container = ttk.Frame(main_container, relief=tk.SUNKEN, borderwidth=1)
+        self.view_container.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
+        
+        # Store reference for details panel
+        self.main_container = main_container
     
     def _set_initial_splitter_position(self) -> None:
-        """Set initial splitter position to show details panel."""
-        try:
-            # Get total width
-            total_width = self.main_splitter.winfo_width()
-            if total_width > 1:
-                # Set splitter to show 60% calendar, 40% details
-                split_pos = int(total_width * 0.6)
-                self.main_splitter.sashpos(0, split_pos)
-                logger.info(f"Set splitter position to {split_pos} (total width: {total_width})")
-        except Exception as e:
-            logger.error(f"Failed to set splitter position: {e}")
+        """No longer needed with grid layout."""
+        pass
     
     def _setup_details_panel(self) -> None:
         """Setup details panel for selected date."""
-        details_frame = ttk.LabelFrame(self.main_splitter, text="📋 Détails", padding=10)
-        self.main_splitter.add(details_frame, weight=2)
+        details_frame = ttk.LabelFrame(self.main_container, text="📋 Détails", padding=10)
+        details_frame.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
         
         # Selected date label
         self.selected_date_label = ttk.Label(
