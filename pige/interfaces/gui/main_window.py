@@ -11,7 +11,7 @@ from pige.core.service import PigeService
 from pige.core.storage import Storage
 from pige.interfaces import gui_helpers
 from pige.interfaces.gui.dialogs import show_about_dialog, show_keyboard_shortcuts
-from pige.interfaces.gui.panels import SearchPanel
+from pige.interfaces.gui.panels import ProjectsPanel, SearchPanel
 from pige.utils import io as io_utils
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,9 @@ class PigeMainWindow(tk.Tk):
         self._setup_menu()
         self._setup_main_layout()
         self._setup_keybindings()
+        
+        # Bind window close event to save preferences
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
         
         logger.info(f"PIGE GUI initialized with data_dir={data_dir}")
     
@@ -117,7 +120,15 @@ class PigeMainWindow(tk.Tk):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Tab 1: Search
+        # Tab 1: Projects (with pagination & incremental updates)
+        self.projects_panel = ProjectsPanel(
+            self.notebook,
+            self.service,
+            initial_page_size=self.gui_prefs.get("pagination", {}).get("projects_page_size", 100)
+        )
+        self.notebook.add(self.projects_panel, text="Projects")
+        
+        # Tab 2: Search
         self.search_panel = SearchPanel(
             self.notebook,
             self.service,
@@ -125,13 +136,13 @@ class PigeMainWindow(tk.Tk):
         )
         self.notebook.add(self.search_panel, text="Search")
         
-        # Tab 2: Placeholder for other panels
+        # Tab 3: Placeholder for other panels
         placeholder_frame = ttk.Frame(self.notebook)
-        self.notebook.add(placeholder_frame, text="Projects")
+        self.notebook.add(placeholder_frame, text="Entries")
         
         placeholder_label = ttk.Label(
             placeholder_frame,
-            text="Other panels (Projects, Entries, Tasks) will be added here.",
+            text="Entries panel will be added here.",
             font=("TkDefaultFont", 12),
             justify=tk.CENTER
         )
@@ -191,6 +202,22 @@ class PigeMainWindow(tk.Tk):
     def _show_about(self) -> None:
         """Show about dialog."""
         show_about_dialog(self)
+    
+    def _on_closing(self) -> None:
+        """Handle window closing - save preferences."""
+        logger.info("Saving preferences before closing")
+        
+        # Save pagination preferences
+        if not self.gui_prefs.get("pagination"):
+            self.gui_prefs["pagination"] = {}
+        
+        self.gui_prefs["pagination"]["projects_page_size"] = self.projects_panel.get_page_size()
+        
+        # Save to disk
+        self._save_gui_prefs()
+        
+        # Close window
+        self.destroy()
 
 
 def main(argv: list[str] | None = None) -> int:
