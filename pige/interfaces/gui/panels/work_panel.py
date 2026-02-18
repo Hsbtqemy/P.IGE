@@ -20,66 +20,37 @@ class WorkPanel(ttk.Frame):
         # State
         self.current_project_id: str | None = None
         self._projects_by_id: dict = {}
-        self._projects_by_name: dict = {}
         
-        # Setup UI
-        self._setup_project_selector()
+        # Setup UI with 3-pane layout
         self._setup_timer_display()
         
-        # Create main paned window (horizontal splitter)
-        self.main_paned = ttk.PanedWindow(self, orient=tk.VERTICAL)
-        self.main_paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        # Main horizontal splitter: Explorer | Editor+Tasks
+        self.main_splitter = ttk.PanedWindow(self, orient=tk.HORIZONTAL)
+        self.main_splitter.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
         
-        # Top pane: Editor
-        self._setup_quick_entry()
+        # Left pane: Project/Entry explorer
+        self._setup_explorer()
         
-        # Bottom pane: Tasks and Recent entries
-        bottom_frame = ttk.Frame(self.main_paned)
-        self.main_paned.add(bottom_frame, weight=1)
+        # Right pane: Editor + Tasks (vertical splitter)
+        right_frame = ttk.Frame(self.main_splitter)
+        self.main_splitter.add(right_frame, weight=3)
         
-        # Create bottom paned window (tasks | entries)
-        self.bottom_paned = ttk.PanedWindow(bottom_frame, orient=tk.HORIZONTAL)
-        self.bottom_paned.pack(fill=tk.BOTH, expand=True)
+        self.right_splitter = ttk.PanedWindow(right_frame, orient=tk.VERTICAL)
+        self.right_splitter.pack(fill=tk.BOTH, expand=True)
         
+        # Right top: Editor
+        self._setup_editor()
+        
+        # Right bottom: Tasks
         self._setup_tasks_section()
-        self._setup_recent_entries()
         
         # Load initial data
         self.refresh()
     
-    def _setup_project_selector(self) -> None:
-        """Setup project selection dropdown."""
-        selector_frame = ttk.Frame(self)
-        selector_frame.pack(fill=tk.X, padx=10, pady=10)
-        
-        ttk.Label(
-            selector_frame,
-            text="📂 Projet actif:",
-            font=("TkDefaultFont", 10, "bold")
-        ).pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.project_var = tk.StringVar()
-        self.project_combo = ttk.Combobox(
-            selector_frame,
-            textvariable=self.project_var,
-            state="readonly",
-            width=40,
-            font=("TkDefaultFont", 10)
-        )
-        self.project_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.project_combo.bind("<<ComboboxSelected>>", self._on_project_changed)
-        
-        ttk.Button(
-            selector_frame,
-            text="🔄",
-            width=3,
-            command=self.refresh
-        ).pack(side=tk.LEFT, padx=(5, 0))
-    
     def _setup_timer_display(self) -> None:
         """Setup timer display and controls."""
         timer_frame = ttk.LabelFrame(self, text="⏱️ Timer", padding=10)
-        timer_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        timer_frame.pack(fill=tk.X, padx=10, pady=10)
         
         # Timer display
         self.timer_var = tk.StringVar(value="Aucun timer actif")
@@ -108,10 +79,54 @@ class WorkPanel(ttk.Frame):
         )
         self.btn_stop_timer.pack(side=tk.LEFT, padx=2)
     
-    def _setup_quick_entry(self) -> None:
-        """Setup quick entry creation form."""
-        entry_frame = ttk.LabelFrame(self.main_paned, text="✍️ Entry Editor", padding=10)
-        self.main_paned.add(entry_frame, weight=3)
+    def _setup_explorer(self) -> None:
+        """Setup project/entry explorer tree."""
+        explorer_frame = ttk.LabelFrame(self.main_splitter, text="📂 Projets & Entries", padding=5)
+        self.main_splitter.add(explorer_frame, weight=1)
+        
+        # Toolbar
+        toolbar = ttk.Frame(explorer_frame)
+        toolbar.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Button(
+            toolbar,
+            text="🔄",
+            width=3,
+            command=self.refresh
+        ).pack(side=tk.LEFT)
+        
+        ttk.Button(
+            toolbar,
+            text="➕ Entry",
+            command=self._on_new_entry_from_explorer
+        ).pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Tree
+        tree_frame = ttk.Frame(explorer_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+        
+        scrollbar = ttk.Scrollbar(tree_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.explorer_tree = ttk.Treeview(
+            tree_frame,
+            yscrollcommand=scrollbar.set,
+            selectmode="browse"
+        )
+        self.explorer_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.explorer_tree.yview)
+        
+        # Configure tree appearance
+        self.explorer_tree.heading("#0", text="Navigation")
+        
+        # Bind events
+        self.explorer_tree.bind("<<TreeviewSelect>>", self._on_explorer_select)
+        self.explorer_tree.bind("<Double-Button-1>", self._on_explorer_double_click)
+    
+    def _setup_editor(self) -> None:
+        """Setup markdown editor."""
+        editor_frame = ttk.LabelFrame(self.right_splitter, text="✍️ Entry Editor", padding=10)
+        self.right_splitter.add(editor_frame, weight=3)
         
         # Top toolbar: Type, Title, Entry selector
         top_row = ttk.Frame(entry_frame)
@@ -245,38 +260,6 @@ class WorkPanel(ttk.Frame):
         self.tasks_tree.bind("<Double-Button-1>", self._on_task_double_click)
         self.tasks_tree.bind("<space>", self._on_task_toggle)
     
-    def _setup_recent_entries(self) -> None:
-        """Setup recent entries list."""
-        recent_frame = ttk.LabelFrame(self.bottom_paned, text="📝 Entries Récentes", padding=10)
-        self.bottom_paned.add(recent_frame, weight=1)
-        
-        # Entries tree
-        tree_frame = ttk.Frame(recent_frame)
-        tree_frame.pack(fill=tk.BOTH, expand=True)
-        
-        scrollbar = ttk.Scrollbar(tree_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        self.entries_tree = ttk.Treeview(
-            tree_frame,
-            columns=("date", "type", "title"),
-            show="headings",
-            yscrollcommand=scrollbar.set,
-            height=5
-        )
-        
-        self.entries_tree.heading("date", text="Date")
-        self.entries_tree.heading("type", text="Type")
-        self.entries_tree.heading("title", text="Titre")
-        
-        self.entries_tree.column("date", width=100)
-        self.entries_tree.column("type", width=100)
-        self.entries_tree.column("title", width=400)
-        
-        self.entries_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.entries_tree.yview)
-        
-        self.entries_tree.bind("<Double-Button-1>", self._on_entry_double_click)
     
     def refresh(self) -> None:
         """Refresh all data."""
@@ -285,16 +268,9 @@ class WorkPanel(ttk.Frame):
         # Load projects
         projects = self.service.list_projects(status="active")
         self._projects_by_id = {p.id: p for p in projects}
-        self._projects_by_name = {p.name: p for p in projects}
         
-        # Update project dropdown
-        project_names = sorted([p.name for p in projects])
-        self.project_combo.config(values=project_names)
-        
-        # Select first project if none selected
-        if not self.current_project_id and project_names:
-            self.project_var.set(project_names[0])
-            self._on_project_changed(None)
+        # Refresh explorer tree
+        self._refresh_explorer()
         
         # Refresh timer
         self._refresh_timer()
@@ -302,17 +278,120 @@ class WorkPanel(ttk.Frame):
         # Refresh current project data
         if self.current_project_id:
             self._refresh_tasks()
-            self._refresh_entries()
     
-    def _on_project_changed(self, event) -> None:
-        """Handle project selection change."""
-        project_name = self.project_var.get()
-        project = self._projects_by_name.get(project_name)
+    def _refresh_explorer(self) -> None:
+        """Refresh the project/entry explorer tree."""
+        # Clear tree
+        for item in self.explorer_tree.get_children():
+            self.explorer_tree.delete(item)
         
-        if project:
-            self.current_project_id = project.id
+        # Get all entries
+        all_entries = self.service.storage.read_entries_meta()
+        entries_by_project: dict[str, list] = {}
+        
+        for entry in all_entries:
+            if entry.project_id not in entries_by_project:
+                entries_by_project[entry.project_id] = []
+            entries_by_project[entry.project_id].append(entry)
+        
+        # Sort entries by date (newest first)
+        for entries in entries_by_project.values():
+            entries.sort(key=lambda e: e.entry_date or e.ts, reverse=True)
+        
+        # Build tree: Projects with their entries
+        for project in sorted(self._projects_by_id.values(), key=lambda p: p.name):
+            # Add project node
+            project_text = f"📂 {project.name}"
+            project_node = self.explorer_tree.insert(
+                "",
+                tk.END,
+                iid=f"project:{project.id}",
+                text=project_text,
+                open=False
+            )
+            
+            # Add entries under project
+            project_entries = entries_by_project.get(project.id, [])
+            for entry in project_entries[:20]:  # Limit to 20 most recent
+                entry_icon = {
+                    "note": "📝",
+                    "meeting": "🤝",
+                    "decision": "✅",
+                    "activity": "⚡"
+                }.get(entry.type, "📄")
+                
+                entry_text = f"{entry_icon} {entry.title[:50]}"
+                if entry.entry_date:
+                    entry_text += f" ({entry.entry_date})"
+                
+                self.explorer_tree.insert(
+                    project_node,
+                    tk.END,
+                    iid=f"entry:{entry.id}",
+                    text=entry_text
+                )
+    
+    def _on_explorer_select(self, event=None) -> None:
+        """Handle selection in explorer tree."""
+        selection = self.explorer_tree.selection()
+        if not selection:
+            return
+        
+        item_id = selection[0]
+        
+        if item_id.startswith("project:"):
+            # Project selected
+            project_id = item_id.replace("project:", "")
+            self.current_project_id = project_id
             self._refresh_tasks()
-            self._refresh_entries()
+            # Don't load in editor, just update tasks
+            
+        elif item_id.startswith("entry:"):
+            # Entry selected - show preview or wait for double-click
+            pass
+    
+    def _on_explorer_double_click(self, event=None) -> None:
+        """Handle double-click in explorer tree."""
+        selection = self.explorer_tree.selection()
+        if not selection:
+            return
+        
+        item_id = selection[0]
+        
+        if item_id.startswith("entry:"):
+            # Load entry in editor
+            entry_id = item_id.replace("entry:", "")
+            self._load_entry_in_editor(entry_id)
+            
+            # Set current project
+            entries = self.service.storage.read_entries_meta()
+            entry = next((e for e in entries if e.id == entry_id), None)
+            if entry:
+                self.current_project_id = entry.project_id
+                self._refresh_tasks()
+    
+    def _on_new_entry_from_explorer(self) -> None:
+        """Create new entry from explorer."""
+        # Get selected project or ask user
+        selection = self.explorer_tree.selection()
+        
+        if selection and selection[0].startswith("project:"):
+            project_id = selection[0].replace("project:", "")
+            self.current_project_id = project_id
+        elif selection and selection[0].startswith("entry:"):
+            # Get project from entry
+            entry_id = selection[0].replace("entry:", "")
+            entries = self.service.storage.read_entries_meta()
+            entry = next((e for e in entries if e.id == entry_id), None)
+            if entry:
+                self.current_project_id = entry.project_id
+        
+        if not self.current_project_id:
+            messagebox.showwarning("Attention", "Sélectionnez d'abord un projet dans l'arborescence")
+            return
+        
+        # Start new entry
+        self._on_new_entry_editor()
     
     def _refresh_timer(self) -> None:
         """Refresh timer display."""
@@ -373,29 +452,6 @@ class WorkPanel(ttk.Frame):
         except Exception as e:
             logger.error(f"Failed to load tasks: {e}")
     
-    def _refresh_entries(self) -> None:
-        """Refresh recent entries for current project."""
-        # Clear tree
-        for item in self.entries_tree.get_children():
-            self.entries_tree.delete(item)
-        
-        if not self.current_project_id:
-            return
-        
-        # Load and display recent entries
-        all_entries = self.service.storage.read_entries_meta()
-        project_entries = [e for e in all_entries if e.project_id == self.current_project_id]
-        project_entries.sort(key=lambda e: e.entry_date or e.ts, reverse=True)
-        
-        for entry in project_entries[:10]:  # Show last 10
-            date_str = entry.entry_date or "?"
-            
-            self.entries_tree.insert(
-                "",
-                tk.END,
-                iid=entry.id,
-                values=(date_str, entry.type, entry.title)
-            )
     
     def _on_add_entry(self) -> None:
         """Add new entry."""
@@ -423,8 +479,8 @@ class WorkPanel(ttk.Frame):
             # Clear form
             self._on_clear_form()
             
-            # Refresh
-            self._refresh_entries()
+            # Refresh explorer
+            self._refresh_explorer()
             
             messagebox.showinfo("Succès", f"Entry '{title}' créée!")
         except Exception as e:
@@ -461,8 +517,8 @@ class WorkPanel(ttk.Frame):
             self.btn_save.config(state=tk.DISABLED)
             self.current_entry_var.set(f"✓ Enregistré: {title[:40]}")
             
-            # Refresh list
-            self._refresh_entries()
+            # Refresh explorer
+            self._refresh_explorer()
             
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible d'enregistrer:\n{e}")
@@ -504,7 +560,7 @@ class WorkPanel(ttk.Frame):
             try:
                 self.service.delete_entry(self._current_entry_id)
                 self._on_new_entry_editor()  # Clear editor
-                self._refresh_entries()
+                self._refresh_explorer()
                 messagebox.showinfo("Succès", "Entry supprimée")
             except Exception as e:
                 messagebox.showerror("Erreur", f"Impossible de supprimer:\n{e}")
@@ -645,14 +701,6 @@ class WorkPanel(ttk.Frame):
         except Exception as e:
             logger.error(f"Failed to toggle task: {e}")
     
-    def _on_entry_double_click(self, event) -> None:
-        """Handle entry double-click (load in editor)."""
-        selection = self.entries_tree.selection()
-        if not selection:
-            return
-        
-        entry_id = selection[0]
-        self._load_entry_in_editor(entry_id)
     
     def _on_start_timer(self) -> None:
         """Start timer for current project."""
