@@ -684,39 +684,87 @@ class WorkPanel(ttk.Frame):
             self.entry_body_text.insert("1.0", template)
     
     def _get_entry_template(self, entry_type: str) -> str:
-        """Get markdown template for entry type."""
+        """Get markdown template for entry type with placeholders."""
+        from datetime import date
+        
+        # Get current values for placeholders
+        today = date.today().strftime("%d/%m/%Y")
+        title = self.entry_title_var.get() or "[Titre]"
+        
+        # Get project name
+        project_name = "[Projet]"
+        if self.current_project_id:
+            project = self._projects_by_id.get(self.current_project_id)
+            if project:
+                project_name = project.name
+        
+        person = self.entry_people_var.get() or ""
+        group = self.entry_groups_var.get() or ""
+        tags = self.entry_tags_var.get() or ""
+        
+        # Templates from gui_constants
         templates = {
-            "note": "## Notes\n\n",
-            "meeting": """## Participants
-- 
-
-## Objectifs
-
-## Points discutés
-
-## Décisions
-
-## Actions
-
-""",
-            "decision": """## Contexte
-
-## Options considérées
-1. 
-2. 
-
-## Décision retenue
-
-## Justification
-
-""",
-            "activity": """## Activité
-
-## Durée
-
-## Résultat
-
-"""
+            "note": (
+                f"# {title}\n\n"
+                f"**Date:** {today}\n"
+                f"**Project:** {project_name}\n"
+                f"**Person/Group:** {person} {group}\n"
+                f"**Tags:** {tags}\n\n"
+                "## Notes\n"
+                "- \n\n"
+                "## Next steps\n"
+                "- \n"
+            ),
+            "meeting": (
+                f"# {title}\n\n"
+                f"**Date:** {today}\n"
+                f"**Project:** {project_name}\n"
+                f"**People:** {person} {group}\n"
+                "**Time:** - \n"
+                f"**Tags:** {tags}\n\n"
+                "## Agenda\n"
+                "- \n\n"
+                "## Notes\n"
+                "- \n\n"
+                "## Decisions\n"
+                "- \n\n"
+                "## Actions\n"
+                "- [ ] \n"
+            ),
+            "decision": (
+                f"# {title}\n\n"
+                f"**Date:** {today}\n"
+                f"**Project:** {project_name}\n"
+                f"**Person/Group:** {person} {group}\n"
+                f"**Tags:** {tags}\n\n"
+                "## Context\n"
+                "- \n\n"
+                "## Decision\n"
+                "- \n\n"
+                "## Rationale\n"
+                "- \n\n"
+                "## Consequences\n"
+                "- \n\n"
+                "## Follow-up\n"
+                "- \n\n"
+                "## Status\n"
+                "- Applied/Done: \n"
+            ),
+            "activity": (
+                f"# {title}\n\n"
+                f"**Date:** {today}\n"
+                f"**Project:** {project_name}\n"
+                f"**Person/Group:** {person} {group}\n"
+                f"**Tags:** {tags}\n\n"
+                "## What was done\n"
+                "- \n\n"
+                "## Outcomes\n"
+                "- \n\n"
+                "## Blockers\n"
+                "- \n\n"
+                "## Next steps\n"
+                "- \n"
+            ),
         }
         return templates.get(entry_type, "")
     
