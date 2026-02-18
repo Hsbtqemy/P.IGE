@@ -186,6 +186,20 @@ class WorkPanel(ttk.Frame):
         self.entry_tags_var = tk.StringVar()
         ttk.Entry(meta_row2, textvariable=self.entry_tags_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
         
+        # Row 3: Status
+        meta_row3 = ttk.Frame(meta_frame)
+        meta_row3.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(meta_row3, text="Statut:", width=10).pack(side=tk.LEFT)
+        self.entry_status_var = tk.StringVar()
+        status_combo = ttk.Combobox(
+            meta_row3,
+            textvariable=self.entry_status_var,
+            values=["", "actual", "pending", "closed", "waiting", "blocked"],
+            width=15
+        )
+        status_combo.pack(side=tk.LEFT)
+        
         # Markdown editor
         ttk.Label(editor_frame, text="Contenu (Markdown):").pack(anchor=tk.W, pady=(5, 2))
         
@@ -548,6 +562,10 @@ class WorkPanel(ttk.Frame):
                 if date_str and date_str != entry.entry_date:
                     patch["entry_date"] = date_str
                 
+                status = self.entry_status_var.get().strip()
+                if status != (entry.context_status or ""):
+                    patch["context_status"] = status if status else None
+                
                 # Apply patch if there are changes
                 if patch:
                     self.service.update_entry_meta(self._current_entry_id, patch)
@@ -585,6 +603,7 @@ class WorkPanel(ttk.Frame):
         self.entry_people_var.set("")
         self.entry_groups_var.set("")
         self.entry_tags_var.set("")
+        self.entry_status_var.set("")
         self.current_entry_var.set("Nouvelle entry")
         self._entry_modified = False
         self.btn_save.config(state=tk.DISABLED)
@@ -740,6 +759,7 @@ class WorkPanel(ttk.Frame):
             self.entry_people_var.set(entry.person or "")
             self.entry_groups_var.set(entry.group or "")
             self.entry_tags_var.set(", ".join(entry.tags) if entry.tags else "")
+            self.entry_status_var.set(entry.context_status or "")
             
             self.entry_body_text.delete("1.0", tk.END)
             self.entry_body_text.insert("1.0", content)
