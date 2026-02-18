@@ -11,7 +11,7 @@ from pige.core.service import PigeService
 from pige.core.storage import Storage
 from pige.interfaces import gui_helpers
 from pige.interfaces.gui.dialogs import show_about_dialog, show_keyboard_shortcuts
-from pige.interfaces.gui.panels import DashboardPanel, ProjectsPanel, SearchPanel
+from pige.interfaces.gui.panels import DashboardPanel, EntriesPanel, ProjectsPanel, SearchPanel
 from pige.utils import io as io_utils
 
 logger = logging.getLogger(__name__)
@@ -144,9 +144,13 @@ class PigeMainWindow(tk.Tk):
         )
         self.notebook.add(self.search_panel, text="Search")
         
-        # Tab 4: Placeholder for Entries
-        placeholder_frame = ttk.Frame(self.notebook)
-        self.notebook.add(placeholder_frame, text="Entries")
+        # Tab 4: Entries (with filters & pagination)
+        self.entries_panel = EntriesPanel(
+            self.notebook,
+            self.service,
+            initial_page_size=self.gui_prefs.get("pagination", {}).get("entries_page_size", 50)
+        )
+        self.notebook.add(self.entries_panel, text="Entries")
         
         placeholder_label = ttk.Label(
             placeholder_frame,
@@ -220,6 +224,7 @@ class PigeMainWindow(tk.Tk):
             self.gui_prefs["pagination"] = {}
         
         self.gui_prefs["pagination"]["projects_page_size"] = self.projects_panel.get_page_size()
+        self.gui_prefs["pagination"]["entries_page_size"] = self.entries_panel.get_page_size()
         
         # Save to disk
         self._save_gui_prefs()
