@@ -542,7 +542,10 @@ class DashboardPanel(ttk.Frame):
         logger.info(f"Opening entry: {entry_id}")
         
         try:
-            entry = self.service.get_entry(entry_id)
+            # Find entry in storage
+            entries = self.service.storage.read_entries_meta()
+            entry = next((e for e in entries if e.id == entry_id), None)
+            
             if entry:
                 # TODO: Open entry detail dialog or editor
                 # For now, show info in status

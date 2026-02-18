@@ -64,7 +64,7 @@ class PigeMainWindow(tk.Tk):
     
     def _save_gui_prefs(self) -> None:
         """Save GUI preferences to disk."""
-        io_utils.write_json(self.prefs_path, self.gui_prefs)
+        io_utils.safe_write_json(self.prefs_path, self.gui_prefs)
     
     def _setup_menu(self) -> None:
         """Create the menu bar."""
