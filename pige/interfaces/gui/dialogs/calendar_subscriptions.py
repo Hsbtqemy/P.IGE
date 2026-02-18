@@ -300,22 +300,27 @@ class CalendarSubscriptionsDialog(tk.Toplevel):
         if not sub:
             return
         
+        # Count calendar events for this subscription
+        from pige.core.storage import read_calendar_events
+        all_events = read_calendar_events(self.service.storage)
+        events_count = len([e for e in all_events if e.subscription_id == sub_id])
+        
         # Confirm deletion
         result = messagebox.askyesnocancel(
             "Confirmer suppression",
             f"Supprimer l'abonnement '{sub.name}'?\n\n"
-            f"OUI: Supprimer l'abonnement ET les {len(sub.event_mapping)} entrée(s) importée(s)\n"
-            f"NON: Supprimer seulement l'abonnement (garder les entrées)\n"
+            f"OUI: Supprimer l'abonnement ET les {events_count} événement(s) importé(s)\n"
+            f"NON: Supprimer seulement l'abonnement (garder les événements)\n"
             f"ANNULER: Ne rien supprimer"
         )
         
         if result is None:  # Cancel
             return
         
-        delete_entries = result  # True=Yes, False=No
+        delete_events = result  # True=Yes, False=No
         
         try:
-            self.sync_manager.delete_subscription(sub_id, delete_entries=delete_entries)
+            self.sync_manager.delete_subscription(sub_id, delete_events=delete_events)
             messagebox.showinfo("Succès", f"Abonnement '{sub.name}' supprimé")
             self._refresh_list()
         except Exception as e:
