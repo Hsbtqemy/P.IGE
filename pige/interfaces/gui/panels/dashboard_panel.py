@@ -256,7 +256,6 @@ class DashboardPanel(ttk.Frame):
             height=4,
             wrap=tk.WORD,
             relief=tk.FLAT,
-            background=self.cget("background"),
             font=("TkDefaultFont", 10)
         )
         self.focus_text.pack(fill=tk.BOTH, expand=True)
