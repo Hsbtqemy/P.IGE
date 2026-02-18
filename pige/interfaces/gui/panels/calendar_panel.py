@@ -85,16 +85,16 @@ class CalendarPanel(ttk.Frame):
         # Navigation buttons
         ttk.Button(
             toolbar,
-            text="◀◀",
+            text="◀◀ Année",
             command=self._prev_year,
-            width=4
+            width=12
         ).pack(side=tk.LEFT, padx=1)
         
         ttk.Button(
             toolbar,
-            text="◀",
+            text="◀ Mois",
             command=self._prev_period,
-            width=4
+            width=10
         ).pack(side=tk.LEFT, padx=1)
         
         # Current period label
@@ -109,16 +109,16 @@ class CalendarPanel(ttk.Frame):
         
         ttk.Button(
             toolbar,
-            text="▶",
+            text="Mois ▶",
             command=self._next_period,
-            width=4
+            width=10
         ).pack(side=tk.LEFT, padx=1)
         
         ttk.Button(
             toolbar,
-            text="▶▶",
+            text="Année ▶▶",
             command=self._next_year,
-            width=4
+            width=12
         ).pack(side=tk.LEFT, padx=1)
         
         ttk.Button(
@@ -372,44 +372,145 @@ class CalendarPanel(ttk.Frame):
                     pass
     
     def _render_month_view(self) -> None:
-        """Render month calendar view."""
+        """Render month calendar view with proper grid alignment."""
         # Clear container
         for widget in self.view_container.winfo_children():
             widget.destroy()
         
-        # Create canvas with scrollbar
-        canvas_frame = ttk.Frame(self.view_container)
-        canvas_frame.pack(fill=tk.BOTH, expand=True)
+        # Main container
+        main_frame = ttk.Frame(self.view_container)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Day headers
-        headers_frame = ttk.Frame(canvas_frame)
-        headers_frame.pack(fill=tk.X, pady=(0, 2))
-        
+        # Day headers with fixed width
         day_names = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-        for i, day_name in enumerate(day_names):
-            label = ttk.Label(
-                headers_frame,
+        for col, day_name in enumerate(day_names):
+            is_weekend = col >= 5
+            header = tk.Label(
+                main_frame,
                 text=day_name,
+                font=("TkDefaultFont", 10, "bold"),
+                bg="#e0e0e0",
+                fg="#666" if is_weekend else "#333",
+                relief=tk.RAISED,
+                borderwidth=1,
                 anchor=tk.CENTER,
-                font=("TkDefaultFont", 9, "bold")
+                padx=5,
+                pady=8
             )
-            label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-            if i >= 5:  # Weekend
-                label.config(foreground="#888")
+            header.grid(row=0, column=col, sticky="nsew", padx=1, pady=1)
+            main_frame.columnconfigure(col, weight=1, uniform="day")
         
         # Calendar grid
         cal = calendar.monthcalendar(self.current_year, self.current_month)
         today = date.today()
         
-        grid_frame = ttk.Frame(canvas_frame)
-        grid_frame.pack(fill=tk.BOTH, expand=True)
-        
         for week_idx, week in enumerate(cal):
-            week_frame = ttk.Frame(grid_frame)
-            week_frame.pack(fill=tk.BOTH, expand=True)
+            # Configure row height
+            main_frame.rowconfigure(week_idx + 1, weight=1, uniform="week")
             
             for day_idx, day_num in enumerate(week):
-                self._create_day_cell(week_frame, day_num, day_idx, today)
+                self._create_day_cell_grid(main_frame, day_num, week_idx + 1, day_idx, today)
+    
+    def _create_day_cell_grid(self, parent, day_num: int, row: int, col: int, today: date) -> None:
+        """Create a single day cell for month view using grid layout."""
+        is_weekend = col >= 5
+        
+        # Empty day (prev/next month)
+        if day_num == 0:
+            empty_cell = tk.Frame(
+                parent,
+                bg="#f5f5f5" if is_weekend else "#fafafa",
+                relief=tk.FLAT,
+                borderwidth=1
+            )
+            empty_cell.grid(row=row, column=col, sticky="nsew", padx=1, pady=1)
+            return
+        
+        day_date = date(self.current_year, self.current_month, day_num)
+        date_str = day_date.isoformat()
+        
+        # Determine background color
+        if day_date == today:
+            bg_color = self.colors["today"]
+        elif day_date == self.selected_date:
+            bg_color = self.colors["selected"]
+        elif is_weekend:
+            bg_color = self.colors["weekend"]
+        elif date_str in self._entries_by_date or date_str in self._tasks_by_date:
+            bg_color = self.colors["has_items"]
+        else:
+            bg_color = self.colors["default"]
+        
+        # Check for overdue tasks
+        tasks = self._tasks_by_date.get(date_str, [])
+        has_overdue = any(t.status != "done" and day_date < today for t in tasks)
+        if has_overdue:
+            bg_color = self.colors["overdue"]
+        
+        # Create cell frame
+        cell = tk.Frame(
+            parent,
+            bg=bg_color,
+            relief=tk.RAISED,
+            borderwidth=1,
+            cursor="hand2",
+            highlightthickness=2,
+            highlightbackground="#ccc",
+            highlightcolor="#0066cc"
+        )
+        cell.grid(row=row, column=col, sticky="nsew", padx=1, pady=1)
+        
+        # Inner container for proper padding
+        inner = tk.Frame(cell, bg=bg_color)
+        inner.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Day number
+        day_label = tk.Label(
+            inner,
+            text=str(day_num),
+            font=("TkDefaultFont", 12, "bold"),
+            bg=bg_color,
+            fg="#333" if not is_weekend else "#888",
+            anchor=tk.NW
+        )
+        day_label.pack(anchor=tk.NW)
+        
+        # Indicators container
+        indicators = tk.Frame(inner, bg=bg_color)
+        indicators.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+        
+        # Entries indicator
+        entries_count = len(self._entries_by_date.get(date_str, []))
+        if entries_count > 0:
+            tk.Label(
+                indicators,
+                text=f"📝 {entries_count}",
+                font=("TkDefaultFont", 9),
+                bg=bg_color,
+                fg="#0066cc",
+                anchor=tk.W
+            ).pack(anchor=tk.W, pady=1)
+        
+        # Tasks indicator
+        tasks_done = len([t for t in tasks if t.status == "done"])
+        tasks_total = len(tasks)
+        if tasks_total > 0:
+            color = "#00aa00" if tasks_done == tasks_total else ("#cc0000" if has_overdue else "#ff9800")
+            icon = "✅" if tasks_done == tasks_total else ("⚠️" if has_overdue else "✓")
+            tk.Label(
+                indicators,
+                text=f"{icon} {tasks_done}/{tasks_total}",
+                font=("TkDefaultFont", 9),
+                bg=bg_color,
+                fg=color,
+                anchor=tk.W
+            ).pack(anchor=tk.W, pady=1)
+        
+        # Bind click events
+        for widget in [cell, inner, day_label]:
+            widget.bind("<Button-1>", lambda e, d=day_date: self._on_day_click(d))
+            widget.bind("<Enter>", lambda e, c=cell: c.config(highlightbackground="#0066cc"))
+            widget.bind("<Leave>", lambda e, c=cell: c.config(highlightbackground="#ccc"))
     
     def _create_day_cell(self, parent, day_num: int, day_idx: int, today: date) -> None:
         """Create a single day cell for month view."""
