@@ -160,20 +160,20 @@ class PigeMainWindow(tk.Tk):
     
     def _setup_keybindings(self) -> None:
         """Setup keyboard shortcuts."""
-        # File operations (bind for both Control and Command for cross-platform)
-        self.bind_all("<Control-n>", lambda e: self._on_new_project())
-        self.bind_all("<Command-n>", lambda e: self._on_new_project())
-        self.bind_all("<Control-e>", lambda e: self._on_new_entry())
-        self.bind_all("<Command-e>", lambda e: self._on_new_entry())
-        self.bind_all("<Control-q>", lambda e: self.quit())
-        self.bind_all("<Command-q>", lambda e: self.quit())
+        # File operations (bind to window, not all widgets to avoid interfering with text entry)
+        self.bind("<Control-n>", lambda e: self._on_new_project())
+        self.bind("<Command-n>", lambda e: self._on_new_project())
+        self.bind("<Control-e>", lambda e: self._on_new_entry())
+        self.bind("<Command-e>", lambda e: self._on_new_entry())
+        self.bind("<Control-q>", lambda e: self.quit())
+        self.bind("<Command-q>", lambda e: self.quit())
         
-        # Search
-        self.bind_all("<Control-f>", lambda e: self._on_search())
-        self.bind_all("<Command-f>", lambda e: self._on_search())
+        # Search - only bind to window, not all widgets
+        self.bind("<Control-f>", lambda e: self._on_search())
+        self.bind("<Command-f>", lambda e: self._on_search())
         
         # Help
-        self.bind_all("<F1>", lambda e: self._show_keyboard_shortcuts())
+        self.bind("<F1>", lambda e: self._show_keyboard_shortcuts())
     
     # ===== Menu actions =====
     
