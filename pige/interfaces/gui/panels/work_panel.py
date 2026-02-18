@@ -25,7 +25,22 @@ class WorkPanel(ttk.Frame):
         # Setup UI
         self._setup_project_selector()
         self._setup_timer_display()
+        
+        # Create main paned window (horizontal splitter)
+        self.main_paned = ttk.PanedWindow(self, orient=tk.VERTICAL)
+        self.main_paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        
+        # Top pane: Editor
         self._setup_quick_entry()
+        
+        # Bottom pane: Tasks and Recent entries
+        bottom_frame = ttk.Frame(self.main_paned)
+        self.main_paned.add(bottom_frame, weight=1)
+        
+        # Create bottom paned window (tasks | entries)
+        self.bottom_paned = ttk.PanedWindow(bottom_frame, orient=tk.HORIZONTAL)
+        self.bottom_paned.pack(fill=tk.BOTH, expand=True)
+        
         self._setup_tasks_section()
         self._setup_recent_entries()
         
@@ -95,8 +110,8 @@ class WorkPanel(ttk.Frame):
     
     def _setup_quick_entry(self) -> None:
         """Setup quick entry creation form."""
-        entry_frame = ttk.LabelFrame(self, text="✍️ Entry Editor", padding=10)
-        entry_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        entry_frame = ttk.LabelFrame(self.main_paned, text="✍️ Entry Editor", padding=10)
+        self.main_paned.add(entry_frame, weight=3)
         
         # Top toolbar: Type, Title, Entry selector
         top_row = ttk.Frame(entry_frame)
@@ -185,8 +200,8 @@ class WorkPanel(ttk.Frame):
     
     def _setup_tasks_section(self) -> None:
         """Setup tasks list for active project."""
-        tasks_frame = ttk.LabelFrame(self, text="✓ Tasks du Projet", padding=10)
-        tasks_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        tasks_frame = ttk.LabelFrame(self.bottom_paned, text="✓ Tasks du Projet", padding=10)
+        self.bottom_paned.add(tasks_frame, weight=1)
         
         # Toolbar
         toolbar = ttk.Frame(tasks_frame)
@@ -232,8 +247,8 @@ class WorkPanel(ttk.Frame):
     
     def _setup_recent_entries(self) -> None:
         """Setup recent entries list."""
-        recent_frame = ttk.LabelFrame(self, text="📝 Entries Récentes", padding=10)
-        recent_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        recent_frame = ttk.LabelFrame(self.bottom_paned, text="📝 Entries Récentes", padding=10)
+        self.bottom_paned.add(recent_frame, weight=1)
         
         # Entries tree
         tree_frame = ttk.Frame(recent_frame)
