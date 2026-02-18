@@ -121,6 +121,13 @@ class SearchIndex:
             self._conn.close()
             self._conn = None
     
+    def __enter__(self) -> SearchIndex:
+        return self
+    
+    def __exit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object) -> bool:
+        self.close()
+        return False
+    
     def __del__(self) -> None:
         """Cleanup: close database connection."""
         self.close()

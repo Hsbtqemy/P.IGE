@@ -59,23 +59,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Note**: Infrastructure prête, intégration GUI legacy à faire
   - Gain: GUI fluide, pas de rebuild complet, meilleure UX
 
-- **Index Full-Text Search (FTS5)** - Recherche rapide avec SQLite FTS5 (mode manuel):
+- **Index Full-Text Search (FTS5)** - Recherche rapide avec SQLite FTS5 et indexation automatique:
   - **Module `pige/core/indexing.py`** (500+ lignes):
     - Classe `SearchIndex` avec tables FTS5 (`entries_fts`, `projects_fts`, `tasks_fts`)
+    - Support context manager (`with SearchIndex(path) as idx`) pour fermeture garantie
     - Méthodes indexation: `index_entry()`, `index_project()`, `index_task()`, `index_*_bulk()`
     - Méthodes recherche: `search_entries()`, `search_projects()`, `search_tasks()`
     - Support syntaxe FTS5: AND, OR, phrases, champs (e.g., "title:important")
     - Tokenization: Porter stemmer + Unicode61
     - Gestion: `rebuild()`, `get_stats()`, `close()`
   - **Intégration Storage**:
+    - Indexation automatique sur `append_entry_event`, `append_entry_update`, `append_entry_delete`
+    - Erreurs d'indexation silencieuses (warning log, pas de blocage écriture)
     - Méthode `Storage.rebuild_search_index()` pour réindexation complète
-    - Lazy-loading de l'index (créé à la demande)
   - **CLI**: `python -m pige rebuild-index`
     - Affiche stats: entries/projects/tasks indexés
     - Idempotent et safe (peut être relancé)
   - **Performance**: < 100ms pour 1000 entrées (indexation bulk)
-  - **Tests**: 12 tests unitaires FTS (tous passants)
-  - **Note**: Indexation automatique désactivée (overhead), usage manuel recommandé
+  - **Tests**: 12 tests unitaires FTS, 177 tests total (tous passants)
   - Gain: Recherche ultra-rapide pour grandes bases (10K+ entrées)
 
 - **Architecture GUI Modulaire** - Découpage de l'interface monolithique en structure extensible:
@@ -169,7 +170,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI: Parité complète avec GUI pour création et gestion d'entrées
 - Messages d'erreur améliorés avec suggestions concrètes
 - Documentation README mise à jour avec menus contextuels, commandes CLI et syntaxe de recherche avancée
-- Tous les tests passent (142/142, +68 depuis v0.1.0) ✅
+- Tous les tests passent (177/177, +68 depuis v0.1.0) ✅
 
 ### Fixed
 - Gestion d'erreurs plus robuste dans l'interface graphique

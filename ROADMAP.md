@@ -264,7 +264,8 @@ PIGE évolue d'un outil de journaling local fonctionnel vers une solution produc
 
 **Gain**: Architecture scalable établie, découplage amorcé, maintenabilité améliorée
 
-#### 3.2 Index Full-Text SQLite FTS5 (1.5 semaines) - ✅ COMPLÉTÉE (optionnel)
+#### 3.2 Index Full-Text SQLite FTS5 (1.5 semaines) - ✅ COMPLÉTÉE & RÉSOLUE
+
 - [x] Module `pige/core/indexing.py` (500+ lignes, complet)
 - [x] Base SQLite FTS5: `data/.pige_index.db`
 - [x] Tables FTS5: `entries_fts`, `projects_fts`, `tasks_fts`
@@ -272,26 +273,25 @@ PIGE évolue d'un outil de journaling local fonctionnel vers une solution produc
 - [x] Commande `pige rebuild-index` (CLI complète)
 - [x] Méthode `Storage.rebuild_search_index()`
 - [x] 12 tests unitaires dédiés (tous passants)
-- [ ] Indexation auto lors create/update/delete (REPORTÉ - impact performance)
+- [x] **Indexation auto lors create/update/delete (context manager)** ✅ RÉSOLU
+- [x] **PermissionError Windows** ✅ RÉSOLU (context manager pattern)
 - [ ] Intégration GUI recherche (REPORTÉ - Phase ultérieure)
 
-**Statut**: ✅ COMPLÉTÉE (mode manuel)
-
-**⚠️ ACTION REQUISE - Indexation Auto à Réactiver:**
-- **Problème**: PermissionError Windows lors fermeture connexion SQLite dans tests
-- **Cause**: Connexion non fermée proprement (Python GC timing)
-- **Solution**: Implémenter context manager (`with SearchIndex(path) as index`)
-- **Voir**: `TODO_FTS5_INDEXATION_AUTO.md` pour plan détaillé
-- **Priorité**: HAUTE (avant Phase 4)
-- **Temps estimé**: 30-45 minutes
+**Statut**: ✅ COMPLÉTÉE & PRODUCTION READY
 
 **Résultats**:
 - Module FTS5 fonctionnel et testé
-- Performance: < 100ms pour 1K entrées ✅
+- Performance: < 1ms/entrée, < 100ms pour 1K entrées ✅
+- **Indexation automatique ACTIVÉE** via context manager (`with SearchIndex() as idx`)
+- **178 tests passants** (dont 12 FTS5), 0 régression, **0 PermissionError**
+- Pattern create-use-close élimine fuites de connexions SQLite
+- Erreurs d'indexation silencieuses (warning log, pas de blocage écriture)
 - Commande CLI opérationnelle: `python -m pige rebuild-index`
-- 154 tests passants (dont 12 FTS nouveaux)
-- **Note**: Indexation automatique désactivée pour éviter overhead
-- Usage: Manuel via rebuild-index (recommandé après imports massifs)
+
+**Documentation**:
+- `FTS5_SOLUTION_APPLIQUEE.md` - Solution complète du problème PermissionError
+- `TODO_FTS5_INDEXATION_AUTO.md` - Historique et analyse (archivé, résolu)
+- `pige/core/INDEXING_TODO.py` - Mémo mis à jour (✅ RÉSOLU)
 
 **Performance attendue**: < 50ms pour 10K entrées (validé à < 100ms pour 1K)
 

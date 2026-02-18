@@ -83,7 +83,6 @@ class Storage:
         self.exports_dir = data_dir / "exports"
         self.index_path = data_dir / ".pige_index.db"
         self._entry_cache = EntryCache()  # Cache for entry metadata
-        self._search_index: SearchIndex | None = None  # Lazy-loaded search index
 
     def init_storage(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -100,14 +99,27 @@ class Storage:
         if not self.timelogs_path.exists():
             self.timelogs_path.touch()
         
-        # Note: Search index is created on-demand via `rebuild-index` command
-        # Auto-indexing is disabled to avoid performance impact and test issues
+        # Search index is created on-demand (first write or rebuild-index command)
     
     def _get_search_index(self) -> SearchIndex:
-        """Get or create search index (lazy loading)."""
-        if self._search_index is None:
-            self._search_index = SearchIndex(self.index_path)
-        return self._search_index
+        """Create a new search index instance (no caching, use as context manager)."""
+        return SearchIndex(self.index_path)
+    
+    def _auto_index_entry(self, entry: EntryMeta) -> None:
+        """Index an entry in FTS, silently ignoring errors."""
+        try:
+            with self._get_search_index() as idx:
+                idx.index_entry(entry)
+        except Exception:
+            logger.warning("Auto-indexing failed for entry %s, run rebuild-index", entry.id, exc_info=True)
+    
+    def _auto_remove_entry(self, entry_id: str) -> None:
+        """Remove an entry from FTS, silently ignoring errors."""
+        try:
+            with self._get_search_index() as idx:
+                idx.remove_entry(entry_id)
+        except Exception:
+            logger.warning("Auto-index removal failed for entry %s, run rebuild-index", entry_id, exc_info=True)
 
     def read_projects(self) -> list[Project]:
         data = io_utils.read_json(self.projects_path, default=[])
@@ -144,19 +156,24 @@ class Storage:
         payload["kind"] = "entry"
         io_utils.append_jsonl(self.entries_path, payload)
         self.invalidate_entry_cache()
-        # Note: Auto-indexing disabled - use `rebuild-index` command
+        self._auto_index_entry(entry)
 
     def append_entry_update(self, entry_id: str, ts: str, patch: dict[str, object]) -> None:
         payload = {"kind": "entry_update", "ts": ts, "entry_id": entry_id, "patch": patch}
         io_utils.append_jsonl(self.entries_path, payload)
         self.invalidate_entry_cache()
-        # Note: Auto-indexing disabled - use `rebuild-index` command
+        try:
+            updated = self.get_entry(entry_id)
+            if updated is not None:
+                self._auto_index_entry(updated)
+        except Exception:
+            logger.warning("Auto-indexing skipped for entry %s, run rebuild-index", entry_id, exc_info=True)
 
     def append_entry_delete(self, entry_id: str, ts: str) -> None:
         payload = {"kind": "entry_delete", "ts": ts, "entry_id": entry_id}
         io_utils.append_jsonl(self.entries_path, payload)
         self.invalidate_entry_cache()
-        # Note: Auto-indexing disabled - use `rebuild-index` command
+        self._auto_remove_entry(entry_id)
 
     def read_entries_meta(self) -> list[EntryMeta]:
         # Check cache first
@@ -554,7 +571,8 @@ class Storage:
             tasks_data.append((task, project_name_str, entry_title))
         
         # Rebuild index
-        stats = self._get_search_index().rebuild(entries, projects, tasks_data)
+        with self._get_search_index() as idx:
+            stats = idx.rebuild(entries, projects, tasks_data)
         logger.info(f"Search index rebuilt: {stats}")
         return stats
 
