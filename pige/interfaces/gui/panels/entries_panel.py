@@ -214,8 +214,9 @@ class EntriesPanel(ttk.Frame):
                 reverse=self._sort_reverse
             )
         elif self._sort_column == "modified":
+            # Use ts as modified timestamp
             self._filtered_entries.sort(
-                key=lambda e: e.updated_at or e.ts,
+                key=lambda e: e.ts,
                 reverse=self._sort_reverse
             )
         elif self._sort_column == "type":
@@ -300,14 +301,14 @@ class EntriesPanel(ttk.Frame):
                 except Exception:
                     date_str = "?"
             
-            # Format modified date
+            # Format modified date (use ts as last modified)
             modified_str = "?"
-            if entry.updated_at:
+            if entry.ts:
                 try:
-                    dt = datetime.fromisoformat(entry.updated_at.replace('Z', '+00:00'))
+                    dt = datetime.fromisoformat(entry.ts.replace('Z', '+00:00'))
                     modified_str = dt.strftime("%Y-%m-%d %H:%M")
                 except Exception:
-                    modified_str = entry.updated_at[:16]
+                    modified_str = entry.ts[:16]
             
             # Format tags
             tags_str = ", ".join(entry.tags) if entry.tags else ""

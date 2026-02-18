@@ -160,7 +160,7 @@ class ProjectsPanel(ttk.Frame):
                 return len([t for t in tasks if t.status != "done"])
             self._all_root_projects.sort(key=task_count, reverse=self._sort_reverse)
         elif self._sort_column == "modified":
-            self._all_root_projects.sort(key=lambda p: p.updated_at or p.created_at, reverse=self._sort_reverse)
+            self._all_root_projects.sort(key=lambda p: p.created_at or "", reverse=self._sort_reverse)
     
     def _on_page_change(self, state: PaginationState) -> None:
         """Handle pagination page change."""
@@ -202,15 +202,14 @@ class ProjectsPanel(ttk.Frame):
         tasks_total = len(tasks)
         tasks_str = f"{tasks_open}/{tasks_total}"
         
-        # Format modified date
-        modified_date = project.updated_at or project.created_at
-        if modified_date:
+        # Format created date
+        if project.created_at:
             try:
                 from datetime import datetime
-                dt = datetime.fromisoformat(modified_date.replace('Z', '+00:00'))
+                dt = datetime.fromisoformat(project.created_at.replace('Z', '+00:00'))
                 modified_str = dt.strftime("%Y-%m-%d %H:%M")
             except Exception:
-                modified_str = modified_date[:16]
+                modified_str = project.created_at[:16]
         else:
             modified_str = "?"
         

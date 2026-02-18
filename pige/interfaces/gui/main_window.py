@@ -11,7 +11,7 @@ from pige.core.service import PigeService
 from pige.core.storage import Storage
 from pige.interfaces import gui_helpers
 from pige.interfaces.gui.dialogs import show_about_dialog, show_keyboard_shortcuts
-from pige.interfaces.gui.panels import BrowsePanel, DashboardPanel, SearchPanel, WorkPanel
+from pige.interfaces.gui.panels import BrowsePanel, CalendarPanel, DashboardPanel, SearchPanel, WorkPanel
 from pige.utils import io as io_utils
 
 logger = logging.getLogger(__name__)
@@ -143,7 +143,14 @@ class PigeMainWindow(tk.Tk):
         )
         self.notebook.add(self.browse_panel, text="🗂️ Browse")
         
-        # Tab 4: Search
+        # Tab 4: Calendar (vue mensuelle)
+        self.calendar_panel = CalendarPanel(
+            self.notebook,
+            self.service
+        )
+        self.notebook.add(self.calendar_panel, text="📅 Calendrier")
+        
+        # Tab 5: Search
         self.search_panel = SearchPanel(
             self.notebook,
             self.service,
