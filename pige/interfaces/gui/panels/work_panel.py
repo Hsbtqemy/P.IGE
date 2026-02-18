@@ -121,7 +121,13 @@ class WorkPanel(ttk.Frame):
         
         # Bind events
         self.explorer_tree.bind("<<TreeviewSelect>>", self._on_explorer_select)
-        # No double-click needed anymore - single click loads entry
+        self.explorer_tree.bind("<Button-3>", self._on_explorer_right_click)  # Right-click
+        
+        # Drag & drop support (basic)
+        self.explorer_tree.bind("<ButtonPress-1>", self._on_drag_start)
+        self.explorer_tree.bind("<B1-Motion>", self._on_drag_motion)
+        self.explorer_tree.bind("<ButtonRelease-1>", self._on_drag_release)
+        self._drag_data = {"item": None, "x": 0, "y": 0}
     
     def _setup_editor(self) -> None:
         """Setup markdown editor."""
@@ -401,6 +407,173 @@ class WorkPanel(ttk.Frame):
                 self.current_project_id = entry.project_id
                 self._refresh_tasks()
     
+    def _on_explorer_right_click(self, event) -> None:
+        """Show context menu on right-click."""
+        # Select item under cursor
+        item = self.explorer_tree.identify_row(event.y)
+        if not item:
+            return
+        
+        self.explorer_tree.selection_set(item)
+        
+        # Create context menu
+        menu = tk.Menu(self, tearoff=0)
+        
+        if item.startswith("project:"):
+            # Project context menu
+            menu.add_command(label="➕ Nouvelle Entry", command=self._on_new_entry_from_explorer)
+            menu.add_command(label="➕ Nouvelle Task", command=self._on_add_task)
+            menu.add_separator()
+            menu.add_command(label="⏱️ Start Timer", command=lambda: self._start_timer_for_project(item))
+            menu.add_separator()
+            menu.add_command(label="🔄 Rafraîchir", command=self.refresh)
+            
+        elif item.startswith("entry:"):
+            # Entry context menu
+            menu.add_command(label="✏️ Éditer", command=lambda: self._load_entry_in_editor(item.replace("entry:", "")))
+            menu.add_command(label="📄 Ouvrir MD externe", command=lambda: self._open_entry_external(item.replace("entry:", "")))
+            menu.add_separator()
+            menu.add_command(label="📋 Copier ID", command=lambda: self._copy_to_clipboard(item.replace("entry:", "")))
+            menu.add_separator()
+            menu.add_command(label="🗑️ Supprimer", command=lambda: self._delete_entry_from_explorer(item.replace("entry:", "")))
+        
+        menu.post(event.x_root, event.y_root)
+    
+    def _on_drag_start(self, event) -> None:
+        """Start drag operation."""
+        item = self.explorer_tree.identify_row(event.y)
+        if item:
+            self._drag_data["item"] = item
+            self._drag_data["x"] = event.x
+            self._drag_data["y"] = event.y
+    
+    def _on_drag_motion(self, event) -> None:
+        """Handle drag motion (visual feedback)."""
+        if self._drag_data["item"]:
+            # Could add visual feedback here (e.g., change cursor)
+            pass
+    
+    def _on_drag_release(self, event) -> None:
+        """Handle drop operation."""
+        if not self._drag_data["item"]:
+            return
+        
+        # Get target item
+        target = self.explorer_tree.identify_row(event.y)
+        source = self._drag_data["item"]
+        
+        # Reset drag data
+        self._drag_data["item"] = None
+        
+        if not target or source == target:
+            return
+        
+        # Handle different drop scenarios
+        if source.startswith("entry:") and target.startswith("project:"):
+            # Move entry to different project
+            entry_id = source.replace("entry:", "")
+            target_project_id = target.replace("project:", "")
+            self._move_entry_to_project(entry_id, target_project_id)
+    
+    def _start_timer_for_project(self, item_id: str) -> None:
+        """Start timer for a project."""
+        project_id = item_id.replace("project:", "")
+        self.current_project_id = project_id
+        self._on_start_timer()
+    
+    def _open_entry_external(self, entry_id: str) -> None:
+        """Open entry in external editor."""
+        entry_path = self.service.storage.data_dir / "entries" / f"{entry_id}.md"
+        
+        if not entry_path.exists():
+            messagebox.showerror("Erreur", f"Fichier non trouvé: {entry_path}")
+            return
+        
+        import subprocess
+        import sys
+        
+        try:
+            if sys.platform.startswith("win"):
+                import os
+                os.startfile(str(entry_path))
+            elif sys.platform == "darwin":
+                subprocess.run(["open", str(entry_path)], check=True)
+            else:
+                subprocess.run(["xdg-open", str(entry_path)], check=True)
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible d'ouvrir le fichier:\n{e}")
+    
+    def _copy_to_clipboard(self, text: str) -> None:
+        """Copy text to clipboard."""
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        messagebox.showinfo("Copié", f"ID copié: {text[:16]}...")
+    
+    def _delete_entry_from_explorer(self, entry_id: str) -> None:
+        """Delete entry from explorer context menu."""
+        entries = self.service.storage.read_entries_meta()
+        entry = next((e for e in entries if e.id == entry_id), None)
+        
+        if not entry:
+            return
+        
+        result = messagebox.askyesno(
+            "Confirmer suppression",
+            f"Supprimer l'entry \"{entry.title}\"?\n\nCette action est irréversible."
+        )
+        
+        if result:
+            try:
+                self.service.delete_entry(entry_id)
+                
+                # Clear editor if this entry is loaded
+                if self._current_entry_id == entry_id:
+                    self._on_new_entry_editor()
+                
+                self._refresh_explorer()
+                messagebox.showinfo("Succès", "Entry supprimée")
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de supprimer:\n{e}")
+    
+    def _move_entry_to_project(self, entry_id: str, target_project_id: str) -> None:
+        """Move entry to a different project."""
+        entries = self.service.storage.read_entries_meta()
+        entry = next((e for e in entries if e.id == entry_id), None)
+        
+        if not entry:
+            return
+        
+        # Get project names for confirmation
+        source_project = self._projects_by_id.get(entry.project_id)
+        target_project = self._projects_by_id.get(target_project_id)
+        
+        if not target_project:
+            return
+        
+        source_name = source_project.name if source_project else entry.project_id[:8]
+        
+        result = messagebox.askyesno(
+            "Déplacer entry",
+            f"Déplacer \"{entry.title}\"\n\nDe: {source_name}\nVers: {target_project.name}"
+        )
+        
+        if result:
+            try:
+                self.service.move_entry(
+                    entry_id=entry_id,
+                    dest_project_id=target_project_id,
+                    keep_tags=True,
+                    keep_people=True
+                )
+                
+                self._refresh_explorer()
+                self.current_project_id = target_project_id
+                self._refresh_tasks()
+                
+                messagebox.showinfo("Succès", f"Entry déplacée vers {target_project.name}")
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de déplacer:\n{e}")
+    
     def _on_new_entry_from_explorer(self) -> None:
         """Create new entry from explorer."""
         # Get selected project or ask user
@@ -498,14 +671,34 @@ class WorkPanel(ttk.Frame):
         body = self.entry_body_text.get("1.0", tk.END).strip()
         entry_type = self.entry_type_var.get()
         
+        # Parse metadata
+        tags = [t.strip() for t in self.entry_tags_var.get().split(",") if t.strip()]
+        person = self.entry_people_var.get().strip() or None
+        group = self.entry_groups_var.get().strip() or None
+        status = self.entry_status_var.get().strip() or None
+        
         try:
             self.service.add_entry(
                 project_id=self.current_project_id,
                 entry_type=entry_type,
                 title=title,
+                tags=tags,
                 body=body,
-                entry_date=date.today()
+                entry_date=date.today(),
+                person=person,
+                group=group
             )
+            
+            # Apply status if set
+            if status:
+                # Get the newly created entry (last one for this project)
+                entries = self.service.storage.read_entries_meta()
+                new_entry = next(
+                    (e for e in reversed(entries) if e.project_id == self.current_project_id and e.title == title),
+                    None
+                )
+                if new_entry:
+                    self.service.set_entry_context_status(new_entry.id, status)
             
             # Clear form
             self._on_clear_form()
