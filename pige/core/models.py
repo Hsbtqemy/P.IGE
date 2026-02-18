@@ -78,3 +78,22 @@ class Task:
     tags: list[str] = field(default_factory=list)
     linked_entry_id: Optional[str] = None
     note: Optional[str] = None
+
+
+@dataclass
+class CalendarSubscription:
+    """Calendar subscription for syncing external ICS calendars."""
+    id: str
+    name: str
+    source_url: str  # URL or file path to ICS
+    project_id: str  # Target project for imported entries
+    active: bool = True
+    last_sync: Optional[str] = None  # ISO timestamp
+    sync_interval_minutes: int = 60  # Auto-sync interval
+    created_at: str = ""
+    # Mapping of ICS event UID -> PIGE entry ID
+    event_mapping: dict[str, str] = field(default_factory=dict)
+    # Options
+    import_past_events: bool = False  # Import events before today
+    auto_sync: bool = False  # Enable automatic sync
+

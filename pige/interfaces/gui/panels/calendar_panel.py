@@ -132,6 +132,12 @@ class CalendarPanel(ttk.Frame):
         # Actions
         ttk.Button(
             toolbar,
+            text="📌 Abonnements",
+            command=self._manage_subscriptions
+        ).pack(side=tk.LEFT, padx=2)
+        
+        ttk.Button(
+            toolbar,
             text="📥 Importer ICS",
             command=self._import_ics
         ).pack(side=tk.LEFT, padx=2)
@@ -716,7 +722,14 @@ class CalendarPanel(ttk.Frame):
             messagebox.showwarning("Attention", "Sélectionnez d'abord une date dans le calendrier")
             return
         
-        messagebox.showinfo("TODO", f"Créer task pour {self.selected_date}\n\n(Dialogue à implémenter)")
+            messagebox.showinfo("TODO", f"Créer task pour {self.selected_date}\n\n(Dialogue à implémenter)")
+    
+    def _manage_subscriptions(self) -> None:
+        """Open subscriptions management dialog."""
+        from pige.interfaces.gui.dialogs.calendar_subscriptions import CalendarSubscriptionsDialog
+        
+        dialog = CalendarSubscriptionsDialog(self, self.service, on_close=self.refresh)
+        # Don't wait - allow non-modal interaction
     
     def _import_ics(self) -> None:
         """Import calendar from ICS file."""
