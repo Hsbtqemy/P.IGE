@@ -151,14 +151,6 @@ class PigeMainWindow(tk.Tk):
             initial_page_size=self.gui_prefs.get("pagination", {}).get("entries_page_size", 50)
         )
         self.notebook.add(self.entries_panel, text="Entries")
-        
-        placeholder_label = ttk.Label(
-            placeholder_frame,
-            text="Entries panel will be added here.",
-            font=("TkDefaultFont", 12),
-            justify=tk.CENTER
-        )
-        placeholder_label.pack(expand=True)
     
     def _setup_keybindings(self) -> None:
         """Setup keyboard shortcuts."""
