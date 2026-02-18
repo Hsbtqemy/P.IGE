@@ -11,7 +11,7 @@ from pige.core.service import PigeService
 from pige.core.storage import Storage
 from pige.interfaces import gui_helpers
 from pige.interfaces.gui.dialogs import show_about_dialog, show_keyboard_shortcuts
-from pige.interfaces.gui.panels import DashboardPanel, EntriesPanel, ProjectsPanel, SearchPanel
+from pige.interfaces.gui.panels import DashboardPanel, EntriesPanel, ProjectsPanel, SearchPanel, WorkPanel
 from pige.utils import io as io_utils
 
 logger = logging.getLogger(__name__)
@@ -120,29 +120,28 @@ class PigeMainWindow(tk.Tk):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Tab 1: Dashboard (vue par défaut) - NEW!
+        # Tab 1: Work - Mode Focus/Journaling (DEFAULT)
+        self.work_panel = WorkPanel(
+            self.notebook,
+            self.service
+        )
+        self.notebook.add(self.work_panel, text="🎯 Work")
+        
+        # Tab 2: Dashboard (vue d'ensemble)
         self.dashboard_panel = DashboardPanel(
             self.notebook,
             self.service,
             initial_days=7
         )
-        self.notebook.add(self.dashboard_panel, text="Dashboard")
+        self.notebook.add(self.dashboard_panel, text="📊 Dashboard")
         
-        # Tab 2: Projects (with pagination & incremental updates)
+        # Tab 3: Projects (with pagination & incremental updates)
         self.projects_panel = ProjectsPanel(
             self.notebook,
             self.service,
             initial_page_size=self.gui_prefs.get("pagination", {}).get("projects_page_size", 100)
         )
-        self.notebook.add(self.projects_panel, text="Projects")
-        
-        # Tab 3: Search
-        self.search_panel = SearchPanel(
-            self.notebook,
-            self.service,
-            on_result_selected=self._on_search_result_selected
-        )
-        self.notebook.add(self.search_panel, text="Search")
+        self.notebook.add(self.projects_panel, text="📂 Projects")
         
         # Tab 4: Entries (with filters & pagination)
         self.entries_panel = EntriesPanel(
@@ -150,7 +149,15 @@ class PigeMainWindow(tk.Tk):
             self.service,
             initial_page_size=self.gui_prefs.get("pagination", {}).get("entries_page_size", 50)
         )
-        self.notebook.add(self.entries_panel, text="Entries")
+        self.notebook.add(self.entries_panel, text="📝 Entries")
+        
+        # Tab 5: Search
+        self.search_panel = SearchPanel(
+            self.notebook,
+            self.service,
+            on_result_selected=self._on_search_result_selected
+        )
+        self.notebook.add(self.search_panel, text="🔍 Search")
     
     def _setup_keybindings(self) -> None:
         """Setup keyboard shortcuts."""
