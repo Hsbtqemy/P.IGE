@@ -207,7 +207,15 @@ class CalendarSyncManager:
             # Fetch ICS data
             ics_data = self._fetch_ics(subscription.source_url)
             if not ics_data:
-                return {"added": 0, "updated": 0, "deleted": 0, "errors": ["Failed to fetch ICS data"]}
+                error_msg = f"Impossible de récupérer les données ICS depuis: {subscription.source_url[:100]}"
+                if subscription.source_url.startswith(("http://", "https://")):
+                    error_msg += "\n\nVérifiez que l'URL est correcte et accessible."
+                    error_msg += "\n\nPour Google Calendar:"
+                    error_msg += "\n1. Ouvrez les paramètres du calendrier"
+                    error_msg += "\n2. Copiez l'URL 'Adresse secrète au format iCal'"
+                else:
+                    error_msg += f"\n\nVérifiez que le fichier existe: {subscription.source_url}"
+                return {"added": 0, "updated": 0, "deleted": 0, "errors": [error_msg]}
             
             # Parse calendar
             cal = ICalendar.from_ical(ics_data)
@@ -342,16 +350,51 @@ class CalendarSyncManager:
             if source_url.startswith(("http://", "https://")):
                 # Fetch from URL
                 import urllib.request
-                with urllib.request.urlopen(source_url, timeout=30) as response:
-                    return response.read()
+                import ssl
+                
+                # Handle Google Calendar secret URLs (webcal://)
+                if source_url.startswith("webcal://"):
+                    source_url = source_url.replace("webcal://", "https://")
+                
+                logger.info(f"Fetching ICS from URL: {source_url[:50]}...")
+                
+                # Create SSL context (some calendars need this)
+                ssl_context = ssl.create_default_context()
+                
+                # Add User-Agent header (some servers require it)
+                req = urllib.request.Request(
+                    source_url,
+                    headers={
+                        'User-Agent': 'PIGE-Calendar-Sync/1.0',
+                        'Accept': 'text/calendar,text/plain,*/*'
+                    }
+                )
+                
+                with urllib.request.urlopen(req, timeout=30, context=ssl_context) as response:
+                    data = response.read()
+                    logger.info(f"Successfully fetched {len(data)} bytes")
+                    return data
             else:
                 # Read from local file
+                logger.info(f"Reading ICS from file: {source_url}")
                 path = Path(source_url)
-                if path.exists():
-                    return path.read_bytes()
-                return None
+                
+                if not path.exists():
+                    logger.error(f"File not found: {source_url}")
+                    return None
+                
+                data = path.read_bytes()
+                logger.info(f"Successfully read {len(data)} bytes from file")
+                return data
+                
+        except urllib.error.HTTPError as e:
+            logger.error(f"HTTP Error {e.code} fetching ICS from {source_url}: {e.reason}")
+            return None
+        except urllib.error.URLError as e:
+            logger.error(f"URL Error fetching ICS from {source_url}: {e.reason}")
+            return None
         except Exception as e:
-            logger.error(f"Failed to fetch ICS from {source_url}: {e}")
+            logger.error(f"Failed to fetch ICS from {source_url}: {type(e).__name__}: {e}", exc_info=True)
             return None
     
     def _hash_event(self, summary: str, description: str, event_date: date) -> str:

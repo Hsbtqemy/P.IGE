@@ -368,14 +368,22 @@ class NewSubscriptionDialog(tk.Toplevel):
         ttk.Button(source_frame, text="📁", command=self._browse_file, width=3).pack(side=tk.LEFT, padx=(2, 0))
         
         ttk.Label(form_frame, text="(URL ou chemin fichier .ics)", font=("TkDefaultFont", 8)).grid(
-            row=2, column=1, sticky=tk.W, pady=(0, 10)
+            row=2, column=1, sticky=tk.W, pady=(0, 5)
         )
         
+        # Help button for getting calendar URL
+        help_btn = ttk.Button(
+            form_frame,
+            text="❓ Comment obtenir l'URL du calendrier?",
+            command=self._show_url_help
+        )
+        help_btn.grid(row=3, column=1, sticky=tk.W, pady=(0, 10))
+        
         # Project
-        ttk.Label(form_frame, text="Projet cible:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        ttk.Label(form_frame, text="Projet cible:").grid(row=4, column=0, sticky=tk.W, pady=5)
         
         project_frame = ttk.Frame(form_frame)
-        project_frame.grid(row=3, column=1, sticky=tk.EW, pady=5)
+        project_frame.grid(row=4, column=1, sticky=tk.EW, pady=5)
         
         self.project_var = tk.StringVar()
         self.project_combo = ttk.Combobox(project_frame, textvariable=self.project_var, state="readonly", width=30)
@@ -391,21 +399,21 @@ class NewSubscriptionDialog(tk.Toplevel):
         self.project_combo.current(0)  # Default to create new project
         
         # Options
-        ttk.Separator(form_frame, orient=tk.HORIZONTAL).grid(row=4, column=0, columnspan=2, sticky=tk.EW, pady=15)
+        ttk.Separator(form_frame, orient=tk.HORIZONTAL).grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=15)
         
         self.import_past_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             form_frame,
             text="Importer les événements passés",
             variable=self.import_past_var
-        ).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=5)
+        ).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=5)
         
         self.auto_sync_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             form_frame,
             text="Activer la synchronisation automatique",
             variable=self.auto_sync_var
-        ).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=5)
+        ).grid(row=7, column=0, columnspan=2, sticky=tk.W, pady=5)
         
         form_frame.columnconfigure(1, weight=1)
         
@@ -424,6 +432,39 @@ class NewSubscriptionDialog(tk.Toplevel):
         )
         if file_path:
             self.source_var.set(file_path)
+    
+    def _show_url_help(self) -> None:
+        """Show help dialog for obtaining calendar URLs."""
+        help_text = """
+📅 Comment obtenir l'URL de votre calendrier:
+
+═══════════════════════════════════════
+
+📗 Google Calendar:
+1. Ouvrez Google Calendar (calendar.google.com)
+2. Cliquez sur ⚙️ puis "Paramètres"
+3. Dans la colonne de gauche, sélectionnez votre calendrier
+4. Faites défiler jusqu'à "Intégrer le calendrier"
+5. Copiez l'URL "Adresse secrète au format iCal"
+   Format: https://calendar.google.com/calendar/ical/...
+
+📘 Outlook / Office 365:
+1. Ouvrez Outlook Web (outlook.office.com)
+2. Calendrier > Paramètres > Calendriers partagés
+3. Publiez votre calendrier
+4. Copiez le lien ICS généré
+
+📙 Apple iCloud:
+1. Ouvrez iCloud.com > Calendrier
+2. Cliquez sur l'icône de partage à côté du calendrier
+3. Activez "Calendrier public"
+4. Copiez l'URL webcal:// (sera auto-converti en https://)
+
+💡 Fichier local:
+Utilisez le bouton 📁 pour sélectionner un fichier .ics
+sur votre ordinateur
+"""
+        messagebox.showinfo("Aide - Obtenir URL Calendrier", help_text)
     
     def _on_create(self) -> None:
         """Create subscription."""
