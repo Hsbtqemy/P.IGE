@@ -30,6 +30,7 @@ class CalendarPanel(ttk.Frame):
         # Data cache
         self._entries_by_date: dict[str, list] = {}
         self._tasks_by_date: dict[str, list] = {}
+        self._events_by_date: dict[str, list] = {}
         self._projects_by_id: dict = {}
         
         # Color scheme for better visuals
@@ -193,6 +194,22 @@ class CalendarPanel(ttk.Frame):
         details_notebook = ttk.Notebook(details_frame)
         details_notebook.pack(fill=tk.BOTH, expand=True)
         
+        # Calendar Events tab
+        events_tab = ttk.Frame(details_notebook)
+        details_notebook.add(events_tab, text="📅 Événements")
+        
+        events_scroll = ttk.Scrollbar(events_tab, orient=tk.VERTICAL)
+        events_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.events_listbox = tk.Listbox(
+            events_tab,
+            yscrollcommand=events_scroll.set,
+            font=("TkDefaultFont", 9)
+        )
+        self.events_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        events_scroll.config(command=self.events_listbox.yview)
+        self.events_listbox.bind("<Double-Button-1>", self._on_event_double_click)
+        
         # Entries tab
         entries_tab = ttk.Frame(details_notebook)
         details_notebook.add(entries_tab, text="📝 Entries")
@@ -329,7 +346,7 @@ class CalendarPanel(ttk.Frame):
             self.period_label.config(text=label)
     
     def _load_data(self) -> None:
-        """Load entries and tasks."""
+        """Load entries, tasks, and calendar events."""
         logger.debug(f"Loading calendar data for {self.view_mode} view")
         
         # Load all entries
@@ -349,6 +366,22 @@ class CalendarPanel(ttk.Frame):
                     if date_str not in self._entries_by_date:
                         self._entries_by_date[date_str] = []
                     self._entries_by_date[date_str].append(entry)
+                except Exception:
+                    pass
+        
+        # Load calendar events
+        from pige.core.storage import read_calendar_events
+        all_events = read_calendar_events(self.service.storage)
+        
+        # Group calendar events by start_date
+        self._events_by_date: dict[str, list] = {}
+        for event in all_events:
+            if event.start_date:
+                try:
+                    date_str = event.start_date  # Already ISO format
+                    if date_str not in self._events_by_date:
+                        self._events_by_date[date_str] = []
+                    self._events_by_date[date_str].append(event)
                 except Exception:
                     pass
         
@@ -435,7 +468,7 @@ class CalendarPanel(ttk.Frame):
             bg_color = self.colors["selected"]
         elif is_weekend:
             bg_color = self.colors["weekend"]
-        elif date_str in self._entries_by_date or date_str in self._tasks_by_date:
+        elif date_str in self._entries_by_date or date_str in self._tasks_by_date or date_str in self._events_by_date:
             bg_color = self.colors["has_items"]
         else:
             bg_color = self.colors["default"]
@@ -487,6 +520,18 @@ class CalendarPanel(ttk.Frame):
             
             # Indicators
             y_offset = 35
+            
+            # Calendar events indicator
+            events_count = len(self._events_by_date.get(date_str, []))
+            if events_count > 0:
+                canvas.create_text(
+                    10, y_offset,
+                    text=f"📅 {events_count}",
+                    font=("TkDefaultFont", 9),
+                    fill="#9c27b0",
+                    anchor=tk.W
+                )
+                y_offset += 18
             
             # Entries indicator
             entries_count = len(self._entries_by_date.get(date_str, []))
@@ -540,6 +585,12 @@ class CalendarPanel(ttk.Frame):
             )
             
             y_offset = 35
+            events_count = len(self._events_by_date.get(date_str, []))
+            if events_count > 0:
+                canvas.create_text(10, y_offset, text=f"📅 {events_count}",
+                                 font=("TkDefaultFont", 9), fill="#9c27b0", anchor=tk.W)
+                y_offset += 18
+            
             entries_count = len(self._entries_by_date.get(date_str, []))
             if entries_count > 0:
                 canvas.create_text(10, y_offset, text=f"📝 {entries_count}",
@@ -894,6 +945,18 @@ class CalendarPanel(ttk.Frame):
             text=f"{day_name} {self.selected_date.strftime('%d/%m/%Y')}"
         )
         
+        # Update calendar events list
+        self.events_listbox.delete(0, tk.END)
+        events = self._events_by_date.get(date_str, [])
+        self._current_events = events  # Store for double-click
+        for event in events:
+            time_str = f" {event.start_time[:5]}" if event.start_time else ""
+            location_str = f" 📍 {event.location}" if event.location else ""
+            self.events_listbox.insert(tk.END, f"📅{time_str} {event.title}{location_str}")
+        
+        if not events:
+            self.events_listbox.insert(tk.END, "(aucun événement ce jour)")
+        
         # Update entries list
         self.entries_listbox.delete(0, tk.END)
         entries = self._entries_by_date.get(date_str, [])
@@ -930,6 +993,49 @@ class CalendarPanel(ttk.Frame):
             logger.info(f"Entry double-clicked: {entry.id}")
             messagebox.showinfo("TODO", f"Ouvrir éditeur pour entry: {entry.title}\n\n(À connecter au WorkPanel)")
     
+    def _on_event_double_click(self, event: tk.Event) -> None:
+        """Handle double-click on calendar event."""
+        selection = self.events_listbox.curselection()
+        if not selection or not hasattr(self, '_current_events'):
+            return
+        
+        idx = selection[0]
+        if idx < len(self._current_events):
+            cal_event = self._current_events[idx]
+            logger.info(f"Calendar event double-clicked: {cal_event.id}")
+            
+            # Show event details in a dialog
+            details = f"Événement: {cal_event.title}\n\n"
+            details += f"Date: {cal_event.start_date}"
+            if cal_event.start_time:
+                details += f" {cal_event.start_time[:5]}"
+            if cal_event.end_date and cal_event.end_date != cal_event.start_date:
+                details += f" - {cal_event.end_date}"
+            if cal_event.end_time:
+                details += f" {cal_event.end_time[:5]}"
+            details += "\n"
+            
+            if cal_event.location:
+                details += f"\nLieu: {cal_event.location}\n"
+            
+            if cal_event.description:
+                details += f"\nDescription:\n{cal_event.description}\n"
+            
+            if cal_event.linked_entry_id:
+                details += f"\n✓ Lié à une entry PIGE"
+            else:
+                details += f"\n➕ Cliquez sur 'Créer une note' pour lier une entry à cet événement"
+            
+            # Show a dialog with options
+            result = messagebox.askquestion(
+                "Événement de calendrier",
+                details + "\n\nVoulez-vous créer une note PIGE pour cet événement?",
+                icon='question'
+            )
+            
+            if result == 'yes':
+                self._link_entry_to_event(cal_event)
+    
     def _on_task_double_click(self, event: tk.Event) -> None:
         """Handle double-click on task."""
         selection = self.tasks_listbox.curselection()
@@ -949,6 +1055,74 @@ class CalendarPanel(ttk.Frame):
             return
         
         messagebox.showinfo("TODO", f"Créer entry pour {self.selected_date}\n\n(Dialogue à implémenter)")
+    
+    def _link_entry_to_event(self, cal_event) -> None:
+        """Create and link a PIGE entry to a calendar event."""
+        from tkinter import simpledialog
+        from pige.core.storage import upsert_calendar_event
+        
+        # Get projects
+        projects = self.service.list_projects(status="active")
+        if not projects:
+            messagebox.showerror("Erreur", "Aucun projet actif. Créez d'abord un projet.")
+            return
+        
+        # Ask user to choose project
+        from tkinter import simpledialog
+        project_names = [p.name for p in projects]
+        project_choice = simpledialog.askstring(
+            "Choisir un projet",
+            f"Projets disponibles:\n" + "\n".join([f"{i+1}. {p}" for i, p in enumerate(project_names)]) + "\n\nNuméro du projet:",
+            parent=self
+        )
+        
+        if not project_choice or not project_choice.isdigit():
+            return
+        
+        idx = int(project_choice) - 1
+        if idx < 0 or idx >= len(projects):
+            messagebox.showerror("Erreur", "Numéro de projet invalide")
+            return
+        
+        project = projects[idx]
+        
+        # Create entry
+        try:
+            # Build body with event details
+            body = f"# Note pour: {cal_event.title}\n\n"
+            body += f"**Date événement**: {cal_event.start_date}"
+            if cal_event.start_time:
+                body += f" {cal_event.start_time[:5]}"
+            body += "\n\n"
+            
+            if cal_event.location:
+                body += f"**Lieu**: {cal_event.location}\n\n"
+            
+            if cal_event.description:
+                body += f"## Description de l'événement\n\n{cal_event.description}\n\n"
+            
+            body += "## Notes\n\n(Ajoutez vos notes ici)\n"
+            
+            # Create entry
+            entry = self.service.add_entry(
+                project_id=project.id,
+                entry_type="note",
+                title=f"📅 {cal_event.title}",
+                body=body,
+                tags=["calendar-event"],
+                entry_date=cal_event.start_date
+            )
+            
+            # Link event to entry
+            cal_event.linked_entry_id = entry.id
+            upsert_calendar_event(self.service.storage, cal_event)
+            
+            messagebox.showinfo("Succès", f"Note créée et liée à l'événement!\n\nEntry ID: {entry.id}")
+            self.refresh()
+            
+        except Exception as e:
+            logger.error(f"Failed to create linked entry: {e}", exc_info=True)
+            messagebox.showerror("Erreur", f"Impossible de créer la note:\n{e}")
     
     def _create_task_for_date(self) -> None:
         """Create new task for selected date."""
