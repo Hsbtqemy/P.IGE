@@ -449,7 +449,7 @@ class CalendarPanel(ttk.Frame):
         # Create canvas for rounded rectangle
         canvas = tk.Canvas(
             parent,
-            bg=self.view_container.cget("bg"),
+            bg="#f0f0f0",
             highlightthickness=0,
             cursor="hand2"
         )
@@ -731,7 +731,7 @@ class CalendarPanel(ttk.Frame):
         # Create canvas for rounded rectangle
         canvas = tk.Canvas(
             parent,
-            bg=self.view_container.cget("bg"),
+            bg="#f0f0f0",
             highlightthickness=0,
             cursor="hand2"
         )
