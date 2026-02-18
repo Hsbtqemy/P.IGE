@@ -335,7 +335,7 @@ class WorkPanel(ttk.Frame):
             self._refresh_tasks()
     
     def _refresh_explorer(self) -> None:
-        """Refresh the project/entry explorer tree."""
+        """Refresh the project/entry explorer tree with hierarchy."""
         # Clear tree
         for item in self.explorer_tree.get_children():
             self.explorer_tree.delete(item)
@@ -353,38 +353,55 @@ class WorkPanel(ttk.Frame):
         for entries in entries_by_project.values():
             entries.sort(key=lambda e: e.entry_date or e.ts, reverse=True)
         
-        # Build tree: Projects with their entries
-        for project in sorted(self._projects_by_id.values(), key=lambda p: p.name):
-            # Add project node
-            project_text = f"📂 {project.name}"
-            project_node = self.explorer_tree.insert(
-                "",
-                tk.END,
-                iid=f"project:{project.id}",
-                text=project_text,
-                open=False
-            )
+        # Build hierarchical tree: root projects first
+        root_projects = [p for p in self._projects_by_id.values() if p.parent_id is None]
+        root_projects.sort(key=lambda p: p.display_order)
+        
+        for project in root_projects:
+            self._add_project_node_recursive(project, "", entries_by_project)
+    
+    def _add_project_node_recursive(self, project, parent_node: str, entries_by_project: dict) -> None:
+        """Recursively add project and its children to the tree."""
+        # Add project node
+        project_text = f"📂 {project.name}"
+        if project.status == "archived":
+            project_text += " [Archivé]"
+        
+        project_node = self.explorer_tree.insert(
+            parent_node,
+            tk.END,
+            iid=f"project:{project.id}",
+            text=project_text,
+            open=True  # Expand by default
+        )
+        
+        # Add entries for this project
+        project_entries = entries_by_project.get(project.id, [])
+        for entry in project_entries[:20]:  # Limit to 20 most recent
+            entry_icon = {
+                "note": "📝",
+                "meeting": "🤝",
+                "decision": "✅",
+                "activity": "⚡"
+            }.get(entry.type, "📄")
             
-            # Add entries under project
-            project_entries = entries_by_project.get(project.id, [])
-            for entry in project_entries[:20]:  # Limit to 20 most recent
-                entry_icon = {
-                    "note": "📝",
-                    "meeting": "🤝",
-                    "decision": "✅",
-                    "activity": "⚡"
-                }.get(entry.type, "📄")
-                
-                entry_text = f"{entry_icon} {entry.title[:50]}"
-                if entry.entry_date:
-                    entry_text += f" ({entry.entry_date})"
-                
-                self.explorer_tree.insert(
-                    project_node,
-                    tk.END,
-                    iid=f"entry:{entry.id}",
-                    text=entry_text
-                )
+            entry_text = f"{entry_icon} {entry.title[:50]}"
+            if entry.entry_date:
+                entry_text += f" ({entry.entry_date})"
+            
+            self.explorer_tree.insert(
+                project_node,
+                tk.END,
+                iid=f"entry:{entry.id}",
+                text=entry_text
+            )
+        
+        # Add child projects recursively
+        children = [p for p in self._projects_by_id.values() if p.parent_id == project.id]
+        children.sort(key=lambda p: p.display_order)
+        
+        for child in children:
+            self._add_project_node_recursive(child, project_node, entries_by_project)
     
     def _on_explorer_select(self, event=None) -> None:
         """Handle selection in explorer tree - load entry directly."""
