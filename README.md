@@ -23,6 +23,20 @@ Storage is open and local (JSON/JSONL + Markdown).
 
 ## Quick start
 
+### GUI (Graphical Interface)
+
+```sh
+# Launch the GUI
+python -m pige gui
+```
+
+The GUI provides:
+- **Dashboard**: Overview of work in progress, pending items, and upcoming meetings
+- **Projects**: Hierarchical view with pagination and search
+- **Search**: Full-text search across all entries with FTS5
+
+### CLI (Command Line)
+
 ```sh
 # Initialize data directory
 python -m pige init
