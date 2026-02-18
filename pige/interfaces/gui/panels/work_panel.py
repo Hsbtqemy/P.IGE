@@ -3,7 +3,7 @@
 import logging
 import tkinter as tk
 from datetime import date, datetime
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox
 
 from pige.core.service import PigeService
 
@@ -95,10 +95,10 @@ class WorkPanel(ttk.Frame):
     
     def _setup_quick_entry(self) -> None:
         """Setup quick entry creation form."""
-        entry_frame = ttk.LabelFrame(self, text="✍️ Nouvelle Entry", padding=10)
+        entry_frame = ttk.LabelFrame(self, text="✍️ Entry Editor", padding=10)
         entry_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
         
-        # Type and Title
+        # Top toolbar: Type, Title, Entry selector
         top_row = ttk.Frame(entry_frame)
         top_row.pack(fill=tk.X, pady=(0, 5))
         
@@ -115,34 +115,72 @@ class WorkPanel(ttk.Frame):
         
         ttk.Label(top_row, text="Titre:").pack(side=tk.LEFT)
         self.entry_title_var = tk.StringVar()
-        title_entry = ttk.Entry(top_row, textvariable=self.entry_title_var, width=50)
+        title_entry = ttk.Entry(top_row, textvariable=self.entry_title_var, width=40)
         title_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         
-        # Body
-        ttk.Label(entry_frame, text="Contenu:").pack(anchor=tk.W, pady=(5, 2))
-        self.entry_body_text = scrolledtext.ScrolledText(
-            entry_frame,
-            height=10,
+        # Current entry indicator
+        self.current_entry_var = tk.StringVar(value="Nouvelle entry")
+        ttk.Label(
+            top_row,
+            textvariable=self.current_entry_var,
+            font=("TkDefaultFont", 9),
+            foreground="gray"
+        ).pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Markdown editor
+        ttk.Label(entry_frame, text="Contenu (Markdown):").pack(anchor=tk.W, pady=(5, 2))
+        
+        editor_frame = ttk.Frame(entry_frame)
+        editor_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+        
+        # Scrollbar for text editor
+        text_scroll = ttk.Scrollbar(editor_frame)
+        text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.entry_body_text = tk.Text(
+            editor_frame,
             wrap=tk.WORD,
-            font=("Consolas", 10)
+            font=("Consolas", 10),
+            yscrollcommand=text_scroll.set,
+            undo=True,
+            maxundo=-1
         )
-        self.entry_body_text.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+        self.entry_body_text.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
+        text_scroll.config(command=self.entry_body_text.yview)
+        
+        # Track if content is modified
+        self.entry_body_text.bind("<<Modified>>", self._on_content_modified)
+        self._current_entry_id: str | None = None
+        self._entry_modified = False
         
         # Buttons
         btn_row = ttk.Frame(entry_frame)
         btn_row.pack(fill=tk.X)
         
-        ttk.Button(
+        self.btn_save = ttk.Button(
             btn_row,
-            text="➕ Ajouter Entry",
-            command=self._on_add_entry,
-            style="Accent.TButton"
-        ).pack(side=tk.LEFT)
+            text="💾 Enregistrer",
+            command=self._on_save_entry,
+            state=tk.DISABLED
+        )
+        self.btn_save.pack(side=tk.LEFT)
         
         ttk.Button(
             btn_row,
-            text="🗑️ Effacer",
-            command=self._on_clear_form
+            text="➕ Nouvelle",
+            command=self._on_new_entry_editor
+        ).pack(side=tk.LEFT, padx=(5, 0))
+        
+        ttk.Button(
+            btn_row,
+            text="🗑️ Supprimer",
+            command=self._on_delete_current_entry
+        ).pack(side=tk.LEFT, padx=(5, 0))
+        
+        ttk.Button(
+            btn_row,
+            text="📄 Ouvrir MD externe",
+            command=self._on_open_external
         ).pack(side=tk.LEFT, padx=(5, 0))
     
     def _setup_tasks_section(self) -> None:
@@ -377,6 +415,162 @@ class WorkPanel(ttk.Frame):
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible de créer l'entry:\n{e}")
     
+    def _on_save_entry(self) -> None:
+        """Save current entry modifications."""
+        if not self._current_entry_id:
+            # No entry loaded, create new one
+            self._on_add_entry()
+            return
+        
+        title = self.entry_title_var.get().strip()
+        if not title:
+            messagebox.showwarning("Attention", "Le titre est requis")
+            return
+        
+        body = self.entry_body_text.get("1.0", tk.END).strip()
+        
+        try:
+            # Update entry content (body in MD file)
+            self.service.update_entry_content(self._current_entry_id, body)
+            
+            # Update metadata if title changed
+            entries = self.service.storage.read_entries_meta()
+            entry = next((e for e in entries if e.id == self._current_entry_id), None)
+            
+            if entry and entry.title != title:
+                self.service.update_entry_meta(self._current_entry_id, {"title": title})
+            
+            # Reset modified flag
+            self._entry_modified = False
+            self.entry_body_text.edit_modified(False)
+            self.btn_save.config(state=tk.DISABLED)
+            self.current_entry_var.set(f"✓ Enregistré: {title[:40]}")
+            
+            # Refresh list
+            self._refresh_entries()
+            
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible d'enregistrer:\n{e}")
+    
+    def _on_new_entry_editor(self) -> None:
+        """Start editing a new entry."""
+        if self._entry_modified:
+            result = messagebox.askyesnocancel(
+                "Modifications non enregistrées",
+                "Voulez-vous enregistrer les modifications avant de créer une nouvelle entry?"
+            )
+            if result is None:  # Cancel
+                return
+            elif result:  # Yes
+                self._on_save_entry()
+        
+        # Clear editor
+        self._current_entry_id = None
+        self.entry_title_var.set("")
+        self.entry_body_text.delete("1.0", tk.END)
+        self.entry_type_var.set("note")
+        self.current_entry_var.set("Nouvelle entry")
+        self._entry_modified = False
+        self.btn_save.config(state=tk.DISABLED)
+    
+    def _on_delete_current_entry(self) -> None:
+        """Delete currently loaded entry."""
+        if not self._current_entry_id:
+            messagebox.showwarning("Attention", "Aucune entry chargée")
+            return
+        
+        title = self.entry_title_var.get()
+        result = messagebox.askyesno(
+            "Confirmer suppression",
+            f"Supprimer l'entry \"{title}\"?\n\nCette action est irréversible."
+        )
+        
+        if result:
+            try:
+                self.service.delete_entry(self._current_entry_id)
+                self._on_new_entry_editor()  # Clear editor
+                self._refresh_entries()
+                messagebox.showinfo("Succès", "Entry supprimée")
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible de supprimer:\n{e}")
+    
+    def _on_open_external(self) -> None:
+        """Open current entry in external editor."""
+        if not self._current_entry_id:
+            messagebox.showwarning("Attention", "Aucune entry chargée")
+            return
+        
+        entry_path = self.service.storage.data_dir / "entries" / f"{self._current_entry_id}.md"
+        
+        if not entry_path.exists():
+            messagebox.showerror("Erreur", f"Fichier non trouvé: {entry_path}")
+            return
+        
+        import subprocess
+        import sys
+        
+        try:
+            if sys.platform.startswith("win"):
+                import os
+                os.startfile(str(entry_path))
+            elif sys.platform == "darwin":
+                subprocess.run(["open", str(entry_path)], check=True)
+            else:
+                subprocess.run(["xdg-open", str(entry_path)], check=True)
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible d'ouvrir le fichier:\n{e}")
+    
+    def _on_content_modified(self, event=None) -> None:
+        """Handle text content modification."""
+        if self.entry_body_text.edit_modified():
+            self._entry_modified = True
+            self.btn_save.config(state=tk.NORMAL)
+    
+    def _load_entry_in_editor(self, entry_id: str) -> None:
+        """Load an entry into the editor."""
+        # Check for unsaved changes
+        if self._entry_modified:
+            result = messagebox.askyesnocancel(
+                "Modifications non enregistrées",
+                "Voulez-vous enregistrer les modifications?"
+            )
+            if result is None:  # Cancel
+                return
+            elif result:  # Yes
+                self._on_save_entry()
+        
+        # Load entry
+        try:
+            entries = self.service.storage.read_entries_meta()
+            entry = next((e for e in entries if e.id == entry_id), None)
+            
+            if not entry:
+                messagebox.showerror("Erreur", "Entry non trouvée")
+                return
+            
+            # Load content
+            entry_path = self.service.storage.data_dir / "entries" / f"{entry_id}.md"
+            if entry_path.exists():
+                content = entry_path.read_text(encoding="utf-8")
+            else:
+                content = ""
+            
+            # Update editor
+            self._current_entry_id = entry_id
+            self.entry_title_var.set(entry.title)
+            self.entry_type_var.set(entry.type)
+            self.entry_body_text.delete("1.0", tk.END)
+            self.entry_body_text.insert("1.0", content)
+            self.current_entry_var.set(f"📝 {entry.title[:40]}{'...' if len(entry.title) > 40 else ''}")
+            
+            # Reset modified flag
+            self._entry_modified = False
+            self.entry_body_text.edit_modified(False)
+            self.btn_save.config(state=tk.DISABLED)
+            
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de charger l'entry:\n{e}")
+    
     def _on_clear_form(self) -> None:
         """Clear entry form."""
         self.entry_title_var.set("")
@@ -437,32 +631,13 @@ class WorkPanel(ttk.Frame):
             logger.error(f"Failed to toggle task: {e}")
     
     def _on_entry_double_click(self, event) -> None:
-        """Handle entry double-click (open MD file)."""
+        """Handle entry double-click (load in editor)."""
         selection = self.entries_tree.selection()
         if not selection:
             return
         
         entry_id = selection[0]
-        entry_path = self.service.storage.data_dir / "entries" / f"{entry_id}.md"
-        
-        if not entry_path.exists():
-            messagebox.showerror("Erreur", f"Fichier non trouvé: {entry_path}")
-            return
-        
-        # Open with default editor
-        import subprocess
-        import sys
-        
-        try:
-            if sys.platform.startswith("win"):
-                import os
-                os.startfile(str(entry_path))
-            elif sys.platform == "darwin":
-                subprocess.run(["open", str(entry_path)], check=True)
-            else:
-                subprocess.run(["xdg-open", str(entry_path)], check=True)
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible d'ouvrir le fichier:\n{e}")
+        self._load_entry_in_editor(entry_id)
     
     def _on_start_timer(self) -> None:
         """Start timer for current project."""
