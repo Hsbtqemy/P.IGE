@@ -23,6 +23,10 @@ class EntriesPanel(ttk.Frame):
         self._filtered_entries: list = []
         self._projects_by_id: dict = {}
         
+        # Sorting state
+        self._sort_column: str = "date"
+        self._sort_reverse: bool = True  # Most recent first by default
+        
         # Store initial page size for pagination setup
         self.initial_page_size = initial_page_size
         
@@ -114,20 +118,22 @@ class EntriesPanel(ttk.Frame):
         # Treeview
         self.tree = ttk.Treeview(
             tree_frame,
-            columns=("date", "type", "title", "project", "tags"),
+            columns=("date", "modified", "type", "title", "project", "tags"),
             show="headings",
             yscrollcommand=vsb.set,
             xscrollcommand=hsb.set
         )
         
-        # Configure columns
-        self.tree.heading("date", text="Date")
-        self.tree.heading("type", text="Type")
-        self.tree.heading("title", text="Titre")
-        self.tree.heading("project", text="Projet")
-        self.tree.heading("tags", text="Tags")
+        # Configure columns with sort commands
+        self.tree.heading("date", text="Date", command=lambda: self._sort_by_column("date"))
+        self.tree.heading("modified", text="Last Modified", command=lambda: self._sort_by_column("modified"))
+        self.tree.heading("type", text="Type", command=lambda: self._sort_by_column("type"))
+        self.tree.heading("title", text="Titre", command=lambda: self._sort_by_column("title"))
+        self.tree.heading("project", text="Projet", command=lambda: self._sort_by_column("project"))
+        self.tree.heading("tags", text="Tags", command=lambda: self._sort_by_column("tags"))
         
         self.tree.column("date", width=100, minwidth=80)
+        self.tree.column("modified", width=150, minwidth=100)
         self.tree.column("type", width=100, minwidth=80)
         self.tree.column("title", width=300, minwidth=150)
         self.tree.column("project", width=200, minwidth=100)
@@ -176,7 +182,6 @@ class EntriesPanel(ttk.Frame):
         
         # Load entries and projects
         self._all_entries = self.service.storage.read_entries_meta()
-        self._all_entries.sort(key=lambda e: e.entry_date or e.ts, reverse=True)
         
         projects = self.service.list_projects(status="all")
         self._projects_by_id = {p.id: p for p in projects}
@@ -187,6 +192,52 @@ class EntriesPanel(ttk.Frame):
         
         # Apply filters and update display
         self._apply_filters()
+    
+    def _sort_by_column(self, column: str) -> None:
+        """Sort entries by column."""
+        if self._sort_column == column:
+            # Toggle direction
+            self._sort_reverse = not self._sort_reverse
+        else:
+            # New column, default ascending (except date: descending)
+            self._sort_column = column
+            self._sort_reverse = (column in ["date", "modified"])
+        
+        self._apply_sort()
+        self._refresh_current_page()
+    
+    def _apply_sort(self) -> None:
+        """Apply current sort to filtered entries."""
+        if self._sort_column == "date":
+            self._filtered_entries.sort(
+                key=lambda e: e.entry_date or e.ts,
+                reverse=self._sort_reverse
+            )
+        elif self._sort_column == "modified":
+            self._filtered_entries.sort(
+                key=lambda e: e.updated_at or e.ts,
+                reverse=self._sort_reverse
+            )
+        elif self._sort_column == "type":
+            self._filtered_entries.sort(
+                key=lambda e: e.type,
+                reverse=self._sort_reverse
+            )
+        elif self._sort_column == "title":
+            self._filtered_entries.sort(
+                key=lambda e: e.title.lower(),
+                reverse=self._sort_reverse
+            )
+        elif self._sort_column == "project":
+            def project_name(e):
+                p = self._projects_by_id.get(e.project_id)
+                return p.name.lower() if p else ""
+            self._filtered_entries.sort(key=project_name, reverse=self._sort_reverse)
+        elif self._sort_column == "tags":
+            self._filtered_entries.sort(
+                key=lambda e: ",".join(e.tags).lower() if e.tags else "",
+                reverse=self._sort_reverse
+            )
     
     def _apply_filters(self) -> None:
         """Apply current filters to entries list."""
@@ -213,6 +264,10 @@ class EntriesPanel(ttk.Frame):
             filtered = [e for e in filtered if search_text in e.title.lower()]
         
         self._filtered_entries = filtered
+        
+        # Apply current sort
+        self._apply_sort()
+        
         self.pagination.set_total_items(len(filtered))
         self._refresh_current_page()
         
@@ -235,7 +290,7 @@ class EntriesPanel(ttk.Frame):
             project = self._projects_by_id.get(entry.project_id)
             project_name = project.name if project else entry.project_id[:8]
             
-            # Format date
+            # Format entry date
             if entry.entry_date:
                 date_str = entry.entry_date
             else:
@@ -245,6 +300,15 @@ class EntriesPanel(ttk.Frame):
                 except Exception:
                     date_str = "?"
             
+            # Format modified date
+            modified_str = "?"
+            if entry.updated_at:
+                try:
+                    dt = datetime.fromisoformat(entry.updated_at.replace('Z', '+00:00'))
+                    modified_str = dt.strftime("%Y-%m-%d %H:%M")
+                except Exception:
+                    modified_str = entry.updated_at[:16]
+            
             # Format tags
             tags_str = ", ".join(entry.tags) if entry.tags else ""
             
@@ -252,7 +316,7 @@ class EntriesPanel(ttk.Frame):
                 "",
                 tk.END,
                 iid=entry.id,
-                values=(date_str, entry.type, entry.title, project_name, tags_str)
+                values=(date_str, modified_str, entry.type, entry.title, project_name, tags_str)
             )
     
     def _on_page_change(self) -> None:

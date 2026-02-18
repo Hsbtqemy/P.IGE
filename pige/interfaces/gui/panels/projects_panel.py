@@ -39,6 +39,10 @@ class ProjectsPanel(ttk.Frame):
         self._all_root_projects: list[Project] = []
         self._projects_by_id: dict[str, Project] = {}
         
+        # Sorting state
+        self._sort_column: str = "name"
+        self._sort_reverse: bool = False
+        
         # Setup UI
         self._setup_toolbar()
         self._setup_tree()
@@ -75,7 +79,7 @@ class ProjectsPanel(ttk.Frame):
         
         self.tree = ttk.Treeview(
             tree_frame,
-            columns=("name", "status", "tasks"),
+            columns=("name", "status", "tasks", "modified"),
             show="tree headings",
             yscrollcommand=scrollbar.set
         )
@@ -83,14 +87,16 @@ class ProjectsPanel(ttk.Frame):
         scrollbar.config(command=self.tree.yview)
         
         # Configure columns
-        self.tree.heading("name", text="Name")
-        self.tree.heading("status", text="Status")
-        self.tree.heading("tasks", text="Tasks")
+        self.tree.heading("name", text="Name", command=lambda: self._sort_by_column("name"))
+        self.tree.heading("status", text="Status", command=lambda: self._sort_by_column("status"))
+        self.tree.heading("tasks", text="Tasks", command=lambda: self._sort_by_column("tasks"))
+        self.tree.heading("modified", text="Last Modified", command=lambda: self._sort_by_column("modified"))
         
         self.tree.column("#0", width=40, stretch=False)
         self.tree.column("name", width=200, stretch=True)
         self.tree.column("status", width=100, stretch=False)
         self.tree.column("tasks", width=80, stretch=False)
+        self.tree.column("modified", width=150, stretch=False)
         
         # Bind events
         self.tree.bind("<Double-Button-1>", self._on_double_click)
@@ -118,13 +124,43 @@ class ProjectsPanel(ttk.Frame):
         
         # Get root projects only for pagination
         self._all_root_projects = [p for p in projects if p.parent_id is None]
-        self._all_root_projects.sort(key=lambda p: p.display_order)
+        
+        # Apply current sort
+        self._apply_sort()
         
         # Update pagination total
         self.pagination.set_total_items(len(self._all_root_projects))
         
         # Display current page
         self._refresh_current_page()
+    
+    def _sort_by_column(self, column: str) -> None:
+        """Sort projects by column."""
+        if self._sort_column == column:
+            # Toggle direction
+            self._sort_reverse = not self._sort_reverse
+        else:
+            # New column, default ascending
+            self._sort_column = column
+            self._sort_reverse = False
+        
+        self._apply_sort()
+        self._refresh_current_page()
+    
+    def _apply_sort(self) -> None:
+        """Apply current sort to root projects list."""
+        if self._sort_column == "name":
+            self._all_root_projects.sort(key=lambda p: p.name.lower(), reverse=self._sort_reverse)
+        elif self._sort_column == "status":
+            self._all_root_projects.sort(key=lambda p: p.status, reverse=self._sort_reverse)
+        elif self._sort_column == "tasks":
+            # Sort by task count
+            def task_count(p):
+                tasks = self.service.list_tasks(project_id=p.id, status="all")
+                return len([t for t in tasks if t.status != "done"])
+            self._all_root_projects.sort(key=task_count, reverse=self._sort_reverse)
+        elif self._sort_column == "modified":
+            self._all_root_projects.sort(key=lambda p: p.updated_at or p.created_at, reverse=self._sort_reverse)
     
     def _on_page_change(self, state: PaginationState) -> None:
         """Handle pagination page change."""
@@ -166,6 +202,18 @@ class ProjectsPanel(ttk.Frame):
         tasks_total = len(tasks)
         tasks_str = f"{tasks_open}/{tasks_total}"
         
+        # Format modified date
+        modified_date = project.updated_at or project.created_at
+        if modified_date:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(modified_date.replace('Z', '+00:00'))
+                modified_str = dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                modified_str = modified_date[:16]
+        else:
+            modified_str = "?"
+        
         # Icon
         icon = "📁" if project.status == "active" else "📦"
         
@@ -173,14 +221,14 @@ class ProjectsPanel(ttk.Frame):
         node = TreeNode(
             id=project.id,
             parent_id=parent_id,
-            values=(project.name, project.status, tasks_str),
+            values=(project.name, project.status, tasks_str, modified_str),
             data=project,
             tags=(),
             open=False  # Could load from preferences later
         )
         nodes[project.id] = node
         
-        # Add children recursively
+        # Add children recursively (children keep their display_order)
         children = [
             p for p in self._projects_by_id.values()
             if p.parent_id == project.id
