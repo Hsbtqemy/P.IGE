@@ -112,8 +112,8 @@ class ProjectsPanel(ttk.Frame):
         """Refresh the projects list with pagination."""
         logger.debug("Refreshing projects panel")
         
-        # Load all projects
-        projects = self.service.list_projects(include_archived=False)
+        # Load all projects (active only by default)
+        projects = self.service.list_projects(status="active")
         self._projects_by_id = {p.id: p for p in projects}
         
         # Get root projects only for pagination
