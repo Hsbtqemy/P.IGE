@@ -121,7 +121,7 @@ class WorkPanel(ttk.Frame):
         
         # Bind events
         self.explorer_tree.bind("<<TreeviewSelect>>", self._on_explorer_select)
-        self.explorer_tree.bind("<Double-Button-1>", self._on_explorer_double_click)
+        # No double-click needed anymore - single click loads entry
     
     def _setup_editor(self) -> None:
         """Setup markdown editor."""
@@ -142,6 +142,7 @@ class WorkPanel(ttk.Frame):
             width=12
         )
         type_combo.pack(side=tk.LEFT, padx=(5, 20))
+        type_combo.bind("<<ComboboxSelected>>", self._on_entry_type_changed)
         
         ttk.Label(top_row, text="Titre:").pack(side=tk.LEFT)
         self.entry_title_var = tk.StringVar()
@@ -156,6 +157,34 @@ class WorkPanel(ttk.Frame):
             font=("TkDefaultFont", 9),
             foreground="gray"
         ).pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Metadata panel (Date, People, Groups, Tags)
+        meta_frame = ttk.LabelFrame(editor_frame, text="Métadonnées", padding=5)
+        meta_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        # Row 1: Date and People
+        meta_row1 = ttk.Frame(meta_frame)
+        meta_row1.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(meta_row1, text="Date:", width=10).pack(side=tk.LEFT)
+        self.entry_date_var = tk.StringVar()
+        ttk.Entry(meta_row1, textvariable=self.entry_date_var, width=12).pack(side=tk.LEFT, padx=(0, 20))
+        
+        ttk.Label(meta_row1, text="People:", width=10).pack(side=tk.LEFT)
+        self.entry_people_var = tk.StringVar()
+        ttk.Entry(meta_row1, textvariable=self.entry_people_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Row 2: Groups and Tags
+        meta_row2 = ttk.Frame(meta_frame)
+        meta_row2.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(meta_row2, text="Groups:", width=10).pack(side=tk.LEFT)
+        self.entry_groups_var = tk.StringVar()
+        ttk.Entry(meta_row2, textvariable=self.entry_groups_var, width=20).pack(side=tk.LEFT, padx=(0, 20))
+        
+        ttk.Label(meta_row2, text="Tags:", width=10).pack(side=tk.LEFT)
+        self.entry_tags_var = tk.StringVar()
+        ttk.Entry(meta_row2, textvariable=self.entry_tags_var, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True)
         
         # Markdown editor
         ttk.Label(editor_frame, text="Contenu (Markdown):").pack(anchor=tk.W, pady=(5, 2))
@@ -215,8 +244,8 @@ class WorkPanel(ttk.Frame):
     
     def _setup_tasks_section(self) -> None:
         """Setup tasks list for active project."""
-        tasks_frame = ttk.LabelFrame(self.bottom_paned, text="✓ Tasks du Projet", padding=10)
-        self.bottom_paned.add(tasks_frame, weight=1)
+        tasks_frame = ttk.LabelFrame(self.right_splitter, text="✓ Tasks du Projet", padding=10)
+        self.right_splitter.add(tasks_frame, weight=1)
         
         # Toolbar
         toolbar = ttk.Frame(tasks_frame)
@@ -332,7 +361,7 @@ class WorkPanel(ttk.Frame):
                 )
     
     def _on_explorer_select(self, event=None) -> None:
-        """Handle selection in explorer tree."""
+        """Handle selection in explorer tree - load entry directly."""
         selection = self.explorer_tree.selection()
         if not selection:
             return
@@ -347,19 +376,7 @@ class WorkPanel(ttk.Frame):
             # Don't load in editor, just update tasks
             
         elif item_id.startswith("entry:"):
-            # Entry selected - show preview or wait for double-click
-            pass
-    
-    def _on_explorer_double_click(self, event=None) -> None:
-        """Handle double-click in explorer tree."""
-        selection = self.explorer_tree.selection()
-        if not selection:
-            return
-        
-        item_id = selection[0]
-        
-        if item_id.startswith("entry:"):
-            # Load entry in editor
+            # Entry selected - load immediately (no double-click needed)
             entry_id = item_id.replace("entry:", "")
             self._load_entry_in_editor(entry_id)
             
@@ -504,12 +521,36 @@ class WorkPanel(ttk.Frame):
             # Update entry content (body in MD file)
             self.service.update_entry_content(self._current_entry_id, body)
             
-            # Update metadata if title changed
+            # Update metadata
             entries = self.service.storage.read_entries_meta()
             entry = next((e for e in entries if e.id == self._current_entry_id), None)
             
-            if entry and entry.title != title:
-                self.service.update_entry_meta(self._current_entry_id, {"title": title})
+            if entry:
+                # Prepare metadata patch
+                patch = {}
+                if entry.title != title:
+                    patch["title"] = title
+                
+                # Parse and update people, groups, tags
+                people = [p.strip() for p in self.entry_people_var.get().split(",") if p.strip()]
+                if people != entry.people:
+                    patch["person"] = people
+                
+                groups = [g.strip() for g in self.entry_groups_var.get().split(",") if g.strip()]
+                if groups != entry.groups:
+                    patch["group"] = groups
+                
+                tags = [t.strip() for t in self.entry_tags_var.get().split(",") if t.strip()]
+                if tags != entry.tags:
+                    patch["tags"] = tags
+                
+                date_str = self.entry_date_var.get().strip()
+                if date_str and date_str != entry.entry_date:
+                    patch["entry_date"] = date_str
+                
+                # Apply patch if there are changes
+                if patch:
+                    self.service.update_entry_meta(self._current_entry_id, patch)
             
             # Reset modified flag
             self._entry_modified = False
@@ -540,9 +581,16 @@ class WorkPanel(ttk.Frame):
         self.entry_title_var.set("")
         self.entry_body_text.delete("1.0", tk.END)
         self.entry_type_var.set("note")
+        self.entry_date_var.set("")
+        self.entry_people_var.set("")
+        self.entry_groups_var.set("")
+        self.entry_tags_var.set("")
         self.current_entry_var.set("Nouvelle entry")
         self._entry_modified = False
         self.btn_save.config(state=tk.DISABLED)
+        
+        # Apply template for new entry
+        self._on_entry_type_changed()
     
     def _on_delete_current_entry(self) -> None:
         """Delete currently loaded entry."""
@@ -597,6 +645,62 @@ class WorkPanel(ttk.Frame):
             self._entry_modified = True
             self.btn_save.config(state=tk.NORMAL)
     
+    def _on_entry_type_changed(self, event=None) -> None:
+        """Handle entry type change - apply template if content is empty."""
+        if self._current_entry_id:
+            # Don't apply template if editing existing entry
+            return
+        
+        current_content = self.entry_body_text.get("1.0", tk.END).strip()
+        if current_content:
+            # Don't overwrite existing content
+            return
+        
+        # Apply template based on type
+        entry_type = self.entry_type_var.get()
+        template = self._get_entry_template(entry_type)
+        
+        if template:
+            self.entry_body_text.delete("1.0", tk.END)
+            self.entry_body_text.insert("1.0", template)
+    
+    def _get_entry_template(self, entry_type: str) -> str:
+        """Get markdown template for entry type."""
+        templates = {
+            "note": "## Notes\n\n",
+            "meeting": """## Participants
+- 
+
+## Objectifs
+
+## Points discutés
+
+## Décisions
+
+## Actions
+
+""",
+            "decision": """## Contexte
+
+## Options considérées
+1. 
+2. 
+
+## Décision retenue
+
+## Justification
+
+""",
+            "activity": """## Activité
+
+## Durée
+
+## Résultat
+
+"""
+        }
+        return templates.get(entry_type, "")
+    
     def _load_entry_in_editor(self, entry_id: str) -> None:
         """Load an entry into the editor."""
         # Check for unsaved changes
@@ -630,6 +734,13 @@ class WorkPanel(ttk.Frame):
             self._current_entry_id = entry_id
             self.entry_title_var.set(entry.title)
             self.entry_type_var.set(entry.type)
+            
+            # Update metadata
+            self.entry_date_var.set(entry.entry_date or "")
+            self.entry_people_var.set(", ".join(entry.people) if entry.people else "")
+            self.entry_groups_var.set(", ".join(entry.groups) if entry.groups else "")
+            self.entry_tags_var.set(", ".join(entry.tags) if entry.tags else "")
+            
             self.entry_body_text.delete("1.0", tk.END)
             self.entry_body_text.insert("1.0", content)
             self.current_entry_var.set(f"📝 {entry.title[:40]}{'...' if len(entry.title) > 40 else ''}")
