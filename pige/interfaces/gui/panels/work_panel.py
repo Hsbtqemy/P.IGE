@@ -129,7 +129,7 @@ class WorkPanel(ttk.Frame):
         self.right_splitter.add(editor_frame, weight=3)
         
         # Top toolbar: Type, Title, Entry selector
-        top_row = ttk.Frame(entry_frame)
+        top_row = ttk.Frame(editor_frame)
         top_row.pack(fill=tk.X, pady=(0, 5))
         
         ttk.Label(top_row, text="Type:").pack(side=tk.LEFT)
@@ -158,17 +158,17 @@ class WorkPanel(ttk.Frame):
         ).pack(side=tk.LEFT, padx=(10, 0))
         
         # Markdown editor
-        ttk.Label(entry_frame, text="Contenu (Markdown):").pack(anchor=tk.W, pady=(5, 2))
+        ttk.Label(editor_frame, text="Contenu (Markdown):").pack(anchor=tk.W, pady=(5, 2))
         
-        editor_frame = ttk.Frame(entry_frame)
-        editor_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+        text_frame = ttk.Frame(editor_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
         
         # Scrollbar for text editor
-        text_scroll = ttk.Scrollbar(editor_frame)
+        text_scroll = ttk.Scrollbar(text_frame)
         text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         
         self.entry_body_text = tk.Text(
-            editor_frame,
+            text_frame,
             wrap=tk.WORD,
             font=("Consolas", 10),
             yscrollcommand=text_scroll.set,
@@ -184,7 +184,7 @@ class WorkPanel(ttk.Frame):
         self._entry_modified = False
         
         # Buttons
-        btn_row = ttk.Frame(entry_frame)
+        btn_row = ttk.Frame(editor_frame)
         btn_row.pack(fill=tk.X)
         
         self.btn_save = ttk.Button(
