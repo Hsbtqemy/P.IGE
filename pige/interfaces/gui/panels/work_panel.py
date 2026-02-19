@@ -6,6 +6,7 @@ from datetime import date, datetime
 from tkinter import ttk, messagebox
 
 from pige.core.service import PigeService
+from pige.interfaces.gui.dialogs import show_edit_task_dialog, show_new_task_dialog
 
 logger = logging.getLogger(__name__)
 
@@ -319,9 +320,10 @@ class WorkPanel(ttk.Frame):
     def refresh(self) -> None:
         """Refresh all data."""
         logger.debug("Refreshing work panel")
-        
-        # Load projects
+
+        # Load projects, exclude calendar-sync subscription folders
         projects = self.service.list_projects(status="active")
+        projects = [p for p in projects if "calendar-sync" not in (p.tags or [])]
         self._projects_by_id = {p.id: p for p in projects}
         
         # Refresh explorer tree
@@ -1199,6 +1201,19 @@ class WorkPanel(ttk.Frame):
             
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible de charger l'entry:\n{e}")
+
+    def show_task(self, task_id: str) -> None:
+        """Switch to this panel and select the given task (sets project and refreshes tasks)."""
+        task = next(
+            (t for t in self.service.storage.read_tasks() if t.id == task_id),
+            None,
+        )
+        if not task:
+            return
+        self.current_project_id = task.project_id
+        self._refresh_tasks()
+        self.tasks_tree.selection_set(task_id)
+        self.tasks_tree.see(task_id)
     
     def _on_clear_form(self) -> None:
         """Clear entry form."""
@@ -1207,38 +1222,47 @@ class WorkPanel(ttk.Frame):
         self.entry_type_var.set("note")
     
     def _on_add_task(self) -> None:
-        """Add new task (placeholder)."""
+        """Add new task."""
         if not self.current_project_id:
             messagebox.showwarning("Attention", "Veuillez sélectionner un projet")
             return
-        
-        # Simple dialog for task
-        from tkinter import simpledialog
-        
-        title = simpledialog.askstring("Nouvelle Task", "Titre de la task:")
-        if not title:
-            return
-        
-        try:
-            self.service.create_task(
-                project_id=self.current_project_id,
-                title=title,
-                status="open"
-            )
-            
+        initial_title = ""
+        initial_tags = None
+        linked_entry_id = None
+        if self._current_entry_id:
+            entries = [
+                e for e in self.service.storage.read_entries_meta()
+                if e.project_id == self.current_project_id
+            ]
+            entry = next((e for e in entries if e.id == self._current_entry_id), None)
+            if entry:
+                initial_title = f"Follow-up: {entry.title}"
+                initial_tags = entry.tags
+                linked_entry_id = entry.id
+        parent = self.winfo_toplevel()
+        result = show_new_task_dialog(
+            parent,
+            self.service,
+            self.current_project_id,
+            initial_title=initial_title,
+            initial_tags=initial_tags,
+            linked_entry_id=linked_entry_id,
+            show_link_entry_check=bool(linked_entry_id),
+        )
+        if result:
             self._refresh_tasks()
-            messagebox.showinfo("Succès", f"Task '{title}' créée!")
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible de créer la task:\n{e}")
     
     def _on_task_double_click(self, event) -> None:
         """Handle task double-click (edit)."""
         selection = self.tasks_tree.selection()
         if not selection:
             return
-        
+
         task_id = selection[0]
-        messagebox.showinfo("TODO", f"Éditer task {task_id[:8]} (à implémenter)")
+        parent = self.winfo_toplevel()
+        result = show_edit_task_dialog(parent, self.service, task_id)
+        if result:
+            self._refresh_tasks()
     
     def _on_task_toggle(self, event) -> None:
         """Toggle task done/open."""

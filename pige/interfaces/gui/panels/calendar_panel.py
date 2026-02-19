@@ -8,6 +8,7 @@ from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 
 from pige.core.service import PigeService
+from pige.interfaces.gui.dialogs import show_edit_task_dialog, show_new_entry_dialog, show_new_task_dialog
 
 logger = logging.getLogger(__name__)
 
@@ -1121,20 +1122,35 @@ class CalendarPanel(ttk.Frame):
         selection = self.tasks_listbox.curselection()
         if not selection or not hasattr(self, '_current_tasks'):
             return
-        
+
         idx = selection[0]
         if idx < len(self._current_tasks):
             task = self._current_tasks[idx]
             logger.info(f"Task double-clicked: {task.id}")
-            messagebox.showinfo("TODO", f"Éditer task: {task.title}\n\n(Dialogue à implémenter)")
+            parent = self.winfo_toplevel()
+            result = show_edit_task_dialog(parent, self.service, task.id)
+            if result:
+                self.refresh()
     
     def _create_entry_for_date(self) -> None:
         """Create new entry for selected date."""
         if not self.selected_date:
             messagebox.showwarning("Attention", "Sélectionnez d'abord une date dans le calendrier")
             return
-        
-        messagebox.showinfo("TODO", f"Créer entry pour {self.selected_date}\n\n(Dialogue à implémenter)")
+        projects = self.service.list_projects(status="active")
+        if not projects:
+            messagebox.showerror("Erreur", "Aucun projet actif. Créez d'abord un projet.")
+            return
+        project_id = projects[0].id
+        parent = self.winfo_toplevel()
+        result = show_new_entry_dialog(
+            parent,
+            self.service,
+            project_id,
+            initial_date=self.selected_date,
+        )
+        if result:
+            self.refresh()
     
     def _link_entry_to_event(self, cal_event) -> None:
         """Create and link a PIGE entry to a calendar event."""
@@ -1209,8 +1225,20 @@ class CalendarPanel(ttk.Frame):
         if not self.selected_date:
             messagebox.showwarning("Attention", "Sélectionnez d'abord une date dans le calendrier")
             return
-        
-            messagebox.showinfo("TODO", f"Créer task pour {self.selected_date}\n\n(Dialogue à implémenter)")
+        projects = self.service.list_projects(status="active")
+        if not projects:
+            messagebox.showerror("Erreur", "Aucun projet actif. Créez d'abord un projet.")
+            return
+        project_id = projects[0].id
+        parent = self.winfo_toplevel()
+        result = show_new_task_dialog(
+            parent,
+            self.service,
+            project_id,
+            initial_due_date=self.selected_date,
+        )
+        if result:
+            self.refresh()
     
     def _manage_subscriptions(self) -> None:
         """Open subscriptions management dialog."""

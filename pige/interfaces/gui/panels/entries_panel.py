@@ -6,6 +6,7 @@ from datetime import datetime
 from tkinter import ttk, messagebox
 
 from pige.core.service import PigeService
+from pige.interfaces.gui.dialogs import show_edit_entry_dialog, show_new_entry_dialog
 from pige.interfaces.gui.pagination import PaginationControl, PaginationState
 
 logger = logging.getLogger(__name__)
@@ -179,13 +180,14 @@ class EntriesPanel(ttk.Frame):
     def refresh(self) -> None:
         """Refresh entries list."""
         logger.debug("Refreshing entries panel")
-        
-        # Load entries and projects
+
+        # Load entries and projects (exclude calendar-sync subscription folders)
         self._all_entries = self.service.storage.read_entries_meta()
-        
+
         projects = self.service.list_projects(status="all")
+        projects = [p for p in projects if "calendar-sync" not in (p.tags or [])]
         self._projects_by_id = {p.id: p for p in projects}
-        
+
         # Update project filter dropdown
         project_names = ["Tous"] + [p.name for p in projects]
         self.project_combo.config(values=project_names)
@@ -334,20 +336,43 @@ class EntriesPanel(ttk.Frame):
     
     def _on_new_entry(self) -> None:
         """Handle new entry button."""
-        # TODO: Open CreateEntryDialog
-        messagebox.showinfo("TODO", "CreateEntryDialog à implémenter")
+        project_name = self.project_var.get()
+        if project_name == "Tous":
+            messagebox.showwarning(
+                "Projet requis",
+                "Sélectionnez un projet dans la liste à gauche avant de créer une entry."
+            )
+            return
+        project_id = next(
+            (p.id for p in self._projects_by_id.values() if p.name == project_name),
+            None,
+        )
+        if not project_id:
+            messagebox.showerror("Erreur", "Projet introuvable.")
+            return
+        parent = self.winfo_toplevel()
+        result = show_new_entry_dialog(parent, self.service, project_id)
+        if result:
+            entry, _path = result
+            self.refresh()
+            self.tree.selection_set(entry.id)
+            self.tree.see(entry.id)
     
     def _on_entry_double_click(self, event: tk.Event) -> None:
         """Handle double-click on entry."""
         selection = self.tree.selection()
         if not selection:
             return
-        
+
         entry_id = selection[0]
         logger.info(f"Double-click on entry: {entry_id}")
-        
-        # TODO: Open EditEntryDialog
-        messagebox.showinfo("TODO", f"EditEntryDialog à implémenter pour entry {entry_id[:8]}")
+
+        parent = self.winfo_toplevel()
+        result = show_edit_entry_dialog(parent, self.service, entry_id)
+        if result:
+            self.refresh()
+            self.tree.selection_set(entry_id)
+            self.tree.see(entry_id)
     
     def _on_entry_right_click(self, event: tk.Event) -> None:
         """Handle right-click on entry (context menu)."""

@@ -11,6 +11,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import TYPE_CHECKING
 
+from pige.interfaces.gui.dialogs import show_new_project_dialog
 from pige.interfaces.gui.pagination import PaginationControl, PaginationState
 from pige.interfaces.gui.tree_diff import IncrementalTreeView, TreeNode, tree_from_items
 
@@ -125,9 +126,10 @@ class ProjectsPanel(ttk.Frame):
     def refresh(self) -> None:
         """Refresh the projects list with pagination."""
         logger.debug("Refreshing projects panel")
-        
-        # Load all projects (active only by default)
+
+        # Load all projects (active only by default), exclude calendar-sync subscription folders
         projects = self.service.list_projects(status="active")
+        projects = [p for p in projects if "calendar-sync" not in (p.tags or [])]
         self._projects_by_id = {p.id: p for p in projects}
         
         # Get root projects only for pagination
@@ -248,7 +250,12 @@ class ProjectsPanel(ttk.Frame):
     def _on_new_project(self) -> None:
         """Handle New Project button."""
         logger.info("New Project requested from panel")
-        # TODO: Open new project dialog
+        parent = self.winfo_toplevel()
+        project = show_new_project_dialog(parent, self.service)
+        if project:
+            self.refresh()
+            self.tree.selection_set(project.id)
+            self.tree.see(project.id)
     
     def _on_double_click(self, event: tk.Event) -> None:
         """Handle double-click on project."""

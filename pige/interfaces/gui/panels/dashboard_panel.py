@@ -15,6 +15,8 @@ from datetime import datetime, timedelta
 from tkinter import ttk
 from typing import TYPE_CHECKING
 
+from pige.interfaces.gui.dialogs import show_edit_entry_dialog, show_edit_task_dialog
+
 if TYPE_CHECKING:
     from pige.core.service import PigeService
 
@@ -538,51 +540,17 @@ class DashboardPanel(ttk.Frame):
             self._open_entry(meeting_id)
     
     def _open_entry(self, entry_id: str) -> None:
-        """Open entry details (placeholder for now)."""
+        """Open entry edit dialog."""
         logger.info(f"Opening entry: {entry_id}")
-        
-        try:
-            # Find entry in storage
-            entries = self.service.storage.read_entries_meta()
-            entry = next((e for e in entries if e.id == entry_id), None)
-            
-            if entry:
-                # TODO: Open entry detail dialog or editor
-                # For now, show info in status
-                import tkinter.messagebox as mb
-                mb.showinfo(
-                    "Entry",
-                    f"Titre: {entry.title}\n"
-                    f"Type: {entry.type}\n"
-                    f"Projet: {entry.project_id}\n"
-                    f"Date: {entry.entry_date}\n"
-                    f"\n(Ouverture détail à implémenter)"
-                )
-        except Exception as e:
-            logger.error(f"Failed to open entry {entry_id}: {e}")
+        parent = self.winfo_toplevel()
+        result = show_edit_entry_dialog(parent, self.service, entry_id)
+        if result:
+            self._refresh_pending()
     
     def _open_task(self, task_id: str) -> None:
-        """Open task details (placeholder for now)."""
+        """Open task edit dialog."""
         logger.info(f"Opening task: {task_id}")
-        
-        # Find task in all projects
-        projects = self.service.list_projects()
-        
-        for project in projects:
-            tasks = self.service.list_tasks(project_id=project.id, status="all")
-            task = next((t for t in tasks if t.id == task_id), None)
-            
-            if task:
-                # TODO: Open task edit dialog
-                # For now, show info
-                import tkinter.messagebox as mb
-                mb.showinfo(
-                    "Task",
-                    f"Titre: {task.title}\n"
-                    f"Status: {task.status}\n"
-                    f"Projet: {project.name}\n"
-                    f"\n(Édition task à implémenter)"
-                )
-                return
-        
-        logger.warning(f"Task {task_id} not found")
+        parent = self.winfo_toplevel()
+        result = show_edit_task_dialog(parent, self.service, task_id)
+        if result:
+            self._refresh_pending()

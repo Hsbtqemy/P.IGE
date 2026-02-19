@@ -1,0 +1,73 @@
+# Build PIGE as Windows .exe and macOS .app on push to main
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Build .exe with PyInstaller
+        run: |
+          pyinstaller --noconfirm --onefile --noconsole ^
+            --name pige ^
+            --hidden-import "pige" ^
+            --hidden-import "pige.interfaces.gui" ^
+            --hidden-import "pige.interfaces.gui.main_window" ^
+            --hidden-import "icalendar" ^
+            --collect-all icalendar ^
+            scripts/entry_gui.py
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pige-windows-exe
+          path: dist/pige.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Build .app with PyInstaller
+        run: |
+          pyinstaller --noconfirm --windowed --onedir \
+            --name PIGE \
+            --hidden-import "pige" \
+            --hidden-import "pige.interfaces.gui" \
+            --hidden-import "pige.interfaces.gui.main_window" \
+            --hidden-import "icalendar" \
+            --collect-all icalendar \
+            scripts/entry_gui.py
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pige-macos-app
+          path: dist/PIGE.app

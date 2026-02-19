@@ -5,12 +5,17 @@ from __future__ import annotations
 import logging
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 from pige.core.service import PigeService
 from pige.core.storage import Storage
 from pige.interfaces import gui_helpers
-from pige.interfaces.gui.dialogs import show_about_dialog, show_keyboard_shortcuts
+from pige.interfaces.gui.dialogs import (
+    show_about_dialog,
+    show_keyboard_shortcuts,
+    show_new_entry_dialog,
+    show_new_project_dialog,
+)
 from pige.interfaces.gui.panels import BrowsePanel, CalendarPanel, DashboardPanel, SearchPanel, WorkPanel
 from pige.utils import io as io_utils
 
@@ -181,12 +186,30 @@ class PigeMainWindow(tk.Tk):
     def _on_new_project(self) -> None:
         """Handle New Project action."""
         logger.info("New Project action triggered")
-        # TODO: Open new project dialog
+        project = show_new_project_dialog(self, self.service)
+        if project:
+            self._after_new_project(project)
+
+    def _after_new_project(self, project) -> None:
+        """After a project is created: refresh browse panel and select the new project."""
+        self.browse_panel.projects_panel.refresh()
+        self.browse_panel.projects_panel.tree.selection_set(project.id)
+        self.browse_panel.projects_panel.tree.see(project.id)
     
     def _on_new_entry(self) -> None:
         """Handle New Entry action."""
         logger.info("New Entry action triggered")
-        # TODO: Open new entry dialog
+        selection = self.browse_panel.projects_panel.tree.selection()
+        if not selection:
+            messagebox.showerror("No project", "Select a project first.")
+            return
+        project_id = selection[0]
+        result = show_new_entry_dialog(self, self.service, project_id)
+        if result:
+            entry, _path = result
+            self.browse_panel.entries_panel.refresh()
+            self.browse_panel.entries_panel.tree.selection_set(entry.id)
+            self.browse_panel.entries_panel.tree.see(entry.id)
     
     def _on_search(self) -> None:
         """Handle Search action (Ctrl+F)."""
@@ -197,14 +220,23 @@ class PigeMainWindow(tk.Tk):
     
     def _on_search_result_selected(self, result_type: str, result_id: str) -> None:
         """Handle when a search result is selected.
-        
+
         Args:
             result_type: Type of result (entry, project, task)
             result_id: ID of the selected item
         """
         logger.info(f"Search result selected: {result_type} - {result_id}")
-        # TODO: Navigate to the selected item in appropriate panel
-        # For now, just log it
+        if result_type == "project":
+            self.notebook.select(self.browse_panel)
+            self.browse_panel.projects_panel.refresh()
+            self.browse_panel.projects_panel.tree.selection_set(result_id)
+            self.browse_panel.projects_panel.tree.see(result_id)
+        elif result_type == "entry":
+            self.notebook.select(self.work_panel)
+            self.work_panel._load_entry_in_editor(result_id)
+        elif result_type == "task":
+            self.notebook.select(self.work_panel)
+            self.work_panel.show_task(result_id)
     
     def _on_open_entry_from_calendar(self, entry_id: str) -> None:
         """Open an entry in the WorkPanel from the calendar.
