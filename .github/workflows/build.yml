@@ -24,15 +24,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build .exe with PyInstaller
-        run: |
-          pyinstaller --noconfirm --onefile --noconsole ^
-            --name pige ^
-            --hidden-import "pige" ^
-            --hidden-import "pige.interfaces.gui" ^
-            --hidden-import "pige.interfaces.gui.main_window" ^
-            --hidden-import "icalendar" ^
-            --collect-all icalendar ^
-            scripts/entry_gui.py
+        run: pyinstaller --noconfirm --onefile --noconsole --name pige --hidden-import "pige" --hidden-import "pige.interfaces.gui" --hidden-import "pige.interfaces.gui.main_window" --hidden-import "icalendar" --collect-all icalendar scripts/entry_gui.py
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
