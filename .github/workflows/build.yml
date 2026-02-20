@@ -1,10 +1,18 @@
-# Build PIGE as Windows .exe and macOS .app on push to main
+# Build PIGE as Windows .exe and macOS .app
 name: Build
 
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Tag pour attacher les binaires (ex. v0.1.0)"
+        required: false
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -26,11 +34,23 @@ jobs:
       - name: Build .exe with PyInstaller
         run: pyinstaller --noconfirm --onefile --noconsole --name pige --hidden-import "pige" --hidden-import "pige.interfaces.gui" --hidden-import "pige.interfaces.gui.main_window" --hidden-import "icalendar" --collect-all icalendar scripts/entry_gui.py
 
+      - name: List dist (debug)
+        run: dir dist
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: pige-windows-exe
           path: dist/pige.exe
+
+      - name: Upload pige.exe to Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
+        uses: softprops/gh-release@v2
+        with:
+          files: dist/pige.exe
+          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-macos:
     runs-on: macos-latest
@@ -58,8 +78,26 @@ jobs:
             --hidden-import "icalendar" \
             --collect-all icalendar \
             scripts/entry_gui.py
+      - name: List dist (debug)
+        run: ls -la dist/
+
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: pige-macos-app
           path: dist/PIGE.app
+
+      - name: Zip PIGE.app for Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
+        run: |
+          cd dist
+          zip -r PIGE-macos.app.zip PIGE.app
+          cd ..
+      - name: Upload PIGE.app to Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
+        uses: softprops/gh-release@v2
+        with:
+          files: dist/PIGE-macos.app.zip
+          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
