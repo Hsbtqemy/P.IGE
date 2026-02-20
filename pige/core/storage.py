@@ -29,6 +29,7 @@ ALLOWED_ENTRY_PATCH_KEYS = {
     "end_time",
     "decision_done",
     "context_status",
+    "priority",
 }
 
 TIMELOG_KEYS = frozenset(
@@ -67,6 +68,7 @@ PROJECT_KEYS = frozenset(
         "links",
         "parent_id",
         "display_order",
+        "priority",
     )
 )
 
@@ -144,6 +146,7 @@ class Storage:
             # Hierarchy fields (migration support)
             payload.setdefault("parent_id", None)
             payload.setdefault("display_order", 0)
+            payload.setdefault("priority", 3)
             projects.append(Project(**payload))
         return projects
 
@@ -273,7 +276,7 @@ class Storage:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             with zipfile.ZipFile(zip_path, "r") as handle:
-                handle.extractall(temp_path)
+                _safe_extract_zip(handle, temp_path)
 
             source_dir = temp_path
             if not _has_backup_markers(source_dir):
@@ -656,6 +659,19 @@ def _path_contains(parent: Path, target: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _safe_extract_zip(handle: zipfile.ZipFile, dest: Path) -> None:
+    """Extract a zip archive safely, refusing path traversal entries."""
+    base = dest.resolve()
+    for member in handle.infolist():
+        member_path = dest / member.filename
+        resolved = member_path.resolve()
+        try:
+            resolved.relative_to(base)
+        except ValueError as exc:
+            raise ValueError(f"Unsafe path in backup archive: {member.filename}") from exc
+    handle.extractall(dest)
 
 
 def _has_backup_markers(path: Path) -> bool:

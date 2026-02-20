@@ -24,6 +24,7 @@ def show_new_project_dialog(
     parent: tk.Widget,
     service: PigeService,
     on_created: Callable[[Project], None] | None = None,
+    parent_id: str | None = None,
 ) -> Project | None:
     """Show modal New Project dialog. Returns created project or None if cancelled.
 
@@ -31,9 +32,10 @@ def show_new_project_dialog(
         parent: Parent window
         service: PigeService instance
         on_created: Optional callback called with the new project after creation
+        parent_id: If set, create as sub-project of this project (optional)
     """
     dialog = tk.Toplevel(parent)
-    dialog.title("New Project")
+    dialog.title("Nouveau sous-projet" if parent_id else "Nouveau projet")
     dialog.grab_set()
     dialog.transient(parent.winfo_toplevel() if hasattr(parent, "winfo_toplevel") else parent)
     dialog.resizable(True, True)
@@ -71,6 +73,11 @@ def show_new_project_dialog(
         row=4, column=1, padx=6, pady=6, sticky="ew"
     )
 
+    ttk.Label(dialog, text="Priorité (1=haute, 5=basse)").grid(row=5, column=0, sticky="w", padx=6, pady=6)
+    priority_var = tk.IntVar(value=3)
+    priority_spin = ttk.Spinbox(dialog, from_=1, to=5, width=5, textvariable=priority_var)
+    priority_spin.grid(row=5, column=1, padx=6, pady=6, sticky="w")
+
     result: Project | None = None
 
     def submit() -> None:
@@ -81,12 +88,20 @@ def show_new_project_dialog(
             return
         tags = strings.parse_tags(tags_var.get())
         try:
+            prio = priority_var.get()
+            if not (1 <= prio <= 5):
+                prio = 3
+        except tk.TclError:
+            prio = 3
+        try:
             project = service.create_project(
                 name,
                 desc_var.get().strip() or None,
                 tags,
                 _get_people_from_text(person_text),
                 group_var.get().strip() or None,
+                parent_id=parent_id,
+                priority=prio,
             )
         except ValueError as exc:
             messagebox.showerror("Error", str(exc))
@@ -97,7 +112,7 @@ def show_new_project_dialog(
             on_created(project)
 
     ttk.Button(dialog, text="Create", command=submit).grid(
-        row=5, column=0, columnspan=2, pady=10
+        row=6, column=0, columnspan=2, pady=10
     )
 
     dialog.wait_window()

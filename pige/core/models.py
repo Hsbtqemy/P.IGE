@@ -17,6 +17,7 @@ class Project:
     links: list[str] = field(default_factory=list)
     parent_id: Optional[str] = None  # Parent project ID for hierarchy
     display_order: int = 0  # Custom display order within same level
+    priority: int = 3  # 1=highest, 5=lowest; default 3
 
 
 @dataclass
@@ -36,6 +37,7 @@ class EntryMeta:
     end_time: Optional[str] = None
     decision_done: Optional[bool] = None
     context_status: Optional[str] = None
+    priority: int = 3  # 1=highest, 5=lowest; default 3
 
 
 @dataclass

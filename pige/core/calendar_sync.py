@@ -6,6 +6,8 @@ import logging
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+import urllib.error
+import urllib.request
 
 if TYPE_CHECKING:
     from pige.core.service import PigeService
@@ -387,7 +389,6 @@ class CalendarSyncManager:
             
             if source_url.startswith(("http://", "https://")):
                 # Fetch from URL
-                import urllib.request
                 import ssl
                 import base64
                 

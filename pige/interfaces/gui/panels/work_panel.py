@@ -2,11 +2,14 @@
 
 import logging
 import tkinter as tk
+from dataclasses import replace
 from datetime import date, datetime
 from tkinter import ttk, messagebox
 
+from pige.core.exceptions import ProjectNotFoundError
 from pige.core.service import PigeService
-from pige.interfaces.gui.dialogs import show_edit_task_dialog, show_new_task_dialog
+from pige.interfaces.gui.dialogs import show_edit_task_dialog, show_new_project_dialog, show_new_task_dialog
+from pige.interfaces.gui_constants import AUTOSAVE_DELAY_MS
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +24,7 @@ class WorkPanel(ttk.Frame):
         # State
         self.current_project_id: str | None = None
         self._projects_by_id: dict = {}
+        self._autosave_after_id: str | None = None
         
         # Setup UI with 3-pane layout
         self._setup_timer_display()
@@ -39,8 +43,12 @@ class WorkPanel(ttk.Frame):
         self.right_splitter = ttk.PanedWindow(right_frame, orient=tk.VERTICAL)
         self.right_splitter.pack(fill=tk.BOTH, expand=True)
         
-        # Right top: Editor
+        # Right top: container for Entry editor OR Project details (one visible at a time)
+        self._right_top_container = ttk.Frame(self.right_splitter)
+        self.right_splitter.add(self._right_top_container, weight=3)
         self._setup_editor()
+        self._setup_project_details_panel()
+        self._show_editor_panel()  # Editor visible by default
         
         # Right bottom: Tasks
         self._setup_tasks_section()
@@ -107,7 +115,27 @@ class WorkPanel(ttk.Frame):
             text="➕ Entry",
             command=self._on_new_entry_from_explorer
         ).pack(side=tk.LEFT, padx=(5, 0))
-        
+
+        ttk.Button(
+            toolbar,
+            text="Expand all",
+            command=self._explorer_expand_all
+        ).pack(side=tk.LEFT, padx=(5, 0))
+
+        ttk.Button(
+            toolbar,
+            text="Collapse all",
+            command=self._explorer_collapse_all
+        ).pack(side=tk.LEFT, padx=(5, 0))
+
+        self._show_archived_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            toolbar,
+            text="Afficher les archives",
+            variable=self._show_archived_var,
+            command=self.refresh,
+        ).pack(side=tk.LEFT, padx=(15, 0))
+
         # Tree
         tree_frame = ttk.Frame(explorer_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True)
@@ -135,14 +163,107 @@ class WorkPanel(ttk.Frame):
         self.explorer_tree.bind("<B1-Motion>", self._on_drag_motion)
         self.explorer_tree.bind("<ButtonRelease-1>", self._on_drag_release)
         self._drag_data = {"item": None, "x": 0, "y": 0}
-    
+
+    def _setup_project_details_panel(self) -> None:
+        """Setup project details / notes panel (replaces Entry editor when a project is selected)."""
+        self._project_details_frame = ttk.LabelFrame(
+            self._right_top_container,
+            text="📋 Détails projet / Notes d'intention",
+            padding=10,
+        )
+        self._project_details_project_id: str | None = None
+        # Name
+        ttk.Label(self._project_details_frame, text="Nom:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=4)
+        self._project_details_name_var = tk.StringVar(value="")
+        ttk.Entry(self._project_details_frame, textvariable=self._project_details_name_var, width=45).grid(
+            row=0, column=1, sticky=tk.EW, padx=5, pady=4
+        )
+        # Description / Notes d'intention
+        ttk.Label(self._project_details_frame, text="Notes d'intention / Description:").grid(
+            row=1, column=0, sticky=tk.NW, padx=5, pady=4
+        )
+        self._project_details_text = tk.Text(self._project_details_frame, height=6, width=50, wrap=tk.WORD)
+        self._project_details_text.grid(row=1, column=1, sticky=tk.NSEW, padx=5, pady=4)
+        # Tags
+        ttk.Label(self._project_details_frame, text="Tags:").grid(row=2, column=0, sticky=tk.W, padx=5, pady=4)
+        self._project_details_tags_var = tk.StringVar(value="")
+        ttk.Entry(self._project_details_frame, textvariable=self._project_details_tags_var, width=45).grid(
+            row=2, column=1, sticky=tk.EW, padx=5, pady=4
+        )
+        # People
+        ttk.Label(self._project_details_frame, text="Personnes (une par ligne):").grid(
+            row=3, column=0, sticky=tk.NW, padx=5, pady=4
+        )
+        self._project_details_people_text = tk.Text(self._project_details_frame, height=3, width=50, wrap=tk.WORD)
+        self._project_details_people_text.grid(row=3, column=1, sticky=tk.EW, padx=5, pady=4)
+        # Group
+        ttk.Label(self._project_details_frame, text="Groupe:").grid(row=4, column=0, sticky=tk.W, padx=5, pady=4)
+        self._project_details_group_var = tk.StringVar(value="")
+        ttk.Entry(self._project_details_frame, textvariable=self._project_details_group_var, width=45).grid(
+            row=4, column=1, sticky=tk.EW, padx=5, pady=4
+        )
+        # Status & Priority
+        ttk.Label(self._project_details_frame, text="Statut:").grid(row=5, column=0, sticky=tk.W, padx=5, pady=4)
+        self._project_details_status_var = tk.StringVar(value="active")
+        ttk.Combobox(
+            self._project_details_frame,
+            textvariable=self._project_details_status_var,
+            values=["active", "archived"],
+            state="readonly",
+            width=12,
+        ).grid(row=5, column=1, sticky=tk.W, padx=5, pady=4)
+        ttk.Label(self._project_details_frame, text="Priorité (1=haute, 5=basse):").grid(
+            row=6, column=0, sticky=tk.W, padx=5, pady=4
+        )
+        self._project_details_priority_var = tk.IntVar(value=3)
+        ttk.Spinbox(
+            self._project_details_frame,
+            from_=1,
+            to=5,
+            width=5,
+            textvariable=self._project_details_priority_var,
+        ).grid(row=6, column=1, sticky=tk.W, padx=5, pady=4)
+        # Save button
+        btn_frame = ttk.Frame(self._project_details_frame)
+        btn_frame.grid(row=7, column=0, columnspan=2, pady=10)
+        ttk.Button(
+            btn_frame,
+            text="💾 Enregistrer le projet",
+            command=self._on_save_project_from_panel,
+        ).pack(side=tk.LEFT)
+        self._project_details_frame.columnconfigure(1, weight=1)
+        self._project_details_frame.rowconfigure(1, weight=1)
+
+    def _show_editor_panel(self) -> None:
+        """Show Entry editor, hide Project details."""
+        self._project_details_frame.pack_forget()
+        self.editor_frame.pack(fill=tk.BOTH, expand=True)
+
+    def _show_project_details_panel(self) -> None:
+        """Show Project details panel, hide Entry editor."""
+        self.editor_frame.pack_forget()
+        self._project_details_frame.pack(fill=tk.BOTH, expand=True)
+
+    def _explorer_set_open_recursive(self, parent_iid: str, open_state: bool) -> None:
+        """Set open state for a node and all its descendants in the explorer tree."""
+        for iid in self.explorer_tree.get_children(parent_iid):
+            self.explorer_tree.item(iid, open=open_state)
+            self._explorer_set_open_recursive(iid, open_state)
+
+    def _explorer_expand_all(self) -> None:
+        """Expand all nodes in the explorer tree."""
+        self._explorer_set_open_recursive("", True)
+
+    def _explorer_collapse_all(self) -> None:
+        """Collapse all nodes in the explorer tree."""
+        self._explorer_set_open_recursive("", False)
+
     def _setup_editor(self) -> None:
-        """Setup markdown editor."""
-        editor_frame = ttk.LabelFrame(self.right_splitter, text="✍️ Entry Editor", padding=10)
-        self.right_splitter.add(editor_frame, weight=3)
+        """Setup markdown editor (lives in right-top container, shown when entry selected)."""
+        self.editor_frame = ttk.LabelFrame(self._right_top_container, text="✍️ Entry Editor", padding=10)
         
         # Top toolbar: Type, Title, Entry selector
-        top_row = ttk.Frame(editor_frame)
+        top_row = ttk.Frame(self.editor_frame)
         top_row.pack(fill=tk.X, pady=(0, 5))
         
         ttk.Label(top_row, text="Type:").pack(side=tk.LEFT)
@@ -172,7 +293,7 @@ class WorkPanel(ttk.Frame):
         ).pack(side=tk.LEFT, padx=(10, 0))
         
         # Metadata panel (Date, People, Groups, Tags)
-        meta_frame = ttk.LabelFrame(editor_frame, text="Métadonnées", padding=5)
+        meta_frame = ttk.LabelFrame(self.editor_frame, text="Métadonnées", padding=5)
         meta_frame.pack(fill=tk.X, pady=(5, 0))
         
         # Row 1: Date and People
@@ -211,12 +332,16 @@ class WorkPanel(ttk.Frame):
             values=["", "actual", "pending", "closed", "waiting", "blocked"],
             width=15
         )
-        status_combo.pack(side=tk.LEFT)
+        status_combo.pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Label(meta_row3, text="Prio:").pack(side=tk.LEFT)
+        self.entry_priority_var = tk.IntVar(value=3)
+        priority_spin = ttk.Spinbox(meta_row3, from_=1, to=5, width=4, textvariable=self.entry_priority_var)
+        priority_spin.pack(side=tk.LEFT)
         
         # Markdown editor
-        ttk.Label(editor_frame, text="Contenu (Markdown):").pack(anchor=tk.W, pady=(5, 2))
+        ttk.Label(self.editor_frame, text="Contenu (Markdown):").pack(anchor=tk.W, pady=(5, 2))
         
-        text_frame = ttk.Frame(editor_frame)
+        text_frame = ttk.Frame(self.editor_frame)
         text_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
         
         # Scrollbar for text editor
@@ -240,7 +365,7 @@ class WorkPanel(ttk.Frame):
         self._entry_modified = False
         
         # Buttons
-        btn_row = ttk.Frame(editor_frame)
+        btn_row = ttk.Frame(self.editor_frame)
         btn_row.pack(fill=tk.X)
         
         self.btn_save = ttk.Button(
@@ -300,9 +425,9 @@ class WorkPanel(ttk.Frame):
         )
         
         self.tasks_tree.heading("#0", text="✓")
-        self.tasks_tree.heading("title", text="Titre")
-        self.tasks_tree.heading("status", text="Statut")
-        self.tasks_tree.heading("due", text="Échéance")
+        self.tasks_tree.heading("title", text="Titre", command=lambda: self._sort_tasks_tree("title"))
+        self.tasks_tree.heading("status", text="Statut", command=lambda: self._sort_tasks_tree("status"))
+        self.tasks_tree.heading("due", text="Échéance", command=lambda: self._sort_tasks_tree("due"))
         
         self.tasks_tree.column("#0", width=30, stretch=False)
         self.tasks_tree.column("title", width=300)
@@ -321,8 +446,9 @@ class WorkPanel(ttk.Frame):
         """Refresh all data."""
         logger.debug("Refreshing work panel")
 
-        # Load projects, exclude calendar-sync subscription folders
-        projects = self.service.list_projects(status="active")
+        # Load projects; include archived only if checkbox is set
+        status_filter = "all" if self._show_archived_var.get() else "active"
+        projects = self.service.list_projects(status=status_filter)
         projects = [p for p in projects if "calendar-sync" not in (p.tags or [])]
         self._projects_by_id = {p.id: p for p in projects}
         
@@ -336,8 +462,21 @@ class WorkPanel(ttk.Frame):
         if self.current_project_id:
             self._refresh_tasks()
     
+    def _get_expanded_project_ids(self) -> set[str]:
+        """Return set of expanded project node IDs (project:xxx) in the explorer tree."""
+        expanded: set[str] = set()
+        def walk(parent: str) -> None:
+            for iid in self.explorer_tree.get_children(parent):
+                if self.explorer_tree.item(iid, "open"):
+                    expanded.add(iid)
+                walk(iid)
+        walk("")
+        return expanded
+
     def _refresh_explorer(self) -> None:
         """Refresh the project/entry explorer tree with hierarchy."""
+        # Remember which project nodes were expanded (so we don't expand all on every refresh)
+        expanded_before = self._get_expanded_project_ids()
         # Clear tree
         for item in self.explorer_tree.get_children():
             self.explorer_tree.delete(item)
@@ -360,11 +499,22 @@ class WorkPanel(ttk.Frame):
         root_projects.sort(key=lambda p: p.display_order)
         
         for project in root_projects:
-            self._add_project_node_recursive(project, "", entries_by_project)
+            self._add_project_node_recursive(project, "", entries_by_project, expanded_before)
     
-    def _add_project_node_recursive(self, project, parent_node: str, entries_by_project: dict) -> None:
+    def _add_project_node_recursive(
+        self,
+        project,
+        parent_node: str,
+        entries_by_project: dict,
+        expanded_ids: set[str] | None = None,
+    ) -> None:
         """Recursively add project and its children to the tree."""
-        # Add project node
+        project_iid = f"project:{project.id}"
+        if expanded_ids is not None:
+            is_open = project_iid in expanded_ids
+        else:
+            is_open = parent_node == ""  # Root level expanded by default on first load
+        # Add project node (preserve expand state; default collapsed when no prior state)
         project_text = f"📂 {project.name}"
         if project.status == "archived":
             project_text += " [Archivé]"
@@ -372,9 +522,9 @@ class WorkPanel(ttk.Frame):
         project_node = self.explorer_tree.insert(
             parent_node,
             tk.END,
-            iid=f"project:{project.id}",
+            iid=project_iid,
             text=project_text,
-            open=True  # Expand by default
+            open=is_open,
         )
         
         # Add entries for this project
@@ -403,14 +553,14 @@ class WorkPanel(ttk.Frame):
         children.sort(key=lambda p: p.display_order)
         
         for child in children:
-            self._add_project_node_recursive(child, project_node, entries_by_project)
+            self._add_project_node_recursive(child, project_node, entries_by_project, expanded_ids)
     
     def _on_explorer_select(self, event=None) -> None:
         """Handle selection in explorer tree - load entry directly."""
         selection = self.explorer_tree.selection()
         if not selection:
+            self._hide_project_details()
             return
-        
         item_id = selection[0]
         
         if item_id.startswith("project:"):
@@ -418,11 +568,12 @@ class WorkPanel(ttk.Frame):
             project_id = item_id.replace("project:", "")
             self.current_project_id = project_id
             self._refresh_tasks()
-            # Don't load in editor, just update tasks
+            self._show_project_details(project_id)
             
         elif item_id.startswith("entry:"):
             # Entry selected - load immediately (no double-click needed)
             entry_id = item_id.replace("entry:", "")
+            self._hide_project_details()
             self._load_entry_in_editor(entry_id)
             
             # Set current project
@@ -431,6 +582,82 @@ class WorkPanel(ttk.Frame):
             if entry:
                 self.current_project_id = entry.project_id
                 self._refresh_tasks()
+    
+    def _show_project_details(self, project_id: str) -> None:
+        """Show project details panel in place of Entry editor and fill with project data."""
+        project = self._projects_by_id.get(project_id)
+        if not project:
+            self._hide_project_details()
+            return
+        self._project_details_project_id = project_id
+        self._project_details_name_var.set(project.name or "")
+        self._project_details_text.delete("1.0", tk.END)
+        self._project_details_text.insert("1.0", project.description or "")
+        self._project_details_tags_var.set(", ".join(project.tags) if project.tags else "")
+        self._project_details_people_text.delete("1.0", tk.END)
+        self._project_details_people_text.insert("1.0", project.person or "")
+        self._project_details_group_var.set(project.group or "")
+        self._project_details_status_var.set(project.status)
+        self._project_details_priority_var.set(getattr(project, "priority", 3))
+        self._show_project_details_panel()
+    
+    def _hide_project_details(self) -> None:
+        """Hide project details pane and show Entry editor."""
+        self._project_details_project_id = None
+        self._show_editor_panel()
+    
+    def _on_save_project_from_panel(self) -> None:
+        """Save all project fields from the details panel."""
+        if not self._project_details_project_id:
+            return
+        project = self._projects_by_id.get(self._project_details_project_id)
+        if not project:
+            return
+        from pige.interfaces.gui_helpers import join_people_storage, split_people
+        from pige.utils import strings
+        name = self._project_details_name_var.get().strip()
+        if not name:
+            messagebox.showerror("Erreur", "Le nom du projet est requis.")
+            return
+        description = self._project_details_text.get("1.0", tk.END).strip() or None
+        tags = strings.parse_tags(self._project_details_tags_var.get())
+        people_raw = self._project_details_people_text.get("1.0", tk.END)
+        person = join_people_storage(split_people(people_raw)) or None
+        group = self._project_details_group_var.get().strip() or None
+        status = self._project_details_status_var.get()
+        if status not in ("active", "archived"):
+            status = project.status
+        try:
+            prio = self._project_details_priority_var.get()
+            if not (1 <= prio <= 5):
+                prio = getattr(project, "priority", 3)
+        except tk.TclError:
+            prio = getattr(project, "priority", 3)
+        try:
+            self.service.update_project(
+                self._project_details_project_id,
+                name=name,
+                description=description,
+                tags=tags,
+                person=person,
+                group=group,
+                status=status,
+                priority=prio,
+            )
+            updated = replace(
+                project,
+                name=name,
+                description=description,
+                tags=tags,
+                person=person,
+                group=group,
+                status=status,
+                priority=prio,
+            )
+            self._projects_by_id[self._project_details_project_id] = updated
+            messagebox.showinfo("Succès", "Projet enregistré.")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible d'enregistrer:\n{e}")
     
     def _on_explorer_right_click(self, event) -> None:
         """Show context menu on right-click."""
@@ -451,12 +678,22 @@ class WorkPanel(ttk.Frame):
         
         if item.startswith("project:"):
             # Project context menu
+            project_id = item.replace("project:", "")
+            project = self._projects_by_id.get(project_id)
             menu.add_command(label="➕ Nouvelle Entry", command=self._on_new_entry_from_explorer)
             menu.add_command(label="➕ Nouvelle Task", command=self._on_add_task)
             menu.add_separator()
             menu.add_command(label="📂 Nouveau Sous-Projet", command=lambda: self._on_new_subproject(item))
             menu.add_separator()
             menu.add_command(label="⏱️ Start Timer", command=lambda: self._start_timer_for_project(item))
+            menu.add_command(label="⏱ Ajouter du temps", command=lambda: self._add_manual_time_for_project(project_id))
+            menu.add_separator()
+            if project and project.status == "active":
+                menu.add_command(label="📦 Archiver le projet", command=lambda: self._archive_project(project_id))
+            elif project and project.status == "archived":
+                menu.add_command(label="📂 Désarchiver le projet", command=lambda: self._unarchive_project(project_id))
+            menu.add_separator()
+            menu.add_command(label="🗑️ Supprimer le projet", command=lambda: self._delete_project_from_explorer(project_id))
             menu.add_separator()
             menu.add_command(label="🔄 Rafraîchir", command=self.refresh)
             
@@ -508,16 +745,89 @@ class WorkPanel(ttk.Frame):
             self._move_entry_to_project(entry_id, target_project_id)
         
         elif source.startswith("project:") and target.startswith("project:"):
-            # Move project under another project (change parent)
             source_project_id = source.replace("project:", "")
             target_project_id = target.replace("project:", "")
-            self._move_project_under(source_project_id, target_project_id)
+            source_project = self._projects_by_id.get(source_project_id)
+            target_project = self._projects_by_id.get(target_project_id)
+            if not source_project or not target_project:
+                return
+            # Same parent => reorder siblings; else => move under target
+            if source_project.parent_id == target_project.parent_id:
+                self._reorder_project_with_sibling(source_project_id, target_project_id, source_project.parent_id)
+            else:
+                self._move_project_under(source_project_id, target_project_id)
     
     def _start_timer_for_project(self, item_id: str) -> None:
         """Start timer for a project."""
         project_id = item_id.replace("project:", "")
         self.current_project_id = project_id
         self._on_start_timer()
+
+    def _add_manual_time_for_project(self, project_id: str) -> None:
+        """Open dialog to add manual time to a project."""
+        project = self._projects_by_id.get(project_id)
+        if not project:
+            return
+        dialog = tk.Toplevel(self.winfo_toplevel())
+        dialog.title(f"Ajouter du temps — {project.name[:30]}")
+        dialog.grab_set()
+        dialog.transient(self.winfo_toplevel())
+        dialog.resizable(False, False)
+        ttk.Label(dialog, text="Durée (minutes):").grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        duration_var = tk.StringVar(value="30")
+        ttk.Entry(dialog, textvariable=duration_var, width=8).grid(row=0, column=1, padx=6, pady=6)
+        ttk.Label(dialog, text="Note (optionnel):").grid(row=1, column=0, sticky="nw", padx=6, pady=6)
+        note_text = tk.Text(dialog, height=3, width=35, wrap=tk.WORD)
+        note_text.grid(row=1, column=1, padx=6, pady=6)
+        ttk.Label(dialog, text="Date (JJ/MM/AAAA, vide=aujourd'hui):").grid(row=2, column=0, sticky="w", padx=6, pady=6)
+        date_var = tk.StringVar(value="")
+        ttk.Entry(dialog, textvariable=date_var, width=12).grid(row=2, column=1, padx=6, pady=6)
+
+        def submit() -> None:
+            try:
+                mins = int(duration_var.get().strip())
+            except ValueError:
+                messagebox.showerror("Erreur", "La durée doit être un nombre de minutes.", parent=dialog)
+                return
+            if mins <= 0:
+                messagebox.showerror("Erreur", "La durée doit être positive.", parent=dialog)
+                return
+            note = note_text.get("1.0", tk.END).strip() or None
+            day_val = date_var.get().strip() or None
+            if day_val:
+                try:
+                    from datetime import datetime as dt
+                    # Accept DD/MM/YYYY or YYYY-MM-DD
+                    if "/" in day_val:
+                        day_parsed = dt.strptime(day_val, "%d/%m/%Y").date()
+                    else:
+                        day_parsed = dt.strptime(day_val, "%Y-%m-%d").date()
+                except ValueError:
+                    messagebox.showerror("Erreur", "Date invalide. Utilisez JJ/MM/AAAA.", parent=dialog)
+                    return
+            else:
+                day_parsed = None
+            try:
+                self.service.add_manual_time(
+                    project_id,
+                    duration_sec=mins * 60,
+                    day=day_parsed,
+                    note=note,
+                    create_activity=False,
+                )
+                dialog.destroy()
+                self._refresh_timer()
+                messagebox.showinfo("Succès", f"{mins} min ajouté(s) au projet.")
+            except ValueError as e:
+                messagebox.showerror("Erreur", str(e), parent=dialog)
+            except Exception as e:
+                messagebox.showerror("Erreur", f"Impossible d'ajouter le temps:\n{e}", parent=dialog)
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=10)
+        ttk.Button(btn_frame, text="Ajouter", command=submit).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Annuler", command=dialog.destroy).pack(side=tk.LEFT)
+        dialog.wait_window()
     
     def _open_entry_external(self, entry_id: str) -> None:
         """Open entry in external editor."""
@@ -573,6 +883,97 @@ class WorkPanel(ttk.Frame):
             except Exception as e:
                 messagebox.showerror("Erreur", f"Impossible de supprimer:\n{e}")
     
+    def _archive_project(self, project_id: str) -> None:
+        """Set project status to archived (finished)."""
+        project = self._projects_by_id.get(project_id)
+        if not project or project.status == "archived":
+            return
+        try:
+            self.service.update_project(
+                project_id,
+                name=project.name,
+                description=project.description,
+                tags=project.tags,
+                person=project.person,
+                group=project.group,
+                status="archived",
+            )
+            self._projects_by_id[project_id] = replace(project, status="archived")
+            if not self._show_archived_var.get():
+                self.refresh()
+            else:
+                self._refresh_explorer()
+            messagebox.showinfo("Succès", f"Projet « {project.name} » archivé.")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible d'archiver:\n{e}")
+
+    def _unarchive_project(self, project_id: str) -> None:
+        """Set project status back to active."""
+        project = self._projects_by_id.get(project_id)
+        if not project or project.status != "archived":
+            return
+        try:
+            self.service.update_project(
+                project_id,
+                name=project.name,
+                description=project.description,
+                tags=project.tags,
+                person=project.person,
+                group=project.group,
+                status="active",
+            )
+            self._projects_by_id[project_id] = replace(project, status="active")
+            self._refresh_explorer()
+            messagebox.showinfo("Succès", f"Projet « {project.name} » désarchivé.")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de désarchiver:\n{e}")
+
+    def _delete_project_from_explorer(self, project_id: str) -> None:
+        """Delete project (and its sub-projects) from explorer context menu."""
+        project = self._projects_by_id.get(project_id)
+        if not project:
+            return
+        children = [p for p in self._projects_by_id.values() if p.parent_id == project_id]
+        msg = f"Supprimer le projet \"{project.name}\"?"
+        if children:
+            msg += f"\n\nCe projet a {len(children)} sous-projet(s). Eux et toutes leurs entries seront aussi supprimés."
+        msg += "\n\nCette action est irréversible."
+        result = messagebox.askyesno("Confirmer suppression", msg)
+        if not result:
+            return
+        try:
+            self.service.delete_project(project_id)
+            self.refresh()
+            # Clear current project if it was deleted or is no longer in the list
+            if self.current_project_id and self.current_project_id not in self._projects_by_id:
+                self.current_project_id = None
+            messagebox.showinfo("Succès", "Projet supprimé")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de supprimer le projet:\n{e}")
+    
+    def _reorder_project_with_sibling(
+        self, source_project_id: str, target_project_id: str, parent_id: str | None
+    ) -> None:
+        """Reorder a project among its siblings (same parent) by dropping on a sibling."""
+        siblings = [
+            p for p in self._projects_by_id.values()
+            if p.parent_id == parent_id
+        ]
+        siblings.sort(key=lambda p: p.display_order)
+        order_ids = [p.id for p in siblings]
+        if source_project_id not in order_ids or target_project_id not in order_ids:
+            return
+        # Move source to target's position
+        order_ids.remove(source_project_id)
+        idx = order_ids.index(target_project_id)
+        order_ids.insert(idx, source_project_id)
+        try:
+            self.service.reorder_projects_in_parent(order_ids, parent_id)
+            self.refresh()
+            messagebox.showinfo("Succès", "Ordre des projets mis à jour")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de réordonner:\n{e}")
+
     def _move_project_under(self, source_project_id: str, target_project_id: str) -> None:
         """Move a project to become a sub-project of another project."""
         source_project = self._projects_by_id.get(source_project_id)
@@ -606,10 +1007,7 @@ class WorkPanel(ttk.Frame):
         if result:
             try:
                 # Update project parent
-                self.service.update_project(
-                    project_id=source_project_id,
-                    updates={"parent_id": target_project_id}
-                )
+                self.service.move_project(source_project_id, target_project_id)
                 
                 self._refresh_explorer()
                 
@@ -647,10 +1045,10 @@ class WorkPanel(ttk.Frame):
         if result:
             try:
                 self.service.move_entry(
-                    entry_id=entry_id,
-                    dest_project_id=target_project_id,
+                    entry_id,
+                    target_project_id,
                     keep_tags=True,
-                    keep_people=True
+                    keep_people=True,
                 )
                 
                 self._refresh_explorer()
@@ -662,105 +1060,44 @@ class WorkPanel(ttk.Frame):
                 messagebox.showerror("Erreur", f"Impossible de déplacer:\n{e}")
     
     def _on_new_project(self) -> None:
-        """Create a new project."""
-        from tkinter import simpledialog
-        
-        # Ask for project name
-        name = simpledialog.askstring("Nouveau Projet", "Nom du projet:")
-        if not name:
+        """Create a new project (single dialog)."""
+        project = show_new_project_dialog(
+            self.winfo_toplevel(),
+            self.service,
+            parent_id=None,
+        )
+        if not project:
             return
-        
-        # Ask for description (optional)
-        desc = simpledialog.askstring("Description", "Description (optionnelle):", parent=self)
-        
-        # Ask for tags (optional)
-        tags_str = simpledialog.askstring("Tags", "Tags (séparés par virgules, optionnel):", parent=self)
-        tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else []
-        
-        try:
-            project = self.service.create_project(
-                name=name,
-                description=desc if desc else None,
-                tags=tags
-            )
-            
-            # Select the new project
-            self.current_project_id = project.id
-            
-            # Refresh explorer
-            self._refresh_explorer()
-            
-            # Expand the new project in tree (if it exists)
-            new_item = f"project:{project.id}"
-            if self.explorer_tree.exists(new_item):
-                self.explorer_tree.item(new_item, open=True)
-                self.explorer_tree.selection_set(new_item)
-            
-            messagebox.showinfo("Succès", f"Projet '{name}' créé!")
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible de créer le projet:\n{e}")
+        self.current_project_id = project.id
+        self.refresh()
+        new_item = f"project:{project.id}"
+        if self.explorer_tree.exists(new_item):
+            self.explorer_tree.item(new_item, open=True)
+            self.explorer_tree.selection_set(new_item)
+        messagebox.showinfo("Succès", f"Projet '{project.name}' créé!")
     
     def _on_new_subproject(self, parent_item_id: str) -> None:
-        """Create a new sub-project."""
-        from tkinter import simpledialog
-        
+        """Create a new sub-project (single dialog)."""
         parent_id = parent_item_id.replace("project:", "")
         parent_project = self._projects_by_id.get(parent_id)
-        
         if not parent_project:
             return
-        
-        # Ask for project name
-        name = simpledialog.askstring(
-            "Nouveau Sous-Projet",
-            f"Nom du sous-projet sous '{parent_project.name}':",
-            parent=self
+        project = show_new_project_dialog(
+            self.winfo_toplevel(),
+            self.service,
+            parent_id=parent_id,
         )
-        if not name:
+        if not project:
             return
-        
-        # Ask for description (optional)
-        desc = simpledialog.askstring(
-            "Description",
-            "Description (optionnelle):",
-            parent=self
-        )
-        
-        # Ask for tags (optional)
-        tags_str = simpledialog.askstring(
-            "Tags",
-            "Tags (séparés par virgules, optionnel):",
-            parent=self
-        )
-        tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else []
-        
-        try:
-            project = self.service.create_project(
-                name=name,
-                description=desc if desc else None,
-                tags=tags,
-                parent_id=parent_id
-            )
-            
-            # Select the new project
-            self.current_project_id = project.id
-            
-            # Refresh explorer
-            self._refresh_explorer()
-            
-            # Expand parent and select new project (if they exist in tree)
-            parent_item = f"project:{parent_id}"
-            new_item = f"project:{project.id}"
-            
-            if self.explorer_tree.exists(parent_item):
-                self.explorer_tree.item(parent_item, open=True)
-            
-            if self.explorer_tree.exists(new_item):
-                self.explorer_tree.selection_set(new_item)
-            
-            messagebox.showinfo("Succès", f"Sous-projet '{name}' créé sous '{parent_project.name}'!")
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible de créer le sous-projet:\n{e}")
+        self.current_project_id = project.id
+        self.refresh()
+        parent_item = f"project:{parent_id}"
+        new_item = f"project:{project.id}"
+        if self.explorer_tree.exists(parent_item):
+            self.explorer_tree.item(parent_item, open=True)
+        if self.explorer_tree.exists(new_item):
+            self.explorer_tree.selection_set(new_item)
+        messagebox.showinfo("Succès", f"Sous-projet '{project.name}' créé sous '{parent_project.name}'!")
     
     def _on_new_entry_from_explorer(self) -> None:
         """Create new entry from explorer."""
@@ -813,38 +1150,109 @@ class WorkPanel(ttk.Frame):
         self.btn_start_timer.config(state=tk.NORMAL)
         self.btn_stop_timer.config(state=tk.DISABLED)
     
+    def _get_descendant_project_ids(self, project_id: str) -> list[str]:
+        """Return list of all descendant project IDs (children, grandchildren, ...)."""
+        result: list[str] = []
+        stack = [p.id for p in self._projects_by_id.values() if p.parent_id == project_id]
+        while stack:
+            pid = stack.pop()
+            result.append(pid)
+            stack.extend(p.id for p in self._projects_by_id.values() if p.parent_id == pid)
+        return result
+
     def _refresh_tasks(self) -> None:
-        """Refresh tasks list for current project."""
-        # Clear tree
+        """Refresh tasks list for current project and its sub-projects, with separation."""
         for item in self.tasks_tree.get_children():
             self.tasks_tree.delete(item)
         
         if not self.current_project_id:
             return
         
-        # Load and display tasks
         try:
-            tasks = self.service.list_tasks(self.current_project_id, status="all")
-            tasks.sort(key=lambda t: (
-                t.status == "done",  # Open tasks first
-                t.due_date or "9999-99-99"  # Then by due date
-            ))
-            
-            for task in tasks[:20]:  # Limit to 20 tasks
+            project = self._projects_by_id.get(self.current_project_id)
+            project_name = project.name if project else self.current_project_id
+            descendant_ids = self._get_descendant_project_ids(self.current_project_id)
+
+            def sort_tasks(tasks_list):
+                tasks_list.sort(key=lambda t: (t.status == "done", t.due_date or "9999-99-99"))
+
+            # Section 1: Tâches du projet (direct tasks)
+            direct_tasks = self.service.list_tasks(self.current_project_id, status="all")
+            sort_tasks(direct_tasks)
+            section_project_iid = "section:project"
+            self.tasks_tree.insert("", tk.END, iid=section_project_iid, text="Projet", values=(f"Tâches de « {project_name} »", "", ""))
+            for task in direct_tasks[:30]:
                 icon = "✓" if task.status == "done" else "○"
                 due_str = task.due_date or "-"
-                
-                self.tasks_tree.insert(
-                    "",
-                    tk.END,
-                    iid=task.id,
-                    text=icon,
-                    values=(task.title, task.status, due_str)
-                )
+                self.tasks_tree.insert(section_project_iid, tk.END, iid=task.id, text=icon, values=(task.title, task.status, due_str))
+
+            # Section 2: Sous-projets (tasks from child projects)
+            if descendant_ids:
+                section_children_iid = "section:children"
+                self.tasks_tree.insert("", tk.END, iid=section_children_iid, text="Sous-projets", values=("Tâches des sous-projets", "", ""))
+                for child_id in descendant_ids:
+                    child = self._projects_by_id.get(child_id)
+                    child_name = child.name if child else child_id
+                    child_tasks = self.service.list_tasks(child_id, status="all")
+                    sort_tasks(child_tasks)
+                    subsection_iid = f"subsection:{child_id}"
+                    self.tasks_tree.insert(section_children_iid, tk.END, iid=subsection_iid, text="📂", values=(child_name, "", ""))
+                    for task in child_tasks[:20]:
+                        icon = "✓" if task.status == "done" else "○"
+                        due_str = task.due_date or "-"
+                        self.tasks_tree.insert(subsection_iid, tk.END, iid=f"task:{child_id}:{task.id}", text=icon, values=(task.title, task.status, due_str))
+        except ProjectNotFoundError:
+            logger.debug("Current project no longer exists, clearing selection")
+            self.current_project_id = None
+            self.explorer_tree.selection_set(())
         except Exception as e:
             logger.error(f"Failed to load tasks: {e}")
-    
-    
+
+    def _sort_tasks_tree(self, column_id: str) -> None:
+        """Sort task rows within each section (Projet / Sous-projets) by column."""
+        if not hasattr(self, "_tasks_sort_col"):
+            self._tasks_sort_col = None
+            self._tasks_sort_reverse = False
+        if self._tasks_sort_col == column_id:
+            self._tasks_sort_reverse = not self._tasks_sort_reverse
+        else:
+            self._tasks_sort_col = column_id
+            self._tasks_sort_reverse = column_id == "due"
+        cols = ("title", "status", "due")
+        if column_id not in cols:
+            return
+        col_idx = cols.index(column_id)
+
+        def sort_key(x):
+            iid, text, vals = x
+            if col_idx >= len(vals):
+                return ""
+            v = (vals[col_idx] or "").strip().lower()
+            if column_id == "due" and v and v != "-":
+                try:
+                    return datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    pass
+            return v
+
+        def sort_children_of(parent_iid: str) -> None:
+            child_iids = list(self.tasks_tree.get_children(parent_iid))
+            if not child_iids:
+                return
+            items = [(iid, self.tasks_tree.item(iid, "text"), self.tasks_tree.item(iid, "values")) for iid in child_iids]
+            items.sort(key=sort_key, reverse=self._tasks_sort_reverse)
+            for iid in child_iids:
+                self.tasks_tree.detach(iid)
+            for iid, text, vals in items:
+                self.tasks_tree.move(iid, parent_iid, tk.END)
+
+        for root_child in self.tasks_tree.get_children(""):
+            if root_child == "section:project":
+                sort_children_of(root_child)
+            elif root_child == "section:children":
+                for sub in self.tasks_tree.get_children(root_child):
+                    sort_children_of(sub)
+
     def _on_add_entry(self) -> None:
         """Add new entry."""
         if not self.current_project_id:
@@ -866,6 +1274,13 @@ class WorkPanel(ttk.Frame):
         status = self.entry_status_var.get().strip() or None
         
         try:
+            prio = 3
+            try:
+                prio = self.entry_priority_var.get()
+            except tk.TclError:
+                pass
+            if not (1 <= prio <= 5):
+                prio = 3
             self.service.add_entry(
                 project_id=self.current_project_id,
                 entry_type=entry_type,
@@ -874,7 +1289,8 @@ class WorkPanel(ttk.Frame):
                 body=body,
                 entry_date=date.today(),
                 person=person,
-                group=group
+                group=group,
+                priority=prio,
             )
             
             # Apply status if set
@@ -947,9 +1363,18 @@ class WorkPanel(ttk.Frame):
                 if status != (entry.context_status or ""):
                     patch["context_status"] = status if status else None
                 
+                try:
+                    prio = self.entry_priority_var.get()
+                except tk.TclError:
+                    prio = 3
+                if not (1 <= prio <= 5):
+                    prio = 3
+                if prio != getattr(entry, "priority", 3):
+                    patch["priority"] = prio
+                
                 # Apply patch if there are changes
                 if patch:
-                    self.service.update_entry_meta(self._current_entry_id, patch)
+                    self.service.update_entry_meta(self._current_entry_id, **patch)
             
             # Reset modified flag
             self._entry_modified = False
@@ -965,6 +1390,7 @@ class WorkPanel(ttk.Frame):
     
     def _on_new_entry_editor(self) -> None:
         """Start editing a new entry."""
+        self._cancel_autosave()
         if self._entry_modified:
             result = messagebox.askyesnocancel(
                 "Modifications non enregistrées",
@@ -985,6 +1411,7 @@ class WorkPanel(ttk.Frame):
         self.entry_groups_var.set("")
         self.entry_tags_var.set("")
         self.entry_status_var.set("")
+        self.entry_priority_var.set(3)
         self.current_entry_var.set("Nouvelle entry")
         self._entry_modified = False
         self.btn_save.config(state=tk.DISABLED)
@@ -1040,10 +1467,41 @@ class WorkPanel(ttk.Frame):
             messagebox.showerror("Erreur", f"Impossible d'ouvrir le fichier:\n{e}")
     
     def _on_content_modified(self, event=None) -> None:
-        """Handle text content modification."""
+        """Handle text content modification; schedule autosave after delay."""
         if self.entry_body_text.edit_modified():
             self._entry_modified = True
             self.btn_save.config(state=tk.NORMAL)
+            self._schedule_autosave()
+    
+    def _cancel_autosave(self) -> None:
+        """Cancel any pending autosave."""
+        if self._autosave_after_id:
+            self.after_cancel(self._autosave_after_id)
+            self._autosave_after_id = None
+    
+    def _schedule_autosave(self) -> None:
+        """Schedule autosave of entry body after AUTOSAVE_DELAY_MS."""
+        if not self._current_entry_id:
+            return
+        self._cancel_autosave()
+        self._autosave_after_id = self.after(AUTOSAVE_DELAY_MS, self._do_autosave)
+    
+    def _do_autosave(self) -> None:
+        """Save entry body to disk (autosave)."""
+        self._autosave_after_id = None
+        if not self._current_entry_id:
+            return
+        if not self.entry_body_text.edit_modified():
+            return
+        try:
+            body = self.entry_body_text.get("1.0", tk.END)
+            self.service.update_entry_content(self._current_entry_id, body)
+            self.entry_body_text.edit_modified(False)
+            self._entry_modified = False
+            self.btn_save.config(state=tk.DISABLED)
+            logger.debug("Entry content autosaved: %s", self._current_entry_id[:8])
+        except Exception as e:
+            logger.warning("Autosave failed: %s", e)
     
     def _on_entry_type_changed(self, event=None) -> None:
         """Handle entry type change - apply template if content is empty."""
@@ -1149,8 +1607,47 @@ class WorkPanel(ttk.Frame):
         }
         return templates.get(entry_type, "")
     
+    def reveal_entry_in_explorer(self, entry_id: str) -> None:
+        """Bring the given entry to the front in the explorer: expand its project, select and scroll to it."""
+        entries = self.service.storage.read_entries_meta()
+        entry = next((e for e in entries if e.id == entry_id), None)
+        if not entry:
+            return
+        project_id = entry.project_id
+        # Path from root to this project (for expanding ancestors)
+        path_ids: list[str] = []
+        pid: str | None = project_id
+        while pid:
+            proj = self._projects_by_id.get(pid)
+            if not proj:
+                break
+            path_ids.append(pid)
+            pid = proj.parent_id
+        path_ids.reverse()
+        for pid in path_ids:
+            node = f"project:{pid}"
+            if self.explorer_tree.exists(node):
+                self.explorer_tree.item(node, open=True)
+        entry_iid = f"entry:{entry_id}"
+        if self.explorer_tree.exists(entry_iid):
+            self.explorer_tree.selection_set(entry_iid)
+            self.explorer_tree.see(entry_iid)
+            return
+        # Entry not in tree (e.g. not in top 20): insert it under project so it appears
+        project_node = f"project:{project_id}"
+        if not self.explorer_tree.exists(project_node):
+            return
+        entry_icon = {"note": "📝", "meeting": "🤝", "decision": "✅", "activity": "⚡"}.get(entry.type, "📄")
+        entry_text = f"{entry_icon} {entry.title[:50]}"
+        if entry.entry_date:
+            entry_text += f" ({entry.entry_date})"
+        self.explorer_tree.insert(project_node, 0, iid=entry_iid, text=entry_text)
+        self.explorer_tree.selection_set(entry_iid)
+        self.explorer_tree.see(entry_iid)
+
     def _load_entry_in_editor(self, entry_id: str) -> None:
         """Load an entry into the editor."""
+        self._cancel_autosave()
         # Check for unsaved changes
         if self._entry_modified:
             result = messagebox.askyesnocancel(
@@ -1189,6 +1686,10 @@ class WorkPanel(ttk.Frame):
             self.entry_groups_var.set(entry.group or "")
             self.entry_tags_var.set(", ".join(entry.tags) if entry.tags else "")
             self.entry_status_var.set(entry.context_status or "")
+            prio = getattr(entry, "priority", 3)
+            if not isinstance(prio, int) or not (1 <= prio <= 5):
+                prio = 3
+            self.entry_priority_var.set(prio)
             
             self.entry_body_text.delete("1.0", tk.END)
             self.entry_body_text.insert("1.0", content)
@@ -1202,6 +1703,17 @@ class WorkPanel(ttk.Frame):
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible de charger l'entry:\n{e}")
 
+    def _find_task_row_iid(self, task_id: str) -> str | None:
+        """Return the tree iid of the row that displays the given task_id, or None."""
+        for iid in self.tasks_tree.get_children("section:project") or []:
+            if iid == task_id:
+                return iid
+        for sub_iid in self.tasks_tree.get_children("section:children") or []:
+            for iid in self.tasks_tree.get_children(sub_iid) or []:
+                if iid.startswith("task:") and iid.endswith(f":{task_id}"):
+                    return iid
+        return None
+
     def show_task(self, task_id: str) -> None:
         """Switch to this panel and select the given task (sets project and refreshes tasks)."""
         task = next(
@@ -1212,14 +1724,17 @@ class WorkPanel(ttk.Frame):
             return
         self.current_project_id = task.project_id
         self._refresh_tasks()
-        self.tasks_tree.selection_set(task_id)
-        self.tasks_tree.see(task_id)
+        row_iid = self._find_task_row_iid(task_id)
+        if row_iid:
+            self.tasks_tree.selection_set(row_iid)
+            self.tasks_tree.see(row_iid)
     
     def _on_clear_form(self) -> None:
         """Clear entry form."""
         self.entry_title_var.set("")
         self.entry_body_text.delete("1.0", tk.END)
         self.entry_type_var.set("note")
+        self.entry_priority_var.set(3)
     
     def _on_add_task(self) -> None:
         """Add new task."""
@@ -1252,30 +1767,46 @@ class WorkPanel(ttk.Frame):
         if result:
             self._refresh_tasks()
     
+    def _task_iid_to_task_and_project(self, iid: str) -> tuple[str, str] | None:
+        """From a tree item iid, return (task_id, project_id) if it's a task row, else None."""
+        if not iid or iid.startswith("section:") or iid.startswith("subsection:"):
+            return None
+        if iid.startswith("task:"):
+            parts = iid.split(":", 2)
+            if len(parts) >= 3:
+                return (parts[2], parts[1])
+            return None
+        # Direct task (iid is task.id)
+        if self.current_project_id:
+            return (iid, self.current_project_id)
+        return None
+
     def _on_task_double_click(self, event) -> None:
         """Handle task double-click (edit)."""
         selection = self.tasks_tree.selection()
         if not selection:
             return
-
-        task_id = selection[0]
+        pair = self._task_iid_to_task_and_project(selection[0])
+        if not pair:
+            return
+        task_id, _ = pair
         parent = self.winfo_toplevel()
         result = show_edit_task_dialog(parent, self.service, task_id)
         if result:
             self._refresh_tasks()
-    
+
     def _on_task_toggle(self, event) -> None:
         """Toggle task done/open."""
         selection = self.tasks_tree.selection()
         if not selection:
             return
-        
-        task_id = selection[0]
-        
+        pair = self._task_iid_to_task_and_project(selection[0])
+        if not pair:
+            return
+        task_id, project_id = pair
         try:
-            tasks = self.service.list_tasks(self.current_project_id, status="all")
+            tasks = self.service.list_tasks(project_id, status="all")
             task = next((t for t in tasks if t.id == task_id), None)
-            
             if task:
                 new_status = "open" if task.status == "done" else "done"
                 self.service.set_task_done(task_id, new_status == "done")

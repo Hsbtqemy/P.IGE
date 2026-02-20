@@ -345,6 +345,24 @@ class TestStorage(unittest.TestCase):
                 storage.restore_backup(invalid_zip)
             self.assertIn("format not recognized", str(ctx.exception).lower())
 
+    def test_restore_backup_rejects_path_traversal(self) -> None:
+        """restore_backup rejects archives containing unsafe relative paths."""
+        with TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / "data"
+            storage = Storage(data_dir)
+            storage.init_storage()
+
+            unsafe_zip = data_dir.parent / "unsafe.zip"
+            import zipfile
+            with zipfile.ZipFile(unsafe_zip, "w") as zf:
+                zf.writestr("../outside.txt", "x")
+                zf.writestr("projects.json", "[]")
+                zf.writestr("entries.jsonl", "")
+
+            with self.assertRaises(ValueError) as ctx:
+                storage.restore_backup(unsafe_zip)
+            self.assertIn("unsafe path", str(ctx.exception).lower())
+
     def test_compact_entries_large_volume(self) -> None:
         """compact_entries_log handles large volume of events efficiently."""
         with TemporaryDirectory() as tmp:

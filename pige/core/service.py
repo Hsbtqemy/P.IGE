@@ -115,6 +115,7 @@ class PigeService:
         person: str | None = None,
         group: str | None = None,
         parent_id: str | None = None,
+        priority: int = 3,
     ) -> Project:
         clean_name = (name or "").strip()
         if not clean_name:
@@ -135,6 +136,7 @@ class PigeService:
         siblings = self.storage.get_project_children(parent_id)
         display_order = max([s.display_order for s in siblings], default=-1) + 1
         
+        priority_val = 3 if not (1 <= priority <= 5) else priority
         project = Project(
             id=ids.new_id(),
             name=clean_name,
@@ -146,6 +148,7 @@ class PigeService:
             group=clean_group,
             parent_id=parent_id,
             display_order=display_order,
+            priority=priority_val,
         )
         projects = self.storage.read_projects()
         projects.append(project)
@@ -250,6 +253,24 @@ class PigeService:
         if status == "all":
             return projects
         return [project for project in projects if project.status == status]
+
+    def get_project(self, project_id: str) -> Project:
+        """Public project accessor for GUI components."""
+        return self._get_project(project_id)
+
+    HOLD_PROJECT_NAME = "En attente"
+
+    def get_or_create_hold_project(self) -> Project:
+        """Return the 'En attente' project (notes to classify later); create it if missing."""
+        projects = self.storage.read_projects()
+        for p in projects:
+            if (p.name or "").strip() == self.HOLD_PROJECT_NAME:
+                return p
+        return self.create_project(
+            name=self.HOLD_PROJECT_NAME,
+            description="Notes en attente de classement (1er rdv, à affecter plus tard). Déplacer vers un projet : clic droit > Déplacer vers...",
+            tags=["inbox"],
+        )
 
     def search(
         self, query: str, *, include_body: bool = False
@@ -362,6 +383,7 @@ class PigeService:
         group: str | None,
         status: str,
         links: Iterable[str] | str | None | object = _UNSET,
+        priority: int | None | object = _UNSET,
     ) -> Project:
         clean_name = (name or "").strip()
         if not clean_name:
@@ -383,6 +405,9 @@ class PigeService:
                 clean_links = list(project.links or [])
             else:
                 clean_links = _normalize_project_links(links)
+            priority_val = getattr(project, "priority", 3)
+            if priority is not _UNSET and priority is not None and 1 <= priority <= 5:
+                priority_val = priority
             updated = Project(
                 id=project.id,
                 name=clean_name,
@@ -393,6 +418,9 @@ class PigeService:
                 person=clean_person,
                 group=clean_group,
                 links=clean_links,
+                parent_id=project.parent_id,
+                display_order=project.display_order,
+                priority=priority_val,
             )
             projects[idx] = updated
             break
@@ -402,38 +430,47 @@ class PigeService:
         return updated
 
     def delete_project(self, project_id: str) -> None:
+        """Delete a project and all its sub-projects (recursive), with their entries, tasks, timelogs."""
         projects = self.storage.read_projects()
         project = next((item for item in projects if item.id == project_id), None)
         if not project:
             raise ProjectNotFoundError(project_id)
 
+        # Collect this project and all descendants
+        ids_to_delete: set[str] = {project_id}
+        while True:
+            added = False
+            for p in projects:
+                if p.parent_id in ids_to_delete and p.id not in ids_to_delete:
+                    ids_to_delete.add(p.id)
+                    added = True
+            if not added:
+                break
+
         delete_ts = dates.utc_now_iso()
-        entries = [
-            entry
-            for entry in self.storage.read_entries_meta()
-            if entry.project_id == project_id
-        ]
-        for entry in entries:
-            entry_path = self.storage.data_dir / entry.content_path
-            if entry_path.exists():
-                entry_path.unlink()
-            self.storage.append_entry_delete(entry.id, delete_ts)
+        all_entries = self.storage.read_entries_meta()
+        for entry in all_entries:
+            if entry.project_id in ids_to_delete:
+                entry_path = self.storage.data_dir / entry.content_path
+                if entry_path.exists():
+                    entry_path.unlink()
+                self.storage.append_entry_delete(entry.id, delete_ts)
 
         tasks = self.storage.read_tasks()
-        remaining_tasks = [task for task in tasks if task.project_id != project_id]
+        remaining_tasks = [task for task in tasks if task.project_id not in ids_to_delete]
         if len(remaining_tasks) != len(tasks):
             self.storage.write_tasks(remaining_tasks)
 
         timelogs = self.storage.read_timelogs()
-        remaining_logs = [log for log in timelogs if log.project_id != project_id]
+        remaining_logs = [log for log in timelogs if log.project_id not in ids_to_delete]
         if len(remaining_logs) != len(timelogs):
             self.storage.write_timelogs(remaining_logs)
 
         timer_state = self.storage.read_timer_state()
-        if timer_state.project_id == project_id:
+        if timer_state.project_id in ids_to_delete:
             self.storage.write_timer_state(default_timer_state())
 
-        remaining_projects = [item for item in projects if item.id != project_id]
+        remaining_projects = [p for p in projects if p.id not in ids_to_delete]
         self.storage.write_projects(remaining_projects)
 
 
@@ -712,12 +749,13 @@ class PigeService:
         title: str,
         tags: Iterable[str],
         body: str | None,
-        entry_date: date | None = None,
+        entry_date: date | str | None = None,
         person: str | None = None,
         group: str | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
         decision_done: bool | None = None,
+        priority: int = 3,
     ) -> tuple[EntryMeta, Path]:
         project = self._get_project(project_id)
         clean_title = (title or "").strip()
@@ -738,7 +776,12 @@ class PigeService:
             end_dt = datetime.strptime(normalized_end, "%H:%M")
             if start_dt > end_dt:
                 raise MeetingHoursError("Meeting start must be before end")
-        entry_date_value = entry_date or datetime.now().astimezone().date()
+        if entry_date is None:
+            entry_date_value = datetime.now().astimezone().date()
+        elif isinstance(entry_date, str):
+            entry_date_value = dates.parse_date(entry_date)
+        else:
+            entry_date_value = entry_date
         if entry_date is not None:
             ts_value = dates.local_date_midday_to_utc_z(entry_date_value)
         else:
@@ -747,6 +790,7 @@ class PigeService:
         content_path = f"entries/{entry_id}.md"
         entry_person = (person or "").strip() or project.person
         entry_group = (group or "").strip() or project.group
+        priority_val = 3 if not (1 <= priority <= 5) else priority
         entry = EntryMeta(
             id=entry_id,
             ts=ts_value,
@@ -761,6 +805,7 @@ class PigeService:
             start_time=normalized_start,
             end_time=normalized_end,
             decision_done=decision_done if entry_type == "decision" else None,
+            priority=priority_val,
         )
         self.storage.append_entry_event(entry)
         content = body or ""
@@ -785,6 +830,8 @@ class PigeService:
         start_time: str | None | object = _UNSET,
         end_time: str | None | object = _UNSET,
         decision_done: bool | None | object = _UNSET,
+        priority: int | None | object = _UNSET,
+        context_status: str | None | object = _UNSET,
     ) -> EntryMeta:
         entries = {entry.id: entry for entry in self.storage.read_entries_meta()}
         entry = entries.get(entry_id)
@@ -821,6 +868,12 @@ class PigeService:
             if decision_done is not None and not isinstance(decision_done, bool):
                 raise ValueError("Decision flag must be a boolean")
             patch["decision_done"] = decision_done
+        if priority is not _UNSET and priority is not None:
+            if not isinstance(priority, int) or not (1 <= priority <= 5):
+                raise ValueError("Priority must be an integer between 1 and 5")
+            patch["priority"] = priority
+        if context_status is not _UNSET:
+            patch["context_status"] = normalize_context_status(context_status) if context_status is not None else None
 
         if patch:
             _validate_entry_patch(entry, patch)
@@ -1938,8 +1991,17 @@ class PigeService:
             tasks = self.list_tasks(project_id=project.id, status="open")
             pending_tasks.extend(tasks)
         
-        # TODO: Could also filter entries with "waiting" or "blocked" tags
-        pending_entries = []
+        # Smart view: include entries tagged as waiting/blocked (or explicit pending status)
+        pending_tags = {"waiting", "blocked", "pending", "todo"}
+        pending_entries: list[EntryMeta] = []
+        for entry in self.storage.read_entries_meta():
+            tags_lower = {tag.strip().lower() for tag in (entry.tags or []) if tag}
+            if tags_lower.intersection(pending_tags):
+                pending_entries.append(entry)
+        pending_entries.sort(
+            key=lambda item: (_entry_local_date(item), item.ts),
+            reverse=True,
+        )
         
         return {
             "entries": pending_entries,
@@ -1959,33 +2021,117 @@ class PigeService:
         
         today = datetime.now().date()
         end_date = today + timedelta(days=days)
-        
-        upcoming = []
+        projects_by_id = {p.id: p for p in self.list_projects(status="all")}
+        upcoming: list[dict] = []
         
         # Get meetings in date range
         all_entries = self.storage.read_entries_meta()
         meetings = [
             e for e in all_entries
-            if e.type == "meeting"
-            and e.entry_date
-            and today.isoformat() <= e.entry_date <= end_date.isoformat()
+            if e.type == "meeting" and _entry_local_date(e) >= today and _entry_local_date(e) <= end_date
         ]
         
         for meeting in meetings:
-            project = self._projects_by_id.get(meeting.project_id)
+            project = projects_by_id.get(meeting.project_id)
+            prio = getattr(meeting, "priority", 3)
             upcoming.append({
-                "date": meeting.entry_date,
+                "date": _entry_local_date(meeting).isoformat(),
                 "type": "Meeting",
                 "title": meeting.title,
                 "project_name": project.name if project else meeting.project_id,
                 "project_id": meeting.project_id,
-                "item_id": meeting.id
+                "item_id": meeting.id,
+                "priority": prio,
             })
-        
-        # Sort by date
-        upcoming.sort(key=lambda x: x["date"])
+
+        # Also include tasks due in the same upcoming window (actionable weekly view).
+        for task in self.storage.read_tasks():
+            if task.status not in ("open", "in_progress"):
+                continue
+            due_date = _parse_task_due_date(task.due_date)
+            if due_date is None:
+                continue
+            if due_date < today or due_date > end_date:
+                continue
+            project = projects_by_id.get(task.project_id)
+            prio = getattr(project, "priority", 3) if project else 3
+            upcoming.append(
+                {
+                    "date": due_date.isoformat(),
+                    "type": "Task",
+                    "title": task.title,
+                    "project_name": project.name if project else task.project_id,
+                    "project_id": task.project_id,
+                    "item_id": task.id,
+                    "priority": prio,
+                }
+            )
+
+        # Sort by date then priority (1 is highest).
+        def _priority_sort_value(item: dict) -> int:
+            try:
+                return int(item.get("priority", 3))
+            except (TypeError, ValueError):
+                return 3
+
+        upcoming.sort(key=lambda x: (x["date"], _priority_sort_value(x)))
         
         return upcoming
+
+    def get_weekly_actionable_view(self, days: int = 7) -> dict[str, list]:
+        """Build an actionable weekly view for dashboard focus."""
+        from datetime import datetime, timedelta
+
+        today = datetime.now().date()
+        end_date = today + timedelta(days=days)
+        projects_by_id = {p.id: p for p in self.list_projects(status="all")}
+
+        meetings = [
+            entry
+            for entry in self.storage.read_entries_meta()
+            if entry.type == "meeting"
+            and today <= _entry_local_date(entry) <= end_date
+        ]
+        meetings.sort(key=lambda item: (_entry_local_date(item), item.start_time or "99:99"))
+
+        open_tasks = [
+            task
+            for task in self.storage.read_tasks()
+            if task.status in ("open", "in_progress")
+        ]
+
+        overdue_tasks: list[Task] = []
+        due_tasks: list[Task] = []
+        for task in open_tasks:
+            due_date = _parse_task_due_date(task.due_date)
+            if due_date is None:
+                continue
+            if due_date < today:
+                overdue_tasks.append(task)
+            elif due_date <= end_date:
+                due_tasks.append(task)
+
+        overdue_tasks.sort(
+            key=lambda task: (_parse_task_due_date(task.due_date) or today, _task_sort_key(task))
+        )
+        due_tasks.sort(
+            key=lambda task: (_parse_task_due_date(task.due_date) or today, _task_sort_key(task))
+        )
+
+        pending_decisions = [
+            entry
+            for entry in self.storage.read_entries_meta()
+            if entry.type == "decision" and entry.decision_done is not True
+        ]
+        pending_decisions.sort(key=lambda item: (_entry_local_date(item), item.ts), reverse=True)
+
+        return {
+            "meetings": meetings,
+            "overdue_tasks": overdue_tasks,
+            "due_tasks": due_tasks,
+            "pending_decisions": pending_decisions,
+            "projects_by_id": projects_by_id,
+        }
     
     def get_focus_suggestions(self) -> dict:
         """Calculate focus suggestions based on current state.
@@ -2023,11 +2169,20 @@ class PigeService:
             )
             oldest_entry = sorted_entries[0] if sorted_entries else None
         
+        weekly = self.get_weekly_actionable_view(days=7)
+
         return {
             "busiest_project": busiest_project,
             "oldest_entry": oldest_entry,
             "total_in_progress": len(in_progress["entries"]) + len(in_progress["tasks"]),
-            "total_pending": len(self.get_pending_items()["tasks"])
+            "total_pending": len(self.get_pending_items()["tasks"]),
+            "weekly": {
+                "meetings": len(weekly["meetings"]),
+                "overdue_tasks": len(weekly["overdue_tasks"]),
+                "due_tasks": len(weekly["due_tasks"]),
+                "pending_decisions": len(weekly["pending_decisions"]),
+                "top_overdue_tasks": weekly["overdue_tasks"][:3],
+            },
         }
 
 
@@ -2213,6 +2368,18 @@ def _normalize_due_date(value: object) -> str | None:
     except Exception as exc:
         raise ValueError("Due date must be YYYY-MM-DD") from exc
     return cleaned
+
+
+def _parse_task_due_date(value: object) -> date | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    if not cleaned:
+        return None
+    try:
+        return dates.parse_date(cleaned)
+    except Exception:
+        return None
 
 
 def _task_sort_key(task: Task) -> tuple[int, int, str, str]:

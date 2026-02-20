@@ -205,6 +205,20 @@ class TestSearchFilters(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].id, "e2")
 
+    def test_filter_by_date_gte_with_storage_string_dates(self) -> None:
+        entries = [
+            self._create_entry("e1", entry_date=date(2024, 1, 10)),
+            self._create_entry("e2", entry_date=date(2024, 1, 15)),
+            self._create_entry("e3", entry_date=date(2024, 1, 20)),
+        ]
+        for entry in entries:
+            entry.entry_date = entry.entry_date.isoformat()  # Simulate storage payload shape
+        filters = SearchFilters(entry_date_gte=date(2024, 1, 15))
+        result = apply_search_filters(entries, filters)
+        self.assertEqual(len(result), 2)
+        self.assertIn("e2", [e.id for e in result])
+        self.assertIn("e3", [e.id for e in result])
+
     def test_filter_by_title(self) -> None:
         entries = [
             self._create_entry("e1", title="Sprint Planning"),

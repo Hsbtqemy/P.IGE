@@ -63,7 +63,7 @@ class PigeMainWindow(tk.Tk):
         if self.legacy_prefs_path.exists():
             prefs = io_utils.read_json(self.legacy_prefs_path, default={})
             # Migrate to new location
-            io_utils.write_json(self.prefs_path, prefs)
+            io_utils.safe_write_json(self.prefs_path, prefs)
             return prefs
         return {}
     
@@ -166,20 +166,49 @@ class PigeMainWindow(tk.Tk):
     
     def _setup_keybindings(self) -> None:
         """Setup keyboard shortcuts."""
-        # File operations (bind to window, not all widgets to avoid interfering with text entry)
-        self.bind("<Control-n>", lambda e: self._on_new_project())
-        self.bind("<Command-n>", lambda e: self._on_new_project())
-        self.bind("<Control-e>", lambda e: self._on_new_entry())
-        self.bind("<Command-e>", lambda e: self._on_new_entry())
+        # File operations - only when focus is NOT in a text widget (avoid triggering while typing)
+        self.bind("<Control-n>", self._on_key_new_project)
+        self.bind("<Command-n>", self._on_key_new_project)
+        self.bind("<Control-e>", self._on_key_new_entry)
+        self.bind("<Command-e>", self._on_key_new_entry)
         self.bind("<Control-q>", lambda e: self.quit())
         self.bind("<Command-q>", lambda e: self.quit())
-        
-        # Search - only bind to window, not all widgets
-        self.bind("<Control-f>", lambda e: self._on_search())
-        self.bind("<Command-f>", lambda e: self._on_search())
-        
+
+        # Search - only when focus is NOT in a text widget
+        self.bind("<Control-f>", self._on_key_search)
+        self.bind("<Command-f>", self._on_key_search)
+
         # Help
         self.bind("<F1>", lambda e: self._show_keyboard_shortcuts())
+
+    def _focus_in_text_widget(self) -> bool:
+        """Return True if focus is in an Entry, Text, or Combobox (don't trigger shortcuts while typing)."""
+        w = self.focus_get()
+        if w is None:
+            return False
+        try:
+            cls = w.winfo_class()
+            return cls in ("Entry", "Text", "TEntry", "TCombobox")
+        except tk.TclError:
+            return False
+
+    def _on_key_new_project(self, e: tk.Event) -> str | None:
+        if self._focus_in_text_widget():
+            return None
+        self._on_new_project()
+        return "break"
+
+    def _on_key_new_entry(self, e: tk.Event) -> str | None:
+        if self._focus_in_text_widget():
+            return None
+        self._on_new_entry()
+        return "break"
+
+    def _on_key_search(self, e: tk.Event) -> str | None:
+        if self._focus_in_text_widget():
+            return None
+        self._on_search()
+        return "break"
     
     # ===== Menu actions =====
     
@@ -251,6 +280,8 @@ class PigeMainWindow(tk.Tk):
         
         # Load entry in WorkPanel editor
         self.work_panel._load_entry_in_editor(entry_id)
+        # Bring entry to front in explorer (expand project, select and scroll to it)
+        self.work_panel.reveal_entry_in_explorer(entry_id)
     
     def _show_keyboard_shortcuts(self) -> None:
         """Show keyboard shortcuts dialog."""

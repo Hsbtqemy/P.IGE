@@ -845,3 +845,84 @@ class TestService(unittest.TestCase):
             self.assertIn("start must be before end", msg.lower())
             self.assertIn("HH:MM", msg)
 
+    def test_get_pending_items_includes_waiting_and_blocked_entries(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+            waiting_entry, _ = service.add_entry(
+                project.id, "note", "Waiting item", ["waiting"], "..."
+            )
+            blocked_entry, _ = service.add_entry(
+                project.id, "note", "Blocked item", ["blocked"], "..."
+            )
+            service.add_entry(project.id, "note", "Regular item", ["work"], "...")
+
+            pending = service.get_pending_items()
+            pending_ids = {entry.id for entry in pending["entries"]}
+
+            self.assertIn(waiting_entry.id, pending_ids)
+            self.assertIn(blocked_entry.id, pending_ids)
+            self.assertEqual(len(pending_ids), 2)
+
+    def test_get_upcoming_items_includes_meetings_and_due_tasks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+
+            meeting_date = date.today() + timedelta(days=2)
+            meeting, _ = service.add_entry(
+                project.id,
+                "meeting",
+                "Sprint review",
+                [],
+                "",
+                entry_date=meeting_date,
+            )
+            task = service.create_task(
+                project.id,
+                "Prepare review deck",
+                [],
+                None,
+                None,
+                due_date=(date.today() + timedelta(days=1)).isoformat(),
+            )
+
+            upcoming = service.get_upcoming_items(days=7)
+            item_ids = {item["item_id"] for item in upcoming}
+            item_types = {item["type"] for item in upcoming}
+
+            self.assertIn(meeting.id, item_ids)
+            self.assertIn(task.id, item_ids)
+            self.assertIn("Meeting", item_types)
+            self.assertIn("Task", item_types)
+
+    def test_get_focus_suggestions_exposes_weekly_actionable_metrics(self) -> None:
+        with TemporaryDirectory() as tmp:
+            service = self._build_service(tmp)
+            project = service.create_project("Alpha", None, [])
+
+            service.create_task(
+                project.id,
+                "Late task",
+                [],
+                None,
+                None,
+                due_date=(date.today() - timedelta(days=1)).isoformat(),
+            )
+            service.add_entry(
+                project.id,
+                "decision",
+                "Choose provider",
+                [],
+                "",
+                decision_done=False,
+            )
+
+            focus = service.get_focus_suggestions()
+
+            self.assertIn("weekly", focus)
+            weekly = focus["weekly"]
+            self.assertGreaterEqual(weekly["overdue_tasks"], 1)
+            self.assertGreaterEqual(weekly["pending_decisions"], 1)
+            self.assertTrue(isinstance(weekly["top_overdue_tasks"], list))
+

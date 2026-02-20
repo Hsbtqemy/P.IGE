@@ -102,8 +102,8 @@ def show_new_entry_dialog(
     dialog.transient(parent.winfo_toplevel() if hasattr(parent, "winfo_toplevel") else parent)
     dialog.resizable(True, True)
     dialog.columnconfigure(1, weight=1)
-    dialog.rowconfigure(6, weight=1)
-    dialog.rowconfigure(10, weight=1)
+    dialog.rowconfigure(7, weight=1)
+    dialog.rowconfigure(11, weight=1)
 
     ttk.Label(dialog, text="Date (DD/MM/YYYY)").grid(
         row=0, column=0, sticky=tk.W, padx=6, pady=6
@@ -152,9 +152,14 @@ def show_new_entry_dialog(
         row=5, column=1, padx=6, pady=6, sticky="ew"
     )
 
-    ttk.Label(dialog, text="Known tags").grid(row=6, column=0, sticky=tk.NW, padx=6, pady=6)
+    ttk.Label(dialog, text="Priorité (1=haute, 5=basse)").grid(row=6, column=0, sticky=tk.W, padx=6, pady=6)
+    priority_var = tk.IntVar(value=3)
+    priority_spin = ttk.Spinbox(dialog, from_=1, to=5, width=5, textvariable=priority_var)
+    priority_spin.grid(row=6, column=1, padx=6, pady=6, sticky=tk.W)
+
+    ttk.Label(dialog, text="Known tags").grid(row=7, column=0, sticky=tk.NW, padx=6, pady=6)
     tag_frame = ttk.Frame(dialog)
-    tag_frame.grid(row=6, column=1, padx=6, pady=6, sticky="nsew")
+    tag_frame.grid(row=7, column=1, padx=6, pady=6, sticky="nsew")
     tag_frame.columnconfigure(0, weight=1)
     tag_frame.rowconfigure(0, weight=1)
     tag_list = tk.Listbox(tag_frame, selectmode=tk.MULTIPLE, height=5)
@@ -171,26 +176,26 @@ def show_new_entry_dialog(
     ).grid(row=1, column=0, columnspan=2, padx=4, pady=4, sticky=tk.W)
 
     start_label = ttk.Label(dialog, text="Start (HH:MM)")
-    start_label.grid(row=7, column=0, sticky=tk.W, padx=6, pady=6)
+    start_label.grid(row=8, column=0, sticky=tk.W, padx=6, pady=6)
     start_var = tk.StringVar()
     start_entry = ttk.Entry(dialog, textvariable=start_var, width=12)
-    start_entry.grid(row=7, column=1, padx=6, pady=6, sticky=tk.W)
+    start_entry.grid(row=8, column=1, padx=6, pady=6, sticky=tk.W)
 
     end_label = ttk.Label(dialog, text="End (HH:MM)")
-    end_label.grid(row=8, column=0, sticky=tk.W, padx=6, pady=6)
+    end_label.grid(row=9, column=0, sticky=tk.W, padx=6, pady=6)
     end_var = tk.StringVar()
     end_entry = ttk.Entry(dialog, textvariable=end_var, width=12)
-    end_entry.grid(row=8, column=1, padx=6, pady=6, sticky=tk.W)
+    end_entry.grid(row=9, column=1, padx=6, pady=6, sticky=tk.W)
 
     decision_label = ttk.Label(dialog, text="Applied/Done")
-    decision_label.grid(row=9, column=0, sticky=tk.W, padx=6, pady=6)
+    decision_label.grid(row=10, column=0, sticky=tk.W, padx=6, pady=6)
     decision_var = tk.BooleanVar(value=False)
     decision_check = ttk.Checkbutton(dialog, variable=decision_var)
-    decision_check.grid(row=9, column=1, padx=6, pady=6, sticky=tk.W)
+    decision_check.grid(row=10, column=1, padx=6, pady=6, sticky=tk.W)
 
-    ttk.Label(dialog, text="Body").grid(row=10, column=0, sticky=tk.NW, padx=6, pady=6)
+    ttk.Label(dialog, text="Body").grid(row=11, column=0, sticky=tk.NW, padx=6, pady=6)
     body_frame = ttk.Frame(dialog)
-    body_frame.grid(row=10, column=1, padx=6, pady=6, sticky="nsew")
+    body_frame.grid(row=11, column=1, padx=6, pady=6, sticky="nsew")
     body_frame.columnconfigure(0, weight=1)
     body_frame.rowconfigure(0, weight=1)
     body_text = tk.Text(body_frame, width=50, height=8, wrap="word")
@@ -268,6 +273,12 @@ def show_new_entry_dialog(
         entry_type = _internal_entry_type(type_var.get())
         body = raw_body if raw_body.strip() else render_body_template(entry_type)
         try:
+            prio = priority_var.get()
+        except tk.TclError:
+            prio = 3
+        if not (1 <= prio <= 5):
+            prio = 3
+        try:
             entry, content_path = service.add_entry(
                 project_id,
                 entry_type,
@@ -280,6 +291,7 @@ def show_new_entry_dialog(
                 start_time=(start_var.get().strip() or None) if entry_type == "meeting" else None,
                 end_time=(end_var.get().strip() or None) if entry_type == "meeting" else None,
                 decision_done=decision_var.get() if entry_type == "decision" else None,
+                priority=prio,
             )
         except ValueError as exc:
             messagebox.showerror("Error", str(exc))
@@ -291,7 +303,7 @@ def show_new_entry_dialog(
     toggle_fields()
 
     ttk.Button(dialog, text="Create", command=submit).grid(
-        row=11, column=0, columnspan=2, pady=10
+        row=12, column=0, columnspan=2, pady=10
     )
 
     dialog.wait_window()

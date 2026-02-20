@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import tkinter as tk
+from dataclasses import replace
 from tkinter import ttk
 from typing import TYPE_CHECKING
 
@@ -71,7 +72,41 @@ class ProjectsPanel(ttk.Frame):
             text="Refresh",
             command=self.refresh
         ).pack(side=tk.LEFT, padx=2)
-    
+
+        ttk.Button(
+            toolbar,
+            text="Expand all",
+            command=self.expand_all
+        ).pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(
+            toolbar,
+            text="Collapse all",
+            command=self.collapse_all
+        ).pack(side=tk.LEFT, padx=2)
+
+        self._show_archived_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            toolbar,
+            text="Afficher les archives",
+            variable=self._show_archived_var,
+            command=self.refresh,
+        ).pack(side=tk.LEFT, padx=(15, 0))
+
+    def _set_open_recursive(self, parent_iid: str, open_state: bool) -> None:
+        """Set open state for a node and all its descendants."""
+        for iid in self.tree.get_children(parent_iid):
+            self.tree.item(iid, open=open_state)
+            self._set_open_recursive(iid, open_state)
+
+    def expand_all(self) -> None:
+        """Expand all nodes in the projects tree."""
+        self._set_open_recursive("", True)
+
+    def collapse_all(self) -> None:
+        """Collapse all nodes in the projects tree."""
+        self._set_open_recursive("", False)
+
     def _setup_tree(self) -> None:
         """Create the projects TreeView."""
         # TreeView with scrollbar
@@ -83,7 +118,7 @@ class ProjectsPanel(ttk.Frame):
         
         self.tree = ttk.Treeview(
             tree_frame,
-            columns=("name", "status", "tasks", "modified"),
+            columns=("name", "status", "tasks", "priority", "modified"),
             show="tree headings",
             yscrollcommand=scrollbar.set
         )
@@ -94,16 +129,19 @@ class ProjectsPanel(ttk.Frame):
         self.tree.heading("name", text="Name", command=lambda: self._sort_by_column("name"))
         self.tree.heading("status", text="Status", command=lambda: self._sort_by_column("status"))
         self.tree.heading("tasks", text="Tasks", command=lambda: self._sort_by_column("tasks"))
+        self.tree.heading("priority", text="Prio", command=lambda: self._sort_by_column("priority"))
         self.tree.heading("modified", text="Last Modified", command=lambda: self._sort_by_column("modified"))
         
         self.tree.column("#0", width=40, stretch=False)
-        self.tree.column("name", width=200, stretch=True)
-        self.tree.column("status", width=100, stretch=False)
-        self.tree.column("tasks", width=80, stretch=False)
-        self.tree.column("modified", width=150, stretch=False)
+        self.tree.column("name", width=180, stretch=True)
+        self.tree.column("status", width=90, stretch=False)
+        self.tree.column("tasks", width=70, stretch=False)
+        self.tree.column("priority", width=40, stretch=False)
+        self.tree.column("modified", width=130, stretch=False)
         
         # Bind events
         self.tree.bind("<Double-Button-1>", self._on_double_click)
+        self.tree.bind("<Button-3>", self._on_tree_right_click)
         
         # Drag & drop bindings
         self.tree.bind("<ButtonPress-1>", self._on_drag_start)
@@ -127,8 +165,9 @@ class ProjectsPanel(ttk.Frame):
         """Refresh the projects list with pagination."""
         logger.debug("Refreshing projects panel")
 
-        # Load all projects (active only by default), exclude calendar-sync subscription folders
-        projects = self.service.list_projects(status="active")
+        # Load projects; include archived only if checkbox is set
+        status_filter = "all" if self._show_archived_var.get() else "active"
+        projects = self.service.list_projects(status=status_filter)
         projects = [p for p in projects if "calendar-sync" not in (p.tags or [])]
         self._projects_by_id = {p.id: p for p in projects}
         
@@ -155,6 +194,7 @@ class ProjectsPanel(ttk.Frame):
             self._sort_reverse = False
         
         self._apply_sort()
+        self.incremental_tree._snapshot = None  # force full rebuild so display order matches sorted list
         self._refresh_current_page()
     
     def _apply_sort(self) -> None:
@@ -169,6 +209,8 @@ class ProjectsPanel(ttk.Frame):
                 tasks = self.service.list_tasks(project_id=p.id, status="all")
                 return len([t for t in tasks if t.status != "done"])
             self._all_root_projects.sort(key=task_count, reverse=self._sort_reverse)
+        elif self._sort_column == "priority":
+            self._all_root_projects.sort(key=lambda p: getattr(p, "priority", 3), reverse=self._sort_reverse)
         elif self._sort_column == "modified":
             self._all_root_projects.sort(key=lambda p: p.created_at or "", reverse=self._sort_reverse)
     
@@ -226,11 +268,12 @@ class ProjectsPanel(ttk.Frame):
         # Icon
         icon = "📁" if project.status == "active" else "📦"
         
+        prio = getattr(project, "priority", 3)
         # Create node
         node = TreeNode(
             id=project.id,
             parent_id=parent_id,
-            values=(project.name, project.status, tasks_str, modified_str),
+            values=(project.name, project.status, tasks_str, str(prio), modified_str),
             data=project,
             tags=(),
             open=False  # Could load from preferences later
@@ -266,6 +309,95 @@ class ProjectsPanel(ttk.Frame):
         project_id = selection[0]
         logger.info(f"Project double-clicked: {project_id}")
         # TODO: Open project details or trigger callback
+    
+    def _on_tree_right_click(self, event: tk.Event) -> None:
+        """Show context menu on right-click on a project."""
+        from tkinter import messagebox
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        self.tree.selection_set(item)
+        project = self._projects_by_id.get(item)
+        menu = tk.Menu(self, tearoff=0)
+        if project and project.status == "active":
+            menu.add_command(
+                label="📦 Archiver le projet",
+                command=lambda: self._on_archive_project(item),
+            )
+        elif project and project.status == "archived":
+            menu.add_command(
+                label="📂 Désarchiver le projet",
+                command=lambda: self._on_unarchive_project(item),
+            )
+        menu.add_command(
+            label="🗑️ Supprimer le projet",
+            command=lambda: self._on_delete_project(item),
+        )
+        menu.post(event.x_root, event.y_root)
+    
+    def _on_archive_project(self, project_id: str) -> None:
+        """Set project status to archived."""
+        from tkinter import messagebox
+        project = self._projects_by_id.get(project_id)
+        if not project or project.status == "archived":
+            return
+        try:
+            self.service.update_project(
+                project_id,
+                name=project.name,
+                description=project.description,
+                tags=project.tags,
+                person=project.person,
+                group=project.group,
+                status="archived",
+            )
+            self._projects_by_id[project_id] = replace(project, status="archived")
+            self.refresh()
+            messagebox.showinfo("Succès", f"Projet « {project.name} » archivé.")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible d'archiver:\n{e}")
+
+    def _on_unarchive_project(self, project_id: str) -> None:
+        """Set project status back to active."""
+        from tkinter import messagebox
+        project = self._projects_by_id.get(project_id)
+        if not project or project.status != "archived":
+            return
+        try:
+            self.service.update_project(
+                project_id,
+                name=project.name,
+                description=project.description,
+                tags=project.tags,
+                person=project.person,
+                group=project.group,
+                status="active",
+            )
+            self._projects_by_id[project_id] = replace(project, status="active")
+            self.refresh()
+            messagebox.showinfo("Succès", f"Projet « {project.name} » désarchivé.")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de désarchiver:\n{e}")
+
+    def _on_delete_project(self, project_id: str) -> None:
+        """Delete project (and its sub-projects) after confirmation."""
+        from tkinter import messagebox
+        project = self._projects_by_id.get(project_id)
+        if not project:
+            return
+        children = [p for p in self._projects_by_id.values() if p.parent_id == project_id]
+        msg = f"Supprimer le projet \"{project.name}\"?"
+        if children:
+            msg += f"\n\nCe projet a {len(children)} sous-projet(s). Eux et toutes leurs entries seront aussi supprimés."
+        msg += "\n\nCette action est irréversible."
+        if not messagebox.askyesno("Confirmer suppression", msg):
+            return
+        try:
+            self.service.delete_project(project_id)
+            self.refresh()
+            messagebox.showinfo("Succès", "Projet supprimé")
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Impossible de supprimer le projet:\n{e}")
     
     def _on_drag_start(self, event) -> None:
         """Start drag operation."""
@@ -336,10 +468,7 @@ class ProjectsPanel(ttk.Frame):
         if result:
             try:
                 # Update project parent
-                self.service.update_project(
-                    project_id=source_project_id,
-                    updates={"parent_id": target_project_id}
-                )
+                self.service.move_project(source_project_id, target_project_id)
                 
                 # Refresh to show new hierarchy
                 self.refresh()

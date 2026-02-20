@@ -118,9 +118,9 @@ class SearchPanel(ttk.Frame):
         scrollbar.config(command=self.results_tree.yview)
         
         # Configure columns
-        self.results_tree.heading("type", text="Type")
-        self.results_tree.heading("title", text="Title")
-        self.results_tree.heading("context", text="Context")
+        self.results_tree.heading("type", text="Type", command=lambda: self._sort_results_tree("type"))
+        self.results_tree.heading("title", text="Title", command=lambda: self._sort_results_tree("title"))
+        self.results_tree.heading("context", text="Context", command=lambda: self._sort_results_tree("context"))
         
         self.results_tree.column("type", width=80, stretch=False)
         self.results_tree.column("title", width=250, stretch=True)
@@ -129,6 +129,37 @@ class SearchPanel(ttk.Frame):
         # Bind events
         self.results_tree.bind("<Double-Button-1>", self._on_result_double_click)
         self.results_tree.bind("<Return>", self._on_result_double_click)
+
+    def _sort_results_tree(self, column_id: str) -> None:
+        """Sort results tree by column; keep current_results in sync for double-click."""
+        cols = ("type", "title", "context")
+        if column_id not in cols:
+            return
+        if not hasattr(self, "_results_sort_col"):
+            self._results_sort_col = None
+            self._results_sort_reverse = False
+        if self._results_sort_col == column_id:
+            self._results_sort_reverse = not self._results_sort_reverse
+        else:
+            self._results_sort_col = column_id
+            self._results_sort_reverse = False
+        col_idx = cols.index(column_id)
+        children = self.results_tree.get_children("")
+        if not children or len(self.current_results) != len(children):
+            return
+        items = [(i, iid, self.results_tree.item(iid, "values")) for i, iid in enumerate(children)]
+        def sort_key(x):
+            idx, iid, vals = x
+            if col_idx >= len(vals):
+                return ""
+            return (vals[col_idx] or "").strip().lower()
+        items.sort(key=sort_key, reverse=self._results_sort_reverse)
+        for iid in children:
+            self.results_tree.delete(iid)
+        new_results = [self.current_results[idx] for idx, iid, vals in items]
+        self.current_results[:] = new_results
+        for idx, iid, vals in items:
+            self.results_tree.insert("", tk.END, values=vals)
     
     def _setup_status_bar(self) -> None:
         """Create the status bar."""
@@ -242,7 +273,7 @@ class SearchPanel(ttk.Frame):
     
     def _add_project_results(self, project_ids: list[str]) -> None:
         """Add project results to the TreeView."""
-        projects = self.service.list_projects()
+        projects = self.service.list_projects(status="all")
         projects_by_id = {p.id: p for p in projects}
         
         for project_id in project_ids:
@@ -272,7 +303,7 @@ class SearchPanel(ttk.Frame):
     def _add_task_results(self, task_ids: list[str]) -> None:
         """Add task results to the TreeView."""
         # Get all tasks from all projects
-        projects = self.service.list_projects()
+        projects = self.service.list_projects(status="all")
         projects_by_id = {p.id: p for p in projects}
         
         all_tasks = []

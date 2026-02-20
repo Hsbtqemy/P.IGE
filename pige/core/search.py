@@ -156,6 +156,8 @@ def apply_search_filters(entries: list[EntryMeta], filters: SearchFilters) -> li
     result = []
     
     for entry in entries:
+        entry_date = _coerce_entry_date(entry.entry_date)
+
         # Check tags filter (all specified tags must be present)
         if filters.tags:
             entry_tags_lower = [t.lower() for t in entry.tags]
@@ -179,17 +181,17 @@ def apply_search_filters(entries: list[EntryMeta], filters: SearchFilters) -> li
         
         # Check exact date filter
         if filters.entry_date:
-            if entry.entry_date != filters.entry_date:
+            if entry_date is None or entry_date != filters.entry_date:
                 continue
-        
+
         # Check date >= filter
         if filters.entry_date_gte:
-            if entry.entry_date < filters.entry_date_gte:
+            if entry_date is None or entry_date < filters.entry_date_gte:
                 continue
-        
+
         # Check date <= filter
         if filters.entry_date_lte:
-            if entry.entry_date > filters.entry_date_lte:
+            if entry_date is None or entry_date > filters.entry_date_lte:
                 continue
         
         # Check context status filter
@@ -211,6 +213,20 @@ def apply_search_filters(entries: list[EntryMeta], filters: SearchFilters) -> li
         result.append(entry)
     
     return result
+
+
+def _coerce_entry_date(value: object) -> date | None:
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    try:
+        return dates.parse_date(cleaned)
+    except ValueError:
+        return None
 
 
 def format_search_query_help() -> str:

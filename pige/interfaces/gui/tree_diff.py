@@ -277,10 +277,10 @@ class IncrementalTreeView:
         self._snapshot = new_nodes
     
     def _rebuild_tree(self, nodes: dict[str, TreeNode]) -> None:
-        """Full rebuild (used for first load)."""
+        """Full rebuild (used for first load). Preserves insertion order of nodes at same depth."""
         self.tree.delete(*self.tree.get_children())
-        
-        # Sort by depth (parents before children)
+        order_list = list(nodes.keys())  # insertion order (Python 3.7+)
+
         def get_depth(node: TreeNode) -> int:
             depth = 0
             current = node
@@ -288,9 +288,13 @@ class IncrementalTreeView:
                 depth += 1
                 current = nodes[current.parent_id]
             return depth
-        
-        sorted_nodes = sorted(nodes.values(), key=lambda n: (get_depth(n), n.id))
-        
+
+        def sort_key(node: TreeNode):
+            idx = order_list.index(node.id) if node.id in order_list else 9999
+            return (get_depth(node), idx)
+
+        sorted_nodes = sorted(nodes.values(), key=sort_key)
+
         for node in sorted_nodes:
             parent_iid = node.parent_id or ""
             self.tree.insert(
