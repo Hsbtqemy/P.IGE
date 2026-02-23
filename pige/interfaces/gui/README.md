@@ -15,7 +15,8 @@ pige/interfaces/gui/
 │   ├── new_project.py       # TODO: New project dialog
 │   ├── new_entry.py         # TODO: New entry dialog
 │   ├── new_task.py          # TODO: New task dialog
-│   ├── export.py            # TODO: Export dialogs
+│   ├── export_dialogs.py    # Export: projet brut/narratif, CR réunion, résumé hebdo, hiérarchie ✓
+│   ├── followup_tasks.py    # Créer tâches de suivi depuis ACTION/TODO d'une entrée ✓
 │   ├── preferences.py       # TODO: Preferences dialog
 │   └── ...                  # Other dialogs
 ├── panels/                  # Main UI panels
@@ -38,6 +39,10 @@ pige/interfaces/gui/
 - Created `about.py` and `keyboard_shortcuts.py` dialogs
 - Created example `projects_panel.py`
 - Created skeleton `main_window.py`
+- **Menu Fichier** : Sauvegarder / Restaurer les données (backup ZIP)
+- **Menu Outils** : Reconstruire l’index, Migrer les données, Compacter le journal
+- **Panneau Work** : Temps du jour (sous le timer), Journal du jour (entrées du jour), bouton « Créer tâches de suivi »
+- **Export** : dialogs projet (brut/narratif), CR réunion, résumé hebdo, hiérarchie ; menu Fichier → Exporter… + clic droit sur projet/entrée dans Work
 
 ### 🔄 In Progress
 - **Legacy monolith**: `pige/interfaces/gui.py` (6122 lines) still exists

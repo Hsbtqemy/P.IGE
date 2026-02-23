@@ -5,13 +5,18 @@ from __future__ import annotations
 import logging
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from pige.core.service import PigeService
 from pige.core.storage import Storage
 from pige.interfaces import gui_helpers
 from pige.interfaces.gui.dialogs import (
     show_about_dialog,
+    show_export_hierarchy_dialog,
+    show_export_meeting_minutes_dialog,
+    show_export_project_narrative_dialog,
+    show_export_project_raw_dialog,
+    show_export_weekly_summary_dialog,
     show_keyboard_shortcuts,
     show_new_entry_dialog,
     show_new_project_dialog,
@@ -90,12 +95,60 @@ class PigeMainWindow(tk.Tk):
             command=self._on_new_entry
         )
         file_menu.add_separator()
+        export_menu = tk.Menu(file_menu, tearoff=0)
+        file_menu.add_cascade(label="Exporter…", menu=export_menu)
+        export_menu.add_command(
+            label="Projet (brut)…",
+            command=self._on_export_project_raw
+        )
+        export_menu.add_command(
+            label="Projet (narratif)…",
+            command=self._on_export_project_narrative
+        )
+        export_menu.add_command(
+            label="Compte-rendu de réunion…",
+            command=self._on_export_meeting_minutes
+        )
+        export_menu.add_command(
+            label="Résumé hebdomadaire…",
+            command=self._on_export_weekly_summary
+        )
+        export_menu.add_command(
+            label="Hiérarchie des projets…",
+            command=self._on_export_hierarchy
+        )
+        file_menu.add_separator()
+        file_menu.add_command(
+            label="Sauvegarder les données…",
+            command=self._on_backup
+        )
+        file_menu.add_command(
+            label="Restaurer depuis une sauvegarde…",
+            command=self._on_restore
+        )
+        file_menu.add_separator()
         file_menu.add_command(
             label="Quit",
             accelerator=gui_helpers._menu_accel("Q"),
             command=self.quit
         )
         
+        # Tools menu
+        tools_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Outils", menu=tools_menu)
+        tools_menu.add_command(
+            label="Reconstruire l’index de recherche",
+            command=self._on_rebuild_index
+        )
+        tools_menu.add_command(
+            label="Migrer les données (hiérarchie projets)",
+            command=self._on_migrate
+        )
+        tools_menu.add_command(
+            label="Compacter le journal des entrées",
+            command=self._on_compact
+        )
+
         # Search menu
         search_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Search", menu=search_menu)
@@ -283,6 +336,134 @@ class PigeMainWindow(tk.Tk):
         # Bring entry to front in explorer (expand project, select and scroll to it)
         self.work_panel.reveal_entry_in_explorer(entry_id)
     
+    def _on_export_project_raw(self) -> None:
+        """Open export project (raw) dialog; pre-fill current project if any."""
+        pid = getattr(self.work_panel, "current_project_id", None)
+        show_export_project_raw_dialog(self, self.service, initial_project_id=pid)
+
+    def _on_export_project_narrative(self) -> None:
+        """Open export project (narrative) dialog; pre-fill current project if any."""
+        pid = getattr(self.work_panel, "current_project_id", None)
+        show_export_project_narrative_dialog(self, self.service, initial_project_id=pid)
+
+    def _on_export_meeting_minutes(self) -> None:
+        """Open export meeting minutes dialog; pre-fill current entry if it's a meeting."""
+        entry_id = getattr(self.work_panel, "_current_entry_id", None)
+        if entry_id:
+            entry = self.service.storage.get_entry(entry_id)
+            if entry and getattr(entry, "type", None) != "meeting":
+                entry_id = None
+        show_export_meeting_minutes_dialog(self, self.service, initial_entry_id=entry_id)
+
+    def _on_export_weekly_summary(self) -> None:
+        """Open export weekly summary dialog; pre-fill current project if any."""
+        pid = getattr(self.work_panel, "current_project_id", None)
+        show_export_weekly_summary_dialog(self, self.service, initial_project_id=pid)
+
+    def _on_export_hierarchy(self) -> None:
+        """Open export project hierarchy dialog."""
+        show_export_hierarchy_dialog(self, self.service)
+
+    def _on_backup(self) -> None:
+        """Save backup ZIP; offer to open folder."""
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Sauvegarder les données",
+            defaultextension=".zip",
+            filetypes=[("Zip", "*.zip"), ("Tous", "*.*")],
+            initialdir=str(self.storage.exports_dir),
+        )
+        if not path:
+            return
+        try:
+            out = self.service.backup_data(path)
+            messagebox.showinfo("Sauvegarde", f"Sauvegarde enregistrée :\n{out}")
+        except Exception as e:
+            logger.exception("Backup failed")
+            messagebox.showerror("Erreur", f"Impossible de sauvegarder :\n{e}")
+
+    def _on_restore(self) -> None:
+        """Restore from backup ZIP; confirm then reload."""
+        path = filedialog.askopenfilename(
+            parent=self,
+            title="Restaurer depuis une sauvegarde",
+            filetypes=[("Zip", "*.zip"), ("Tous", "*.*")],
+            initialdir=str(self.storage.exports_dir),
+        )
+        if not path:
+            return
+        if not messagebox.askyesno(
+            "Confirmer la restauration",
+            "Restaurer va remplacer toutes les données actuelles par celles de la sauvegarde.\n\n"
+            "Voulez-vous continuer ?",
+            icon="warning",
+        ):
+            return
+        try:
+            self.service.restore_data(path)
+            messagebox.showinfo("Restauration", "Restauration terminée. L’application va se fermer ; relancez-la.")
+            self.quit()
+        except Exception as e:
+            logger.exception("Restore failed")
+            messagebox.showerror("Erreur", f"Impossible de restaurer :\n{e}")
+
+    def _on_rebuild_index(self) -> None:
+        """Rebuild full-text search index."""
+        if not messagebox.askyesno(
+            "Reconstruire l’index",
+            "Reconstruire l’index de recherche ? Utile si la recherche ne renvoie plus de résultats.",
+            icon="question",
+        ):
+            return
+        try:
+            stats = self.service.storage.rebuild_search_index()
+            messagebox.showinfo(
+                "Index reconstruit",
+                f"Index mis à jour :\n  Entrées : {stats.get('entries', 0)}\n  Projets : {stats.get('projects', 0)}\n  Tâches : {stats.get('tasks', 0)}",
+            )
+        except Exception as e:
+            logger.exception("Rebuild index failed")
+            messagebox.showerror("Erreur", f"Impossible de reconstruire l’index :\n{e}")
+
+    def _on_migrate(self) -> None:
+        """Run hierarchy migration for projects."""
+        if not messagebox.askyesno(
+            "Migrer les données",
+            "Appliquer la migration (hiérarchie des projets) ? Sans danger si déjà faite.",
+            icon="question",
+        ):
+            return
+        try:
+            stats = self.service.storage.migrate_projects_hierarchy()
+            messagebox.showinfo(
+                "Migration terminée",
+                f"Projets : {stats.get('total', 0)} total, {stats.get('migrated', 0)} migrés, {stats.get('already_migrated', 0)} déjà à jour.",
+            )
+            self.work_panel.refresh()
+            if hasattr(self, "browse_panel"):
+                self.browse_panel.projects_panel.refresh()
+        except Exception as e:
+            logger.exception("Migrate failed")
+            messagebox.showerror("Erreur", f"Impossible de migrer :\n{e}")
+
+    def _on_compact(self) -> None:
+        """Compact entries log (removes update/delete history)."""
+        if not messagebox.askyesno(
+            "Compacter le journal",
+            "Compacter le journal des entrées ? Réduit la taille du fichier en supprimant l’historique des modifications.",
+            icon="question",
+        ):
+            return
+        try:
+            recap = self.service.compact_entries()
+            messagebox.showinfo(
+                "Compaction terminée",
+                f"Lignes : {recap.get('before_lines', 0)} → {recap.get('after_lines', 0)} ({recap.get('entries_count', 0)} entrées).",
+            )
+        except Exception as e:
+            logger.exception("Compact failed")
+            messagebox.showerror("Erreur", f"Impossible de compacter :\n{e}")
+
     def _show_keyboard_shortcuts(self) -> None:
         """Show keyboard shortcuts dialog."""
         show_keyboard_shortcuts(self, gui_helpers._menu_accel)

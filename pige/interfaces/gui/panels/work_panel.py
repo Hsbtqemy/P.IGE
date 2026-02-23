@@ -8,7 +8,17 @@ from tkinter import ttk, messagebox
 
 from pige.core.exceptions import ProjectNotFoundError
 from pige.core.service import PigeService
-from pige.interfaces.gui.dialogs import show_edit_task_dialog, show_new_project_dialog, show_new_task_dialog
+from pige.interfaces.gui.dialogs import (
+    show_edit_task_dialog,
+    show_export_hierarchy_dialog,
+    show_export_meeting_minutes_dialog,
+    show_export_project_narrative_dialog,
+    show_export_project_raw_dialog,
+    show_export_weekly_summary_dialog,
+    show_followup_tasks_dialog,
+    show_new_project_dialog,
+    show_new_task_dialog,
+)
 from pige.interfaces.gui_constants import AUTOSAVE_DELAY_MS
 
 logger = logging.getLogger(__name__)
@@ -87,6 +97,28 @@ class WorkPanel(ttk.Frame):
             width=10
         )
         self.btn_stop_timer.pack(side=tk.LEFT, padx=2)
+        
+        # Temps du jour (time tracked today per project)
+        self.time_today_var = tk.StringVar(value="")
+        time_today_label = ttk.Label(timer_frame, textvariable=self.time_today_var, font=("TkDefaultFont", 9))
+        time_today_label.pack(side=tk.LEFT, padx=(20, 0))
+        
+        # Journal du jour: small list of today's entries
+        journal_frame = ttk.LabelFrame(self, text="📋 Journal du jour", padding=5)
+        journal_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        self.journal_listbox = tk.Listbox(
+            journal_frame,
+            height=4,
+            font=("TkDefaultFont", 9),
+            selectmode=tk.SINGLE,
+            activestyle="none",
+        )
+        journal_scroll = ttk.Scrollbar(journal_frame, orient=tk.VERTICAL, command=self.journal_listbox.yview)
+        self.journal_listbox.configure(yscrollcommand=journal_scroll.set)
+        self.journal_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        journal_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.journal_listbox.bind("<Double-1>", self._on_journal_entry_double_click)
+        self._journal_items: list[str] = []  # entry_id for each index
     
     def _setup_explorer(self) -> None:
         """Setup project/entry explorer tree."""
@@ -393,6 +425,26 @@ class WorkPanel(ttk.Frame):
             text="📄 Ouvrir MD externe",
             command=self._on_open_external
         ).pack(side=tk.LEFT, padx=(5, 0))
+        
+        self.btn_followup = ttk.Button(
+            btn_row,
+            text="✓ Créer tâches de suivi",
+            command=self._on_create_followup_tasks,
+            state=tk.DISABLED,
+        )
+        self.btn_followup.pack(side=tk.LEFT, padx=(5, 0))
+    
+    def _on_create_followup_tasks(self) -> None:
+        """Open dialog to create tasks from ACTION/TODO lines in current entry."""
+        if not self._current_entry_id:
+            messagebox.showwarning("Attention", "Aucune entrée chargée.", parent=self.winfo_toplevel())
+            return
+        show_followup_tasks_dialog(
+            self.winfo_toplevel(),
+            self.service,
+            self._current_entry_id,
+            on_created=lambda _: self._refresh_tasks(),
+        )
     
     def _setup_tasks_section(self) -> None:
         """Setup tasks list for active project."""
@@ -693,18 +745,43 @@ class WorkPanel(ttk.Frame):
             elif project and project.status == "archived":
                 menu.add_command(label="📂 Désarchiver le projet", command=lambda: self._unarchive_project(project_id))
             menu.add_separator()
+            export_sub = tk.Menu(menu, tearoff=0)
+            export_sub.add_command(
+                label="Projet (brut)…",
+                command=lambda: show_export_project_raw_dialog(self.winfo_toplevel(), self.service, project_id),
+            )
+            export_sub.add_command(
+                label="Projet (narratif)…",
+                command=lambda: show_export_project_narrative_dialog(self.winfo_toplevel(), self.service, project_id),
+            )
+            export_sub.add_command(
+                label="Résumé hebdomadaire…",
+                command=lambda: show_export_weekly_summary_dialog(self.winfo_toplevel(), self.service, project_id),
+            )
+            export_sub.add_command(
+                label="Hiérarchie des projets…",
+                command=lambda: show_export_hierarchy_dialog(self.winfo_toplevel(), self.service),
+            )
+            menu.add_cascade(label="Exporter…", menu=export_sub)
+            menu.add_separator()
             menu.add_command(label="🗑️ Supprimer le projet", command=lambda: self._delete_project_from_explorer(project_id))
             menu.add_separator()
             menu.add_command(label="🔄 Rafraîchir", command=self.refresh)
             
         elif item.startswith("entry:"):
             # Entry context menu
-            menu.add_command(label="✏️ Éditer", command=lambda: self._load_entry_in_editor(item.replace("entry:", "")))
-            menu.add_command(label="📄 Ouvrir MD externe", command=lambda: self._open_entry_external(item.replace("entry:", "")))
+            entry_id = item.replace("entry:", "")
+            menu.add_command(label="✏️ Éditer", command=lambda: self._load_entry_in_editor(entry_id))
+            menu.add_command(label="📄 Ouvrir MD externe", command=lambda: self._open_entry_external(entry_id))
             menu.add_separator()
-            menu.add_command(label="📋 Copier ID", command=lambda: self._copy_to_clipboard(item.replace("entry:", "")))
+            menu.add_command(
+                label="Exporter compte-rendu de réunion…",
+                command=lambda: show_export_meeting_minutes_dialog(self.winfo_toplevel(), self.service, entry_id),
+            )
             menu.add_separator()
-            menu.add_command(label="🗑️ Supprimer", command=lambda: self._delete_entry_from_explorer(item.replace("entry:", "")))
+            menu.add_command(label="📋 Copier ID", command=lambda: self._copy_to_clipboard(entry_id))
+            menu.add_separator()
+            menu.add_command(label="🗑️ Supprimer", command=lambda: self._delete_entry_from_explorer(entry_id))
         
         menu.post(event.x_root, event.y_root)
     
@@ -1141,6 +1218,7 @@ class WorkPanel(ttk.Frame):
                     self.timer_var.set(f"⏱️ {project.name} - {hours:02d}:{minutes:02d}")
                     self.btn_start_timer.config(state=tk.DISABLED)
                     self.btn_stop_timer.config(state=tk.NORMAL)
+                    self._update_time_today_and_journal()
                     return
                 except Exception as e:
                     logger.error(f"Failed to parse timer: {e}")
@@ -1149,6 +1227,48 @@ class WorkPanel(ttk.Frame):
         self.timer_var.set("Aucun timer actif")
         self.btn_start_timer.config(state=tk.NORMAL)
         self.btn_stop_timer.config(state=tk.DISABLED)
+        
+        self._update_time_today_and_journal()
+    
+    def _update_time_today_and_journal(self) -> None:
+        """Update 'Temps du jour' label and journal du jour list."""
+        try:
+            today_sec = self.service.time_today()
+            if today_sec:
+                parts = []
+                for pid, sec in sorted(today_sec.items(), key=lambda x: -x[1])[:5]:
+                    proj = self._projects_by_id.get(pid)
+                    name = proj.name if proj else pid
+                    parts.append(f"{name}: {sec // 60} min")
+                self.time_today_var.set("Aujourd’hui: " + ", ".join(parts))
+            else:
+                self.time_today_var.set("Aujourd’hui: 0 min")
+        except Exception as e:
+            logger.debug("time_today: %s", e)
+            self.time_today_var.set("")
+        self._refresh_journal_today()
+    
+    def _refresh_journal_today(self) -> None:
+        """Populate journal du jour list from log_today()."""
+        self.journal_listbox.delete(0, tk.END)
+        self._journal_items.clear()
+        try:
+            for project, entries in self.service.log_today():
+                for entry in entries:
+                    title = (entry.title or "Sans titre")[:60]
+                    self.journal_listbox.insert(tk.END, f"  {project.name} — {title}")
+                    self._journal_items.append(entry.id)
+        except Exception as e:
+            logger.debug("log_today: %s", e)
+    
+    def _on_journal_entry_double_click(self, event: tk.Event) -> None:
+        """Load selected today's entry in editor and reveal in explorer."""
+        sel = self.journal_listbox.curselection()
+        if not sel or sel[0] >= len(self._journal_items):
+            return
+        entry_id = self._journal_items[sel[0]]
+        self.load_entry(entry_id)
+        self.reveal_entry_in_explorer(entry_id)
     
     def _get_descendant_project_ids(self, project_id: str) -> list[str]:
         """Return list of all descendant project IDs (children, grandchildren, ...)."""
@@ -1407,6 +1527,7 @@ class WorkPanel(ttk.Frame):
         self.entry_body_text.delete("1.0", tk.END)
         self.entry_type_var.set("note")
         self.entry_date_var.set("")
+        self.btn_followup.config(state=tk.DISABLED)
         self.entry_people_var.set("")
         self.entry_groups_var.set("")
         self.entry_tags_var.set("")
@@ -1699,6 +1820,7 @@ class WorkPanel(ttk.Frame):
             self._entry_modified = False
             self.entry_body_text.edit_modified(False)
             self.btn_save.config(state=tk.DISABLED)
+            self.btn_followup.config(state=tk.NORMAL)
             
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible de charger l'entry:\n{e}")

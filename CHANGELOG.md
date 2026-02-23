@@ -262,6 +262,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Gestion d'erreurs plus robuste dans l'interface graphique
 
+## [0.1.3] - 2025-02-19
+
+### Added
+- **Menu Fichier** : « Sauvegarder les données… » (backup ZIP), « Restaurer depuis une sauvegarde… » (avec confirmation).
+- **Menu Outils** : « Reconstruire l’index de recherche », « Migrer les données (hiérarchie projets) », « Compacter le journal des entrées » (avec confirmation et stats).
+- **Panneau Work** : Temps du jour (sous le timer), Journal du jour (entrées du jour, double-clic pour ouvrir), bouton « Créer tâches de suivi » (dialogue ACTION/TODO).
+- **Export contextuel** : clic droit sur projet → Exporter… (brut, narratif, résumé hebdo, hiérarchie) ; clic droit sur entrée → Exporter compte-rendu de réunion….
+
+### Changed
+- Documentation : `docs/AUDIT_GUI_VS_CLI_CORE.md` et `pige/interfaces/gui/README.md` mis à jour.
+
 ## [0.1.0] - 2024-01-XX
 
 ### Added
@@ -282,5 +293,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support multi-plateformes (Windows, macOS, Linux)
 - 68 tests unitaires
 
-[Unreleased]: https://github.com/user/pige/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/user/pige/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/user/pige/compare/v0.1.0...v0.1.3
 [0.1.0]: https://github.com/user/pige/releases/tag/v0.1.0
