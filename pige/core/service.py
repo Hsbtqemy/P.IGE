@@ -1032,6 +1032,11 @@ class PigeService:
         self.storage.append_entry_delete(entry_id, dates.utc_now_iso())
 
     def log_today(self) -> list[tuple[Project, list[EntryMeta]]]:
+        """Entrées dont `ts` (UTC Z) tombe dans l’intervalle « journée locale » courante.
+
+        Triées par `ts` dans chaque projet ; projets triés par nom.
+        Ne filtre pas sur `entry_date` (date affichée dans le journal).
+        """
         start_utc, end_utc = dates.local_day_range_utc()
         entries = self.storage.read_entries_meta()
         project_map = {project.id: project for project in self.storage.read_projects()}

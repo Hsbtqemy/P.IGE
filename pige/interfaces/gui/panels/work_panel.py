@@ -104,17 +104,31 @@ class WorkPanel(ttk.Frame):
         time_today_label = ttk.Label(timer_frame, textvariable=self.time_today_var, font=("TkDefaultFont", 9))
         time_today_label.pack(side=tk.LEFT, padx=(20, 0))
         
-        # Journal du jour: small list of today's entries
+        # Journal du jour : entrées dont le champ technique `ts` tombe dans la journée locale
+        # (voir PigeService.log_today — ce n’est pas filtré sur la « date de journal » entry_date).
         journal_frame = ttk.LabelFrame(self, text="📋 Journal du jour", padding=5)
         journal_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-        self.journal_listbox = tk.Listbox(
+        ttk.Label(
             journal_frame,
+            text=(
+                "Liste des entrées enregistrées aujourd’hui (fuseau local), "
+                "selon l’horodatage de création / mise à jour — pas selon la date affichée sur l’entrée. "
+                "Double-clic : ouvrir dans l’éditeur."
+            ),
+            font=("TkDefaultFont", 8),
+            foreground="gray",
+            wraplength=920,
+        ).pack(anchor=tk.W, pady=(0, 4))
+        journal_row = ttk.Frame(journal_frame)
+        journal_row.pack(fill=tk.BOTH, expand=True)
+        self.journal_listbox = tk.Listbox(
+            journal_row,
             height=4,
             font=("TkDefaultFont", 9),
             selectmode=tk.SINGLE,
             activestyle="none",
         )
-        journal_scroll = ttk.Scrollbar(journal_frame, orient=tk.VERTICAL, command=self.journal_listbox.yview)
+        journal_scroll = ttk.Scrollbar(journal_row, orient=tk.VERTICAL, command=self.journal_listbox.yview)
         self.journal_listbox.configure(yscrollcommand=journal_scroll.set)
         self.journal_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         journal_scroll.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1300,10 +1314,17 @@ class WorkPanel(ttk.Frame):
         self._journal_items.clear()
         try:
             for project, entries in self.service.log_today():
+                if "calendar-sync" in (project.tags or []):
+                    continue
                 for entry in entries:
                     title = (entry.title or "Sans titre")[:60]
                     self.journal_listbox.insert(tk.END, f"  {project.name} — {title}")
                     self._journal_items.append(entry.id)
+            if not self._journal_items:
+                self.journal_listbox.insert(
+                    tk.END,
+                    "  (Aucune entrée aujourd’hui — horodatage local, hors dossiers calendrier.)",
+                )
         except Exception as e:
             logger.debug("log_today: %s", e)
     

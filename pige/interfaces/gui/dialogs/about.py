@@ -5,6 +5,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from pige.utils.updates import get_installed_version
+
 
 def show_about_dialog(parent: tk.Tk) -> None:
     """Show About PIGE dialog."""
@@ -32,10 +34,10 @@ def show_about_dialog(parent: tk.Tk) -> None:
     )
     subtitle_label.pack(pady=(0, 20))
     
-    # Version
+    # Version (métadonnées du paquet installé)
     version_label = ttk.Label(
         frame,
-        text="Version 0.2.0-dev",
+        text=f"Version {get_installed_version()}",
         font=("TkDefaultFont", 9)
     )
     version_label.pack(pady=(0, 20))

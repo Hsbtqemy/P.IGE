@@ -13,6 +13,7 @@ from pige.core.storage import Storage
 from pige.interfaces import gui_helpers
 from pige.interfaces.gui.dialogs import (
     show_about_dialog,
+    show_check_updates_dialog,
     show_export_hierarchy_dialog,
     show_export_meeting_minutes_dialog,
     show_export_project_narrative_dialog,
@@ -166,6 +167,10 @@ class PigeMainWindow(tk.Tk):
             label="Keyboard Shortcuts",
             accelerator="F1",
             command=self._show_keyboard_shortcuts
+        )
+        help_menu.add_command(
+            label="Vérifier les mises à jour…",
+            command=self._on_check_updates,
         )
         help_menu.add_separator()
         help_menu.add_command(
@@ -519,6 +524,10 @@ class PigeMainWindow(tk.Tk):
     def _show_about(self) -> None:
         """Show about dialog."""
         show_about_dialog(self)
+
+    def _on_check_updates(self) -> None:
+        """Ouvre le dialogue de vérification des mises à jour (GitHub + pip)."""
+        show_check_updates_dialog(self)
     
     def _on_closing(self) -> None:
         """Handle window closing - save preferences."""
