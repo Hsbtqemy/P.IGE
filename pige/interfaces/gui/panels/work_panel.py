@@ -20,6 +20,7 @@ from pige.interfaces.gui.dialogs import (
     show_new_task_dialog,
 )
 from pige.interfaces.gui_constants import AUTOSAVE_DELAY_MS
+from pige.interfaces.gui_helpers import format_date_ui, parse_date_ui
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +370,30 @@ class WorkPanel(ttk.Frame):
         self.entry_priority_var = tk.IntVar(value=3)
         priority_spin = ttk.Spinbox(meta_row3, from_=1, to=5, width=4, textvariable=self.entry_priority_var)
         priority_spin.pack(side=tk.LEFT)
+
+        # Réunion : heures (affichées seulement si type = meeting)
+        self._meeting_meta_frame = ttk.Frame(meta_frame)
+        self.entry_start_var = tk.StringVar()
+        self.entry_end_var = tk.StringVar()
+        ttk.Label(self._meeting_meta_frame, text="Début (HH:MM):", width=14).pack(
+            side=tk.LEFT
+        )
+        ttk.Entry(self._meeting_meta_frame, textvariable=self.entry_start_var, width=8).pack(
+            side=tk.LEFT, padx=(0, 12)
+        )
+        ttk.Label(self._meeting_meta_frame, text="Fin (HH:MM):", width=12).pack(side=tk.LEFT)
+        ttk.Entry(self._meeting_meta_frame, textvariable=self.entry_end_var, width=8).pack(
+            side=tk.LEFT
+        )
+
+        # Décision : statut appliqué (affiché seulement si type = decision)
+        self._decision_meta_frame = ttk.Frame(meta_frame)
+        self.entry_decision_done_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            self._decision_meta_frame,
+            text="Décision appliquée / faite",
+            variable=self.entry_decision_done_var,
+        ).pack(side=tk.LEFT)
         
         # Markdown editor
         ttk.Label(self.editor_frame, text="Contenu (Markdown):").pack(anchor=tk.W, pady=(5, 2))
@@ -433,6 +458,27 @@ class WorkPanel(ttk.Frame):
             state=tk.DISABLED,
         )
         self.btn_followup.pack(side=tk.LEFT, padx=(5, 0))
+
+        self._sync_entry_type_extra_widgets()
+    
+    def _sync_entry_type_extra_widgets(self) -> None:
+        """Affiche les champs réunion / décision selon le type d'entrée."""
+        entry_type = self.entry_type_var.get()
+        if entry_type == "meeting":
+            self._meeting_meta_frame.pack(fill=tk.X, pady=2)
+            self._decision_meta_frame.pack_forget()
+            self.entry_decision_done_var.set(False)
+        elif entry_type == "decision":
+            self._meeting_meta_frame.pack_forget()
+            self.entry_start_var.set("")
+            self.entry_end_var.set("")
+            self._decision_meta_frame.pack(fill=tk.X, pady=2)
+        else:
+            self._meeting_meta_frame.pack_forget()
+            self._decision_meta_frame.pack_forget()
+            self.entry_start_var.set("")
+            self.entry_end_var.set("")
+            self.entry_decision_done_var.set(False)
     
     def _on_create_followup_tasks(self) -> None:
         """Open dialog to create tasks from ACTION/TODO lines in current entry."""
@@ -1393,6 +1439,26 @@ class WorkPanel(ttk.Frame):
         group = self.entry_groups_var.get().strip() or None
         status = self.entry_status_var.get().strip() or None
         
+        date_raw = self.entry_date_var.get().strip()
+        entry_date_parsed: date | None
+        if not date_raw:
+            entry_date_parsed = None
+        else:
+            try:
+                entry_date_parsed = parse_date_ui(date_raw)
+            except ValueError:
+                messagebox.showwarning(
+                    "Attention",
+                    "Date invalide. Utilisez JJ/MM/AAAA ou AAAA-MM-JJ.",
+                )
+                return
+
+        start_t = (self.entry_start_var.get().strip() or None) if entry_type == "meeting" else None
+        end_t = (self.entry_end_var.get().strip() or None) if entry_type == "meeting" else None
+        decision_done = (
+            self.entry_decision_done_var.get() if entry_type == "decision" else None
+        )
+
         try:
             prio = 3
             try:
@@ -1407,10 +1473,13 @@ class WorkPanel(ttk.Frame):
                 title=title,
                 tags=tags,
                 body=body,
-                entry_date=date.today(),
+                entry_date=entry_date_parsed,
                 person=person,
                 group=group,
                 priority=prio,
+                start_time=start_t,
+                end_time=end_t,
+                decision_done=decision_done,
             )
             
             # Apply status if set
@@ -1476,8 +1545,29 @@ class WorkPanel(ttk.Frame):
                     patch["tags"] = tags
                 
                 date_str = self.entry_date_var.get().strip()
-                if date_str and date_str != entry.entry_date:
-                    patch["entry_date"] = date_str
+                if date_str:
+                    try:
+                        parsed_d = parse_date_ui(date_str)
+                    except ValueError:
+                        messagebox.showwarning(
+                            "Attention",
+                            "Date invalide. Utilisez JJ/MM/AAAA ou AAAA-MM-JJ.",
+                        )
+                        return
+                    new_iso = parsed_d.isoformat()
+                    if new_iso != (entry.entry_date or ""):
+                        patch["entry_date"] = parsed_d
+
+                if entry.type == "meeting":
+                    st = self.entry_start_var.get().strip() or None
+                    en = self.entry_end_var.get().strip() or None
+                    if st != (entry.start_time or None) or en != (entry.end_time or None):
+                        patch["start_time"] = st
+                        patch["end_time"] = en
+                elif entry.type == "decision":
+                    new_dd = self.entry_decision_done_var.get()
+                    if new_dd != bool(entry.decision_done):
+                        patch["decision_done"] = new_dd
                 
                 status = self.entry_status_var.get().strip()
                 if status != (entry.context_status or ""):
@@ -1526,7 +1616,7 @@ class WorkPanel(ttk.Frame):
         self.entry_title_var.set("")
         self.entry_body_text.delete("1.0", tk.END)
         self.entry_type_var.set("note")
-        self.entry_date_var.set("")
+        self.entry_date_var.set(format_date_ui(date.today()))
         self.btn_followup.config(state=tk.DISABLED)
         self.entry_people_var.set("")
         self.entry_groups_var.set("")
@@ -1626,6 +1716,7 @@ class WorkPanel(ttk.Frame):
     
     def _on_entry_type_changed(self, event=None) -> None:
         """Handle entry type change - apply template if content is empty."""
+        self._sync_entry_type_extra_widgets()
         if self._current_entry_id:
             # Don't apply template if editing existing entry
             return
@@ -1645,10 +1736,14 @@ class WorkPanel(ttk.Frame):
     
     def _get_entry_template(self, entry_type: str) -> str:
         """Get markdown template for entry type with placeholders."""
-        from datetime import date
-        
-        # Get current values for placeholders
+        # Date affichée dans le modèle : champ Date si valide, sinon aujourd'hui
         today = date.today().strftime("%d/%m/%Y")
+        raw_d = self.entry_date_var.get().strip()
+        if raw_d:
+            try:
+                today = parse_date_ui(raw_d).strftime("%d/%m/%Y")
+            except ValueError:
+                pass
         title = self.entry_title_var.get() or "[Titre]"
         
         # Get project name
@@ -1802,7 +1897,9 @@ class WorkPanel(ttk.Frame):
             self.entry_type_var.set(entry.type)
             
             # Update metadata
-            self.entry_date_var.set(entry.entry_date or "")
+            self.entry_date_var.set(
+                format_date_ui(entry.entry_date) if entry.entry_date else ""
+            )
             self.entry_people_var.set(entry.person or "")
             self.entry_groups_var.set(entry.group or "")
             self.entry_tags_var.set(", ".join(entry.tags) if entry.tags else "")
@@ -1811,6 +1908,10 @@ class WorkPanel(ttk.Frame):
             if not isinstance(prio, int) or not (1 <= prio <= 5):
                 prio = 3
             self.entry_priority_var.set(prio)
+            self.entry_start_var.set(entry.start_time or "")
+            self.entry_end_var.set(entry.end_time or "")
+            self.entry_decision_done_var.set(bool(entry.decision_done))
+            self._sync_entry_type_extra_widgets()
             
             self.entry_body_text.delete("1.0", tk.END)
             self.entry_body_text.insert("1.0", content)
@@ -1857,6 +1958,15 @@ class WorkPanel(ttk.Frame):
         self.entry_body_text.delete("1.0", tk.END)
         self.entry_type_var.set("note")
         self.entry_priority_var.set(3)
+        self.entry_date_var.set(format_date_ui(date.today()))
+        self.entry_people_var.set("")
+        self.entry_groups_var.set("")
+        self.entry_tags_var.set("")
+        self.entry_status_var.set("")
+        self.entry_start_var.set("")
+        self.entry_end_var.set("")
+        self.entry_decision_done_var.set(False)
+        self._sync_entry_type_extra_widgets()
     
     def _on_add_task(self) -> None:
         """Add new task."""

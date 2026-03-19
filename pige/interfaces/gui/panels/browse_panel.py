@@ -14,7 +14,15 @@ logger = logging.getLogger(__name__)
 class BrowsePanel(ttk.Frame):
     """Combined browse panel with projects hierarchy and entries list."""
     
-    def __init__(self, parent: tk.Widget, service: PigeService, gui_prefs: dict, **kwargs) -> None:
+    def __init__(
+        self,
+        parent: tk.Widget,
+        service: PigeService,
+        gui_prefs: dict,
+        *,
+        on_entries_mutated=None,
+        **kwargs,
+    ) -> None:
         super().__init__(parent, **kwargs)
         self.service = service
         self.gui_prefs = gui_prefs
@@ -35,7 +43,8 @@ class BrowsePanel(ttk.Frame):
         self.entries_panel = EntriesPanel(
             self.splitter,
             self.service,
-            initial_page_size=gui_prefs.get("pagination", {}).get("entries_page_size", 50)
+            initial_page_size=gui_prefs.get("pagination", {}).get("entries_page_size", 50),
+            on_entries_mutated=on_entries_mutated,
         )
         self.splitter.add(self.entries_panel, weight=2)
         

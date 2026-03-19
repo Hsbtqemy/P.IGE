@@ -7,6 +7,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from pige.core.exceptions import ProjectNotFoundError
 from pige.core.service import PigeService
 from pige.core.storage import Storage
 from pige.interfaces import gui_helpers
@@ -197,7 +198,8 @@ class PigeMainWindow(tk.Tk):
         self.browse_panel = BrowsePanel(
             self.notebook,
             self.service,
-            self.gui_prefs
+            self.gui_prefs,
+            on_entries_mutated=self._on_entry_list_mutated_from_calendar,
         )
         self.notebook.add(self.browse_panel, text="🗂️ Browse")
         
@@ -205,7 +207,8 @@ class PigeMainWindow(tk.Tk):
         self.calendar_panel = CalendarPanel(
             self.notebook,
             self.service,
-            on_entry_open=self._on_open_entry_from_calendar
+            on_entry_open=self._on_open_entry_from_calendar,
+            on_entry_list_mutated=self._on_entry_list_mutated_from_calendar,
         )
         self.notebook.add(self.calendar_panel, text="📅 Calendrier")
         
@@ -230,6 +233,10 @@ class PigeMainWindow(tk.Tk):
         # Search - only when focus is NOT in a text widget
         self.bind("<Control-f>", self._on_key_search)
         self.bind("<Command-f>", self._on_key_search)
+
+        # Enregistrer l'entrée ouverte (onglet Work) — ne pas bloquer si le focus est dans un champ texte
+        self.bind("<Control-s>", self._on_key_save_entry)
+        self.bind("<Command-s>", self._on_key_save_entry)
 
         # Help
         self.bind("<F1>", lambda e: self._show_keyboard_shortcuts())
@@ -262,6 +269,30 @@ class PigeMainWindow(tk.Tk):
             return None
         self._on_search()
         return "break"
+
+    def _on_key_save_entry(self, e: tk.Event) -> str | None:
+        """Ctrl/Cmd+S : enregistrer depuis le panneau Work (entrée ou brouillon)."""
+        try:
+            current = self.notebook.select()
+        except tk.TclError:
+            return None
+        if str(current) != str(self.work_panel):
+            return None
+        self.work_panel._on_save_entry()
+        return "break"
+
+    def _refresh_panels_after_entry_mutation(self) -> None:
+        """Garde Browse / Work / Calendrier / Dashboard alignés après création ou édition d'entrée."""
+        self.browse_panel.entries_panel.refresh()
+        self.work_panel.refresh()
+        self.calendar_panel.refresh()
+        self.dashboard_panel.refresh()
+
+    def _on_entry_list_mutated_from_calendar(self) -> None:
+        """Le calendrier a déjà rafraîchi sa vue ; synchronise les autres onglets."""
+        self.browse_panel.entries_panel.refresh()
+        self.work_panel.refresh()
+        self.dashboard_panel.refresh()
     
     # ===== Menu actions =====
     
@@ -277,19 +308,36 @@ class PigeMainWindow(tk.Tk):
         self.browse_panel.projects_panel.refresh()
         self.browse_panel.projects_panel.tree.selection_set(project.id)
         self.browse_panel.projects_panel.tree.see(project.id)
+        self.work_panel.refresh()
+        self.calendar_panel.refresh()
+        self.dashboard_panel.refresh()
     
     def _on_new_entry(self) -> None:
         """Handle New Entry action."""
         logger.info("New Entry action triggered")
         selection = self.browse_panel.projects_panel.tree.selection()
-        if not selection:
-            messagebox.showerror("No project", "Select a project first.")
+        project_id: str | None = selection[0] if selection else None
+        if not project_id:
+            project_id = getattr(self.work_panel, "current_project_id", None)
+        if not project_id:
+            messagebox.showerror(
+                "Projet requis",
+                "Sélectionnez un projet dans l’onglet Browse (arborescence à gauche) "
+                "ou dans l’onglet Work (explorateur), puis réessayez.",
+            )
             return
-        project_id = selection[0]
+        try:
+            self.service._get_project(project_id)
+        except ProjectNotFoundError:
+            messagebox.showerror(
+                "Projet introuvable",
+                "Le projet sélectionné n’existe plus. Rafraîchissez la liste des projets.",
+            )
+            return
         result = show_new_entry_dialog(self, self.service, project_id)
         if result:
             entry, _path = result
-            self.browse_panel.entries_panel.refresh()
+            self._refresh_panels_after_entry_mutation()
             self.browse_panel.entries_panel.tree.selection_set(entry.id)
             self.browse_panel.entries_panel.tree.see(entry.id)
     

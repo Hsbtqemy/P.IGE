@@ -52,7 +52,7 @@ def show_keyboard_shortcuts(parent: tk.Tk, menu_accel: Callable[[str], str]) -> 
         ("File Operations", [
             (f"{menu_accel('N')}", "New Project"),
             (f"{menu_accel('E')}", "New Entry"),
-            (f"{menu_accel('S')}", "Save Entry"),
+            (f"{menu_accel('S')}", "Save entry (onglet Work actif)"),
             (f"{menu_accel('Q')}", "Quit"),
             ("Delete / Backspace", "Delete selected item"),
         ]),

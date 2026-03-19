@@ -37,11 +37,14 @@ class CalendarPanel(ttk.Frame):
         parent: tk.Widget, 
         service: PigeService, 
         on_entry_open=None,
+        on_entry_list_mutated=None,
         **kwargs
     ) -> None:
         super().__init__(parent, **kwargs)
         self.service = service
         self.on_entry_open = on_entry_open  # Callback to open entry in WorkPanel
+        # Après mutation des données (le calendrier s'est déjà rafraîchi) : sync autres onglets
+        self.on_entry_list_mutated = on_entry_list_mutated
         
         # Current view state
         today = date.today()
@@ -233,6 +236,23 @@ class CalendarPanel(ttk.Frame):
             command=self._create_task_for_date,
             width=18
         ).pack(side=tk.LEFT, padx=2)
+
+        # Projet cible pour création depuis le calendrier (entrées & tâches)
+        self._calendar_project_name_to_id: dict[str, str] = {}
+        project_row = ttk.Frame(details_frame)
+        project_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(
+            project_row,
+            text="Projet (nouvelles entrées & tâches) :",
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        self.calendar_new_entry_project_var = tk.StringVar(value="")
+        self.calendar_new_entry_project_combo = ttk.Combobox(
+            project_row,
+            textvariable=self.calendar_new_entry_project_var,
+            state="readonly",
+            width=32,
+        )
+        self.calendar_new_entry_project_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
         # Notebook for entries and tasks
         self.details_notebook = ttk.Notebook(details_frame)
@@ -362,7 +382,8 @@ class CalendarPanel(ttk.Frame):
         """Refresh calendar data and view."""
         # Load data
         self._load_data()
-        
+        self._refresh_calendar_project_combo()
+
         # Update period label
         self._update_period_label()
         
@@ -449,6 +470,39 @@ class CalendarPanel(ttk.Frame):
                     self._tasks_by_date[date_str].append(task)
                 except Exception:
                     pass
+
+    def _refresh_calendar_project_combo(self) -> None:
+        """Remplit la liste des projets actifs (hors dossiers calendar-sync) pour création rapide."""
+        projects = [
+            p
+            for p in self.service.list_projects(status="active")
+            if "calendar-sync" not in (p.tags or [])
+        ]
+        projects.sort(key=lambda p: (p.display_order, p.name.lower()))
+        self._calendar_project_name_to_id = {p.name: p.id for p in projects}
+        names = [p.name for p in projects]
+        self.calendar_new_entry_project_combo.config(values=names)
+        previous = self.calendar_new_entry_project_var.get().strip()
+        if previous in names:
+            return
+        if names:
+            self.calendar_new_entry_project_var.set(names[0])
+        else:
+            self.calendar_new_entry_project_var.set("")
+
+    def _selected_calendar_project_id(self) -> str | None:
+        name = (self.calendar_new_entry_project_var.get() or "").strip()
+        if not name:
+            return None
+        return self._calendar_project_name_to_id.get(name)
+
+    def _notify_entry_list_mutated(self) -> None:
+        """Notifie la fenêtre principale pour rafraîchir Browse / Work / Dashboard."""
+        if callable(self.on_entry_list_mutated):
+            try:
+                self.on_entry_list_mutated()
+            except Exception as e:
+                logger.warning("on_entry_list_mutated callback failed: %s", e)
 
     @staticmethod
     def _parse_iso_date(value: object) -> date | None:
@@ -1306,6 +1360,7 @@ class CalendarPanel(ttk.Frame):
             if self.selected_date is not None:
                 changed_dates.add(self.selected_date)
             self._refresh_after_mutation(changed_dates if changed_dates else None)
+            self._notify_entry_list_mutated()
 
     def _on_event_double_click(self, event: tk.Event) -> None:
         """Handle double-click on calendar event."""
@@ -1338,6 +1393,7 @@ class CalendarPanel(ttk.Frame):
                     if entry_date is not None:
                         changed_dates.add(entry_date)
                     self._refresh_after_mutation(changed_dates if changed_dates else None)
+                    self._notify_entry_list_mutated()
                 return
 
         details = f"Événement: {cal_event.title}\n\n"
@@ -1395,6 +1451,7 @@ class CalendarPanel(ttk.Frame):
             if self.selected_date is not None:
                 changed_dates.add(self.selected_date)
             self._refresh_after_mutation(changed_dates if changed_dates else None)
+            self._notify_entry_list_mutated()
     
     def _create_entry_for_date(self) -> None:
         """Create new entry for selected date."""
@@ -1402,10 +1459,17 @@ class CalendarPanel(ttk.Frame):
             messagebox.showwarning("Attention", "Sélectionnez d'abord une date dans le calendrier")
             return
         projects = self.service.list_projects(status="active")
+        projects = [p for p in projects if "calendar-sync" not in (p.tags or [])]
         if not projects:
             messagebox.showerror("Erreur", "Aucun projet actif. Créez d'abord un projet.")
             return
-        project_id = projects[0].id
+        project_id = self._selected_calendar_project_id()
+        if not project_id:
+            messagebox.showwarning(
+                "Projet requis",
+                "Sélectionnez un projet dans la liste « Projet (nouvelles entrées & tâches) ».",
+            )
+            return
         parent = self.winfo_toplevel()
         result = show_new_entry_dialog(
             parent,
@@ -1422,6 +1486,7 @@ class CalendarPanel(ttk.Frame):
             if self.selected_date is not None:
                 changed_dates.add(self.selected_date)
             self._refresh_after_mutation(changed_dates if changed_dates else None)
+            self._notify_entry_list_mutated()
     
     def _link_entry_to_event(self, cal_event) -> None:
         """Create and link a PIGE entry to a calendar event."""
@@ -1521,6 +1586,7 @@ class CalendarPanel(ttk.Frame):
             if self.selected_date is not None:
                 changed_dates.add(self.selected_date)
             self._refresh_after_mutation(changed_dates if changed_dates else None)
+            self._notify_entry_list_mutated()
             
         except Exception as e:
             logger.error(f"Failed to create linked entry: {e}", exc_info=True)
@@ -1532,10 +1598,17 @@ class CalendarPanel(ttk.Frame):
             messagebox.showwarning("Attention", "Sélectionnez d'abord une date dans le calendrier")
             return
         projects = self.service.list_projects(status="active")
+        projects = [p for p in projects if "calendar-sync" not in (p.tags or [])]
         if not projects:
             messagebox.showerror("Erreur", "Aucun projet actif. Créez d'abord un projet.")
             return
-        project_id = projects[0].id
+        project_id = self._selected_calendar_project_id()
+        if not project_id:
+            messagebox.showwarning(
+                "Projet requis",
+                "Sélectionnez un projet dans la liste « Projet (nouvelles entrées & tâches) ».",
+            )
+            return
         parent = self.winfo_toplevel()
         result = show_new_task_dialog(
             parent,
@@ -1551,6 +1624,7 @@ class CalendarPanel(ttk.Frame):
             if self.selected_date is not None:
                 changed_dates.add(self.selected_date)
             self._refresh_after_mutation(changed_dates if changed_dates else None)
+            self._notify_entry_list_mutated()
     
     def _manage_subscriptions(self) -> None:
         """Open subscriptions management dialog."""
@@ -1625,6 +1699,8 @@ class CalendarPanel(ttk.Frame):
                         events_imported += 1
             
             self.refresh()
+            if events_imported:
+                self._notify_entry_list_mutated()
             messagebox.showinfo(
                 "Import réussi",
                 f"{events_imported} événement(s) importé(s) dans le projet '{import_project.name}'"

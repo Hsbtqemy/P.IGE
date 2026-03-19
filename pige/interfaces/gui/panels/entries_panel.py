@@ -15,9 +15,18 @@ logger = logging.getLogger(__name__)
 class EntriesPanel(ttk.Frame):
     """Panel for viewing and managing entries."""
     
-    def __init__(self, parent: tk.Widget, service: PigeService, initial_page_size: int = 50, **kwargs) -> None:
+    def __init__(
+        self,
+        parent: tk.Widget,
+        service: PigeService,
+        initial_page_size: int = 50,
+        *,
+        on_entries_mutated=None,
+        **kwargs,
+    ) -> None:
         super().__init__(parent, **kwargs)
         self.service = service
+        self.on_entries_mutated = on_entries_mutated
         
         # State
         self._all_entries: list = []
@@ -40,6 +49,13 @@ class EntriesPanel(ttk.Frame):
         
         # Load data
         self.refresh()
+
+    def _notify_entries_mutated(self) -> None:
+        if callable(self.on_entries_mutated):
+            try:
+                self.on_entries_mutated()
+            except Exception as e:
+                logger.warning("on_entries_mutated callback failed: %s", e)
     
     def _setup_toolbar(self) -> None:
         """Setup toolbar with action buttons."""
@@ -340,7 +356,8 @@ class EntriesPanel(ttk.Frame):
         if project_name == "Tous":
             messagebox.showwarning(
                 "Projet requis",
-                "Sélectionnez un projet dans la liste à gauche avant de créer une entry."
+                "Choisissez un projet dans le filtre « Projet » ci-dessus (autre que « Tous ») "
+                "avant de créer une entrée.",
             )
             return
         project_id = next(
@@ -357,6 +374,7 @@ class EntriesPanel(ttk.Frame):
             self.refresh()
             self.tree.selection_set(entry.id)
             self.tree.see(entry.id)
+            self._notify_entries_mutated()
     
     def _on_entry_double_click(self, event: tk.Event) -> None:
         """Handle double-click on entry."""
@@ -373,6 +391,7 @@ class EntriesPanel(ttk.Frame):
             self.refresh()
             self.tree.selection_set(entry_id)
             self.tree.see(entry_id)
+            self._notify_entries_mutated()
     
     def _on_entry_right_click(self, event: tk.Event) -> None:
         """Handle right-click on entry (context menu)."""
@@ -442,6 +461,7 @@ class EntriesPanel(ttk.Frame):
             try:
                 self.service.delete_entry(entry_id)
                 self.refresh()
+                self._notify_entries_mutated()
                 self.status_var.set(f"Entry supprimée: {entry.title}")
             except Exception as e:
                 messagebox.showerror("Erreur", f"Impossible de supprimer l'entry:\n{e}")
