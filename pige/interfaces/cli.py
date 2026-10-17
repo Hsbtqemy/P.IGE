@@ -7,15 +7,14 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from pige.core import paths
 from pige.core.service import PigeService
 from pige.core.storage import Storage
 from pige.utils import dates, strings
 
 
 def build_service() -> PigeService:
-    env = os.environ.get("PIGE_DATA_DIR")
-    data_dir = Path(env).expanduser() if env else (Path.cwd() / "data")
-    storage = Storage(data_dir)
+    storage = Storage(paths.resolve_data_dir())
     return PigeService(storage)
 
 
@@ -170,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     export_project.add_argument(
         "--redact",
         action="store_true",
-        help="Replace entry body content with [Content redacted] in export",
+        help="Hide entry bodies and time-log notes (titles, people and tags stay visible)",
     )
     export_meeting = export_sub.add_parser("meeting")
     export_meeting.add_argument("--entry", required=True)
@@ -182,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     export_meeting.add_argument(
         "--redact",
         action="store_true",
-        help="Replace meeting notes with [Content redacted]",
+        help="Hide the meeting notes (title, people and date stay visible)",
     )
     export_weekly = export_sub.add_parser("weekly")
     export_weekly.add_argument("--from", dest="from_date", required=True)

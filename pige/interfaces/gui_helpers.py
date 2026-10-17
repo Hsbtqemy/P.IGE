@@ -11,6 +11,7 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
+from pige.core import paths
 from pige.core.storage import Storage
 from pige.utils import dates, strings
 
@@ -94,28 +95,15 @@ def _data_dir_from_env() -> Path:
     env = os.environ.get("PIGE_DATA_DIR")
     if env:
         return Path(env).expanduser()
-    return Path.cwd() / "data"
+    return paths.resolve_data_dir()
 
 
 def _global_config_path() -> Path:
-    if sys.platform.startswith("win"):
-        base = os.environ.get("APPDATA")
-        base_path = Path(base) if base else Path.home() / "AppData" / "Roaming"
-        return base_path / "PIGE" / "config.json"
-    return Path.home() / ".config" / "pige" / "config.json"
+    return paths.global_config_path()
 
 
 def _load_global_config() -> dict:
-    path = _global_config_path()
-    if not path.exists():
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        return payload if isinstance(payload, dict) else {}
-    except Exception:
-        logger.exception("Failed to load global config from %s", path)
-        return {}
+    return paths.load_global_config()
 
 
 def _save_global_config(cfg: dict) -> None:
@@ -129,14 +117,7 @@ def _save_global_config(cfg: dict) -> None:
 
 
 def _resolve_data_dir() -> Path:
-    env = os.environ.get("PIGE_DATA_DIR")
-    if env:
-        return Path(env).expanduser()
-    cfg = _load_global_config()
-    cfg_path = cfg.get("data_dir")
-    if cfg_path:
-        return Path(str(cfg_path)).expanduser()
-    return Path.cwd() / "data"
+    return paths.resolve_data_dir()
 
 
 def _is_dir_empty(path: Path) -> bool:

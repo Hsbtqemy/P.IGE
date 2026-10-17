@@ -1498,7 +1498,7 @@ class PigeService:
                         start_str = log.start
                         end_str = log.end or ""
                     dur = _timelog_duration_sec(log)
-                    note = (log.note or "").replace("|", "\\|")
+                    note = "" if redact_bodies else (log.note or "").replace("|", "\\|")
                     lines.append(f"| {start_str} | {end_str} | {_format_duration_hms(dur)} | {note} |")
                 lines.append("")
                 lines.append(f"**Sous-total jour:** {_format_duration_hms(day_sec)}")

@@ -2,32 +2,36 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 import sys
 
 
 def _configure_logging() -> None:
-    """Configure logging system with environment variable support."""
+    """Console + rotating log file in the per-user log folder (PIGE_LOG_LEVEL, PIGE_LOG_DIR)."""
+    from logging.handlers import RotatingFileHandler
+
+    from pige.core import paths
+
     log_level = os.environ.get("PIGE_LOG_LEVEL", "WARNING").upper()
-    log_dir = Path.home() / ".pige"
-    log_dir.mkdir(exist_ok=True)
-    
-    # Validate log level
     numeric_level = getattr(logging, log_level, None)
     if not isinstance(numeric_level, int):
         numeric_level = logging.WARNING
-    
+
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    log_dir = paths.log_dir()
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "pige.log"
+        handlers.append(RotatingFileHandler(log_file, maxBytes=1_000_000, backupCount=3, encoding="utf-8"))
+        if not sys.platform.startswith("win"):
+            os.chmod(log_file, 0o600)  # logs may mention project names
+    except OSError:
+        pass  # read-only home or similar: console logging still works
+
     logging.basicConfig(
         level=numeric_level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(log_dir / "pige.log", encoding="utf-8")
-        ]
+        handlers=handlers,
     )
-    
-    logger = logging.getLogger(__name__)
-    logger.debug(f"Logging configured with level: {log_level}")
 
 
 def main() -> int:

@@ -24,12 +24,12 @@ $DOWNLOAD_TIMEOUT = 30  # seconds
 # Paths
 $PROJECT_ROOT = $PSScriptRoot
 
-$PIGE_DATA_DIR = Join-Path $env:LOCALAPPDATA "PIGE"
-$VENV_PATH = Join-Path $PIGE_DATA_DIR ".venv"
+$PIGE_APP_DIR = Join-Path $env:LOCALAPPDATA "PIGE"
+$VENV_PATH = Join-Path $PIGE_APP_DIR ".venv"
 $VENV_PYTHON = Join-Path $VENV_PATH "Scripts\python.exe"
-$DEPS_STAMP_FILE = Join-Path $PIGE_DATA_DIR "deps.sha256"
-$LOCK_FILE = Join-Path $PIGE_DATA_DIR "launcher.lock"
-$LOG_FILE = Join-Path $PIGE_DATA_DIR "launcher.log"
+$DEPS_STAMP_FILE = Join-Path $PIGE_APP_DIR "deps.sha256"
+$LOCK_FILE = Join-Path $PIGE_APP_DIR "launcher.lock"
+$LOG_FILE = Join-Path $PIGE_APP_DIR "launcher.log"
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -50,8 +50,8 @@ function Write-Log {
     
     # File logging
     try {
-        if (-not (Test-Path $PIGE_DATA_DIR)) {
-            New-Item -ItemType Directory -Path $PIGE_DATA_DIR -Force | Out-Null
+        if (-not (Test-Path $PIGE_APP_DIR)) {
+            New-Item -ItemType Directory -Path $PIGE_APP_DIR -Force | Out-Null
         }
         Add-Content -Path $LOG_FILE -Value $logMessage -ErrorAction SilentlyContinue
     } catch {
@@ -220,8 +220,8 @@ function Ensure-VirtualEnvironment {
     Write-Log "Creating virtual environment at: $VENV_PATH"
     
     # Create parent directory
-    if (-not (Test-Path $PIGE_DATA_DIR)) {
-        New-Item -ItemType Directory -Path $PIGE_DATA_DIR -Force | Out-Null
+    if (-not (Test-Path $PIGE_APP_DIR)) {
+        New-Item -ItemType Directory -Path $PIGE_APP_DIR -Force | Out-Null
     }
     
     # Create venv
@@ -385,7 +385,7 @@ try {
     Write-Log "PIGE Launcher Starting"
     Write-Log "========================================"
     Write-Log "Project Root: $PROJECT_ROOT"
-    Write-Log "Data Directory: $PIGE_DATA_DIR"
+    Write-Log "Launcher folder (venv, logs): $PIGE_APP_DIR"
     
     # Acquire lock
     Acquire-Lock
