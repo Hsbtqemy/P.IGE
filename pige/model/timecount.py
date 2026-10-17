@@ -14,7 +14,7 @@ Rules, applied to each stretch of time where the same blocks are running:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fractions import Fraction
 from typing import Iterable, Literal
 
@@ -29,9 +29,23 @@ class Span:
     mode: OverlapMode = "shared"
 
 
+def _utc_spans(spans: Iterable[Span]) -> list[Span]:
+    """Spans in UTC: subtracting two datetimes that share a tzinfo ignores DST changes."""
+    out = []
+    for s in spans:
+        if s.start.utcoffset() is None or s.end.utcoffset() is None:
+            raise ValueError(f"span {s.id} needs timezone-aware datetimes")
+        out.append(Span(s.id, s.start.astimezone(timezone.utc), s.end.astimezone(timezone.utc), s.mode))
+    return out
+
+
 def counted_seconds(spans: Iterable[Span]) -> dict[str, int]:
-    """Seconds credited to each span, following the module rules."""
-    items = list(spans)
+    """Seconds credited to each span, following the module rules.
+
+    Each span is rounded to the second on its own, so the sum may differ from
+    :func:`presence_seconds` by a second or two.
+    """
+    items = _utc_spans(spans)
     if len({s.id for s in items}) != len(items):
         raise ValueError("span ids must be unique")
     for s in items:
@@ -68,7 +82,7 @@ def presence_seconds(spans: Iterable[Span]) -> int:
     total = Fraction(0)
     current_start: datetime | None = None
     current_end: datetime | None = None
-    for s in sorted(spans, key=lambda x: x.start):
+    for s in sorted(_utc_spans(spans), key=lambda x: x.start):
         if current_end is None or s.start > current_end:
             if current_start is not None and current_end is not None:
                 total += _seconds(current_end - current_start)

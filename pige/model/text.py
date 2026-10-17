@@ -6,11 +6,12 @@ import re
 import unicodedata
 
 _SEPARATORS = re.compile(r"[\s\-‐-―_.'’]+")
+_LIGATURES = str.maketrans({"œ": "oe", "Œ": "OE", "æ": "ae", "Æ": "AE"})
 
 
 def fold(text: str) -> str:
     """Lower-case, strip accents, collapse spaces/hyphens/dots: ``"PEYROL-KLEIBER Élodie"`` -> ``"peyrol kleiber elodie"``."""
-    decomposed = unicodedata.normalize("NFKD", text)
+    decomposed = unicodedata.normalize("NFKD", text.translate(_LIGATURES))
     without_marks = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
     return _SEPARATORS.sub(" ", without_marks.casefold()).strip()
 
@@ -27,3 +28,8 @@ def name_key(name: str) -> str:
 def split_people(text: str) -> list[str]:
     """Split a legacy free-text people field (newlines, commas, semicolons)."""
     return [part.strip() for part in re.split(r"[\n,;]+", text) if part.strip()]
+
+
+def tag_key(name: str) -> str:
+    """Case-insensitive key for a tag, accents kept ("Été" == "été", but != "ete")."""
+    return " ".join(unicodedata.normalize("NFC", name).casefold().split())

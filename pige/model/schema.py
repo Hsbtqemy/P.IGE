@@ -96,28 +96,32 @@ MIGRATIONS: tuple[str, ...] = (
 
     CREATE TABLE tags (
         id          TEXT PRIMARY KEY,
-        name        TEXT NOT NULL UNIQUE COLLATE NOCASE CHECK (length(trim(name)) > 0),
+        name        TEXT NOT NULL CHECK (length(trim(name)) > 0),
+        name_key    TEXT NOT NULL UNIQUE,
         pinned      INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
         position    REAL NOT NULL DEFAULT 0
     );
 
+    -- rid: stable integer key for the full-text index (implicit rowids may be renumbered).
     CREATE TABLE tasks (
-        id              TEXT PRIMARY KEY,
+        rid             INTEGER PRIMARY KEY,
+        id              TEXT NOT NULL UNIQUE,
         space_id        TEXT NOT NULL REFERENCES spaces(id) ON DELETE RESTRICT,
         project_id      TEXT REFERENCES projects(id) ON DELETE RESTRICT,
         title           TEXT NOT NULL CHECK (length(trim(title)) > 0),
         note            TEXT,
         status          TEXT NOT NULL DEFAULT 'open'
                         CHECK (status IN ('open', 'in_progress', 'waiting', 'done')),
-        waiting_on      TEXT REFERENCES people(id) ON DELETE SET NULL,
+        waiting_on      TEXT REFERENCES people(id) ON DELETE RESTRICT,
         due_date        TEXT,
         position        REAL NOT NULL DEFAULT 0,
-        origin_entry_id TEXT,
+        origin_entry_id TEXT REFERENCES entries(id) ON DELETE SET NULL,
         created_at      TEXT NOT NULL,
         updated_at      TEXT NOT NULL,
         status_since    TEXT NOT NULL,
         done_at         TEXT,
-        CHECK ((status = 'done') = (done_at IS NOT NULL))
+        CHECK ((status = 'done') = (done_at IS NOT NULL)),
+        CHECK ((status = 'waiting') = (waiting_on IS NOT NULL))
     );
     CREATE INDEX tasks_project ON tasks(project_id, status, position);
     CREATE INDEX tasks_space ON tasks(space_id, status, position);
@@ -147,7 +151,8 @@ MIGRATIONS: tuple[str, ...] = (
     CREATE INDEX task_steps_task ON task_steps(task_id, position);
 
     CREATE TABLE entries (
-        id               TEXT PRIMARY KEY,
+        rid              INTEGER PRIMARY KEY,
+        id               TEXT NOT NULL UNIQUE,
         space_id         TEXT NOT NULL REFERENCES spaces(id) ON DELETE RESTRICT,
         project_id       TEXT REFERENCES projects(id) ON DELETE RESTRICT,
         task_id          TEXT REFERENCES tasks(id) ON DELETE SET NULL,
@@ -164,7 +169,8 @@ MIGRATIONS: tuple[str, ...] = (
         mail_message_id  TEXT,
         created_at       TEXT NOT NULL,
         updated_at       TEXT NOT NULL,
-        version          INTEGER NOT NULL DEFAULT 1
+        version          INTEGER NOT NULL DEFAULT 1,  -- text history (title/body)
+        revision         INTEGER NOT NULL DEFAULT 1   -- any change, for concurrent edits
     );
     CREATE INDEX entries_date ON entries(entry_date, start_time);
     CREATE INDEX entries_project ON entries(project_id, entry_date);
@@ -263,31 +269,31 @@ MIGRATIONS: tuple[str, ...] = (
 
     -- Full-text search over entries and tasks (external content, kept in sync by triggers).
     CREATE VIRTUAL TABLE entries_fts USING fts5(
-        title, body, content='entries', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2'
+        title, body, content='entries', content_rowid='rid', tokenize='unicode61 remove_diacritics 2'
     );
     CREATE TRIGGER entries_fts_ai AFTER INSERT ON entries BEGIN
-        INSERT INTO entries_fts(rowid, title, body) VALUES (NEW.rowid, NEW.title, NEW.body);
+        INSERT INTO entries_fts(rowid, title, body) VALUES (NEW.rid, NEW.title, NEW.body);
     END;
     CREATE TRIGGER entries_fts_ad AFTER DELETE ON entries BEGIN
-        INSERT INTO entries_fts(entries_fts, rowid, title, body) VALUES ('delete', OLD.rowid, OLD.title, OLD.body);
+        INSERT INTO entries_fts(entries_fts, rowid, title, body) VALUES ('delete', OLD.rid, OLD.title, OLD.body);
     END;
     CREATE TRIGGER entries_fts_au AFTER UPDATE OF title, body ON entries BEGIN
-        INSERT INTO entries_fts(entries_fts, rowid, title, body) VALUES ('delete', OLD.rowid, OLD.title, OLD.body);
-        INSERT INTO entries_fts(rowid, title, body) VALUES (NEW.rowid, NEW.title, NEW.body);
+        INSERT INTO entries_fts(entries_fts, rowid, title, body) VALUES ('delete', OLD.rid, OLD.title, OLD.body);
+        INSERT INTO entries_fts(rowid, title, body) VALUES (NEW.rid, NEW.title, NEW.body);
     END;
 
     CREATE VIRTUAL TABLE tasks_fts USING fts5(
-        title, note, content='tasks', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2'
+        title, note, content='tasks', content_rowid='rid', tokenize='unicode61 remove_diacritics 2'
     );
     CREATE TRIGGER tasks_fts_ai AFTER INSERT ON tasks BEGIN
-        INSERT INTO tasks_fts(rowid, title, note) VALUES (NEW.rowid, NEW.title, coalesce(NEW.note, ''));
+        INSERT INTO tasks_fts(rowid, title, note) VALUES (NEW.rid, NEW.title, coalesce(NEW.note, ''));
     END;
     CREATE TRIGGER tasks_fts_ad AFTER DELETE ON tasks BEGIN
-        INSERT INTO tasks_fts(tasks_fts, rowid, title, note) VALUES ('delete', OLD.rowid, OLD.title, coalesce(OLD.note, ''));
+        INSERT INTO tasks_fts(tasks_fts, rowid, title, note) VALUES ('delete', OLD.rid, OLD.title, coalesce(OLD.note, ''));
     END;
     CREATE TRIGGER tasks_fts_au AFTER UPDATE OF title, note ON tasks BEGIN
-        INSERT INTO tasks_fts(tasks_fts, rowid, title, note) VALUES ('delete', OLD.rowid, OLD.title, coalesce(OLD.note, ''));
-        INSERT INTO tasks_fts(rowid, title, note) VALUES (NEW.rowid, NEW.title, coalesce(NEW.note, ''));
+        INSERT INTO tasks_fts(tasks_fts, rowid, title, note) VALUES ('delete', OLD.rid, OLD.title, coalesce(OLD.note, ''));
+        INSERT INTO tasks_fts(rowid, title, note) VALUES (NEW.rid, NEW.title, coalesce(NEW.note, ''));
     END;
     """,
 )

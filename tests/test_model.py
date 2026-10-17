@@ -19,9 +19,9 @@ PARIS = ZoneInfo("Europe/Paris")
 
 @pytest.fixture()
 def store(tmp_path):
-    conn = connect(tmp_path / "pige.sqlite3")
-    yield ModelStore(conn)
-    conn.close()
+    s = ModelStore(tmp_path / "pige.sqlite3")
+    yield s
+    s.close()
 
 
 @pytest.fixture()
@@ -169,8 +169,10 @@ def test_waiting_needs_a_person_and_lists_by_person(store, tree):
     task = store.create_task("Articles déjà publiés", project_id=tree["porfavor"].id)
     with pytest.raises(InvalidOperationError):
         store.set_task_status(task.id, "waiting")
-    store.set_task_status(task.id, "waiting", waiting_on="Thouverez Ludivine")
-    ludivine = store.find_people("Ludivine Thouverez")[0]
+    ludivine = store.get_or_create_person("Thouverez Ludivine")
+    store.set_task_status(task.id, "waiting", waiting_on=ludivine.id)
+    with pytest.raises(NotFoundError):  # an id, never a name to create
+        store.set_task_status(task.id, "waiting", waiting_on="Quelqu'un d'autre")
     assert [t.id for t in store.waiting_on(ludivine.id)] == [task.id]
     done = store.set_task_status(task.id, "done")
     assert done.done_at is not None and done.waiting_on is None
@@ -240,14 +242,15 @@ def test_tags_case_insensitive_and_pinned_counts(store, tree):
 
 def test_text_change_keeps_previous_version(store, tree):
     e = store.create_entry(entry_date="2026-10-15", project_id=tree["dico"].id, title="CR", body="v1")
-    e2 = store.update_entry(e.id, body="v2", expected_version=1)
-    assert e2.version == 2
-    store.update_entry(e.id, start_time="10:30")  # metadata only: no new version
-    assert store.get_entry(e.id).version == 2
+    e2 = store.update_entry(e.id, body="v2", expected_revision=1)
+    assert (e2.version, e2.revision) == (2, 2)
+    e3 = store.update_entry(e.id, start_time="10:30")  # metadata only: no new text version
+    assert (e3.version, e3.revision) == (2, 3)
     [old] = store.entry_versions(e.id)
     assert (old.version, old.body) == (1, "v1")
+    # another device still holding revision 2 cannot overwrite the metadata change
     with pytest.raises(InvalidOperationError):
-        store.update_entry(e.id, body="v3", expected_version=1)
+        store.update_entry(e.id, kind="meeting", expected_revision=2)
 
 
 def test_decisions_can_be_applied_others_cannot(store, tree):
@@ -280,7 +283,7 @@ def test_tag_page_includes_entries_of_tagged_people(store, tree):
     tag = store.get_or_create_tag("doctorant·es")
     lola = store.get_or_create_person("Geiger Lola")
     store.tag_person(lola.id, ["doctorant·es"])
-    e = store.create_entry(entry_date="2026-01-19", space_id=tree["forellis"].id, title="Geiger Lola", people=[lola.id])
+    e = store.create_entry(entry_date="2026-01-19", space_id=tree["forellis"].id, title="Geiger Lola", person_ids=[lola.id])
     assert [x.id for x in store.timeline(tag_id=tag.id)] == [e.id]
 
 
@@ -404,3 +407,183 @@ def test_failed_operation_leaves_nothing_behind(store, tree):
     with pytest.raises(InvalidOperationError):
         store.create_entry(entry_date="2026-10-15", project_id=tree["dico"].id, people=["Nouvelle Personne"], tags=["#"])
     assert store.conn.execute("SELECT count(*) FROM people").fetchone()[0] == before
+
+
+# ---------------------------------------------------------------- review follow-ups
+
+
+def test_day_report_on_clock_change_days(store, tree):
+    pid = tree["dico"].id
+    store.add_block(datetime(2026, 10, 24, 23, tzinfo=PARIS), datetime(2026, 10, 25, 22, tzinfo=PARIS), project_id=pid)
+    store.add_block(datetime(2026, 10, 25, 22, tzinfo=PARIS), datetime(2026, 10, 26, 2, tzinfo=PARIS), project_id=pid)
+    report = store.day_report(date(2026, 10, 25), PARIS)  # 25-hour day
+    assert report.presence_seconds == 25 * 3600
+    assert sum(c.counted_seconds for c in report.blocks) == 25 * 3600
+    store.add_block(datetime(2026, 3, 28, 23, tzinfo=PARIS), datetime(2026, 3, 29, 22, tzinfo=PARIS), project_id=pid)
+    store.add_block(datetime(2026, 3, 29, 22, tzinfo=PARIS), datetime(2026, 3, 30, 1, tzinfo=PARIS), project_id=pid)
+    assert store.day_report(date(2026, 3, 29), PARIS).presence_seconds == 23 * 3600
+    spans = [Span("x", datetime(2026, 10, 25, 0, tzinfo=PARIS), datetime(2026, 10, 26, 0, tzinfo=PARIS))]
+    assert counted_seconds(spans) == {"x": 25 * 3600}
+
+
+def test_threads_never_share_a_transaction(store, tree):
+    """A failing operation in one thread must not roll back another thread's write."""
+    barrier = threading.Barrier(2)
+    results: dict[str, object] = {}
+
+    def failing():
+        try:
+            with store._tx():
+                store.conn.execute("INSERT INTO spaces(id, name, created_at) VALUES ('a', 'A', 'x')")
+                barrier.wait(timeout=5)
+                raise RuntimeError("boom")
+        except RuntimeError:
+            results["a"] = "rolled back"
+
+    def writer():
+        barrier.wait(timeout=5)
+        results["b"] = store.create_space("B").id
+
+    threads = [threading.Thread(target=failing), threading.Thread(target=writer)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
+    names = {s.name for s in store.list_spaces()}
+    assert "B" in names and "A" not in names
+
+
+def test_nested_failure_is_rolled_back_to_its_savepoint(store, tree):
+    with store._tx():
+        store.create_space("Gardé")
+        with pytest.raises(InvalidOperationError):
+            store.create_task("Sans place")  # nested operation fails: no project, no space
+        with pytest.raises(InvalidOperationError):
+            store.get_or_create_person("-")
+    assert "Gardé" in {s.name for s in store.list_spaces()}
+
+
+def test_accented_tags_are_case_insensitive(store):
+    a = store.get_or_create_tag("Été")
+    b = store.get_or_create_tag("été")
+    c = store.get_or_create_tag("été")  # decomposed accents
+    d = store.get_or_create_tag("ete")
+    assert a.id == b.id == c.id and d.id != a.id
+
+
+@pytest.mark.parametrize("call", [
+    lambda s, t: s.create_space("  "),
+    lambda s, t: s.rename_space(t["forellis"].id, ""),
+    lambda s, t: s.create_project(t["forellis"].id, " "),
+    lambda s, t: s.create_task(" ", project_id=t["dico"].id),
+    lambda s, t: s.add_step(s.create_task("x", project_id=t["dico"].id).id, " "),
+    lambda s, t: s.get_or_create_person("- '"),
+    lambda s, t: s.get_or_create_tag("#"),
+])
+def test_empty_names_raise_invalid_operation(store, tree, call):
+    with pytest.raises(InvalidOperationError):
+        call(store, tree)
+
+
+def test_done_again_keeps_completion_date(store, tree):
+    task = store.create_task("x", project_id=tree["dico"].id)
+    first = store.set_task_status(task.id, "done")
+    assert store.set_task_status(task.id, "done").done_at == first.done_at
+
+
+def test_waiting_task_always_has_a_person_in_the_database(store, tree):
+    task = store.create_task("x", project_id=tree["dico"].id)
+    with pytest.raises(sqlite3.IntegrityError):
+        store.conn.execute("UPDATE tasks SET status = 'waiting' WHERE id = ?", (task.id,))
+
+
+def test_moving_a_task_takes_its_thread_and_time(store, tree):
+    task = store.create_task("Site", project_id=tree["dico"].id)
+    entry = store.create_entry(entry_date="2026-01-26", task_id=task.id, title="avancée")
+    block = store.add_block(at(9), at(10), task_id=task.id)
+    store.move_task(task.id, project_id=tree["porfavor"].id)
+    assert store.get_entry(entry.id).project_id == tree["porfavor"].id
+    assert store.get_block(block.id).project_id == tree["porfavor"].id
+    assert store.get_block(block.id).space_id == tree["mimmoc"].id
+    pos = store.get_task(task.id).position
+    assert store.move_task(task.id, project_id=tree["porfavor"].id).position == pos  # same place: unchanged
+
+
+def test_moving_a_parent_carries_rows_attached_to_its_subprojects(store, tree):
+    task = store.create_task("t", project_id=tree["porfavor"].id)
+    parent_task = store.create_task("p", project_id=tree["portail"].id)
+    store.move_project(tree["portail"].id, space_id=tree["forellis"].id, parent_id=None)
+    assert store.get_task(task.id).space_id == tree["forellis"].id
+    assert store.get_task(parent_task.id).space_id == tree["forellis"].id
+
+
+def test_unknown_person_ids_are_refused_not_created(store, tree):
+    before = len(store.list_people())
+    with pytest.raises(NotFoundError):
+        store.create_entry(entry_date="2026-01-01", project_id=tree["dico"].id, person_ids=["deadbeef"])
+    assert len(store.list_people()) == before
+
+
+def test_fts_index_stays_consistent(store, tree):
+    e = store.create_entry(entry_date="2026-10-15", project_id=tree["dico"].id, title="Réunion", body="métadonnées")
+    t = store.create_task("Métadonnées", project_id=tree["dico"].id)
+    store.update_entry(e.id, body="autre")
+    store.update_task(t.id, note="notes")
+    store.conn.execute("DELETE FROM entries WHERE id = ?", (e.id,))
+    store.conn.execute("INSERT INTO entries_fts(entries_fts) VALUES ('integrity-check')")
+    store.conn.execute("INSERT INTO tasks_fts(tasks_fts) VALUES ('integrity-check')")
+    store.conn.execute("VACUUM")
+    assert [h.id for h in store.search("metadonnees")] == [t.id]
+
+
+def test_search_snippet_from_title_and_done_tasks_hidden(store, tree):
+    t = store.create_task("Zotero pour Maréva", project_id=tree["dico"].id)
+    [hit] = store.search("zotero")
+    assert "[Zotero]" in hit.snippet
+    store.set_task_status(t.id, "done")
+    assert store.search("zotero") == []
+    assert len(store.search("zotero", include_done_tasks=True)) == 1
+
+
+def test_reorder_spaces_and_steps(store, tree):
+    task = store.create_task("t", project_id=tree["dico"].id, steps=["a", "b", "c"])
+    a, b, c = store.steps(task.id)
+    store.reorder_step(c.id, before=a.id)
+    assert [x.label for x in store.steps(task.id)] == ["c", "a", "b"]
+    perso = store.create_space("Perso")
+    store.move_space(perso.id, before=tree["forellis"].id)
+    assert store.list_spaces()[0].name == "Perso"
+
+
+def test_long_running_timer_is_capped_and_flagged(store, tree):
+    t = store.start_timer(project_id=tree["dico"].id, at=at(8, date(2026, 10, 20)))
+    report = store.day_report(date(2026, 10, 21), PARIS, now=at(12, date(2026, 10, 21)))
+    assert [b.id for b in report.stale_timers] == [t.id]
+    assert report.blocks == []  # capped at 16 h: ended 20 Oct at midnight
+    with pytest.raises(InvalidOperationError):
+        store.add_block(at(8), at(9, date(2026, 10, 17)), project_id=tree["dico"].id)  # > 24 h
+
+
+def test_naive_datetimes_rejected_before_comparisons(store, tree):
+    t = store.start_timer(project_id=tree["dico"].id, at=at(8))
+    with pytest.raises(ValueError):
+        store.stop_timer(t.id, at=datetime(2026, 10, 15, 9))
+    with pytest.raises(ValueError):
+        store.start_timer(project_id=tree["dico"].id, at=datetime(2026, 10, 15, 9))
+
+
+def test_migration_splitter_handles_comments_and_one_line_statements():
+    from pige.model.db import _statements
+
+    assert _statements("CREATE TABLE a(x); CREATE TABLE b(y);\n-- trailing comment\n") == [
+        "CREATE TABLE a(x);", "CREATE TABLE b(y);",
+    ]
+    with pytest.raises(ValueError):
+        _statements("CREATE TABLE c(")
+
+
+def test_stale_projects_see_activity_in_subprojects(store, tree):
+    future = datetime.now(timezone.utc) + timedelta(days=40)
+    store.create_entry(entry_date="2026-10-15", project_id=tree["porfavor"].id, title="récent")
+    stale = {p.name for p, _ in store.stale_projects(days=30, now=future - timedelta(days=20))}
+    assert "Portail des revues" not in stale
