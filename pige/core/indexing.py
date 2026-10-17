@@ -111,8 +111,11 @@ class SearchIndex:
     def _get_connection(self) -> sqlite3.Connection:
         """Get or create database connection."""
         if self._conn is None:
-            self._conn = sqlite3.connect(str(self.db_path))
+            self._conn = sqlite3.connect(str(self.db_path), timeout=10)
             self._conn.row_factory = sqlite3.Row
+            # Readers (GUI search) and the writer (server) can work at the same time.
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=10000")
         return self._conn
     
     def close(self) -> None:
@@ -134,7 +137,7 @@ class SearchIndex:
     
     # ===== Entry Indexing =====
     
-    def index_entry(self, entry: EntryMeta) -> None:
+    def index_entry(self, entry: EntryMeta, body: str = "", project_name: str = "") -> None:
         """Index or update an entry in FTS.
         
         Args:
@@ -155,11 +158,11 @@ class SearchIndex:
         """, (
             entry.id,
             entry.title,
-            entry.summary or "",  # Use summary instead of body
+            body or entry.summary or "",
             " ".join(entry.tags),
             entry.person or "",
             entry.group or "",
-            "",  # project_name will be resolved by caller
+            project_name,
             entry.type
         ))
         
@@ -178,7 +181,12 @@ class SearchIndex:
         conn.commit()
         logger.debug(f"Removed entry {entry_id} from index")
     
-    def index_entries_bulk(self, entries: list[EntryMeta]) -> None:
+    def index_entries_bulk(
+        self,
+        entries: list[EntryMeta],
+        bodies: dict[str, str] | None = None,
+        project_names: dict[str, str] | None = None,
+    ) -> None:
         """Bulk index entries (faster than individual calls).
         
         Args:
@@ -191,10 +199,12 @@ class SearchIndex:
         cursor.execute("DELETE FROM entries_fts")
         
         # Bulk insert
+        bodies = bodies or {}
+        project_names = project_names or {}
         data = [
             (
-                e.id, e.title, e.summary or "", " ".join(e.tags),
-                e.person or "", e.group or "", "", e.type  # project_name empty for now
+                e.id, e.title, bodies.get(e.id) or e.summary or "", " ".join(e.tags),
+                e.person or "", e.group or "", project_names.get(e.project_id, ""), e.type
             )
             for e in entries
         ]
@@ -431,7 +441,13 @@ class SearchIndex:
     
     # ===== Index Management =====
     
-    def rebuild(self, entries: list[EntryMeta], projects: list[Project], tasks_data: list[tuple[Task, str | None, str | None]]) -> dict[str, int]:
+    def rebuild(
+        self,
+        entries: list[EntryMeta],
+        projects: list[Project],
+        tasks_data: list[tuple[Task, str | None, str | None]],
+        bodies: dict[str, str] | None = None,
+    ) -> dict[str, int]:
         """Rebuild entire index from scratch.
         
         Args:
@@ -444,7 +460,7 @@ class SearchIndex:
         """
         logger.info("Rebuilding search index...")
         
-        self.index_entries_bulk(entries)
+        self.index_entries_bulk(entries, bodies, {p.id: p.name for p in projects})
         self.index_projects_bulk(projects)
         self.index_tasks_bulk(tasks_data)
         
@@ -462,6 +478,11 @@ class SearchIndex:
                 INSERT INTO index_metadata (key, value, updated_at)
                 VALUES ('last_rebuild', ?, ?)
             """, (datetime.now().isoformat(), datetime.now().isoformat()))
+        # Contents format: 2 = entry bodies and project names are indexed.
+        cursor.execute("""
+            INSERT OR REPLACE INTO index_metadata (key, value, updated_at)
+            VALUES ('content_version', ?, ?)
+        """, (INDEX_CONTENT_VERSION, datetime.now().isoformat()))
         
         conn.commit()
         
@@ -506,3 +527,23 @@ class SearchIndex:
             "version": metadata.get("version", "unknown"),
             "last_rebuild": metadata.get("last_rebuild", "never")
         }
+
+
+INDEX_CONTENT_VERSION = "2"
+
+
+def index_content_version(db_path: Path) -> str | None:
+    """Content version recorded in an existing index, or None if absent/unreadable."""
+    if not db_path.exists():
+        return None
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                "SELECT value FROM index_metadata WHERE key = 'content_version'"
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    return row[0] if row else None

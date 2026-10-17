@@ -14,7 +14,7 @@ import zipfile
 logger = logging.getLogger(__name__)
 
 from pige.core.cache import EntryCache
-from pige.core.indexing import SearchIndex
+from pige.core.indexing import INDEX_CONTENT_VERSION, SearchIndex, index_content_version
 from pige.core.models import EntryMeta, Project, Task, TimeLog, TimerState, CalendarEvent
 from pige.utils import dates, ids
 from pige.utils import io as io_utils
@@ -93,6 +93,7 @@ class Storage:
         self._entry_cache = EntryCache()  # Cache for entry metadata
         # One lock for every process using this data directory (server, CLI, GUI).
         self.lock = io_utils.FileLock(data_dir / LOCK_FILE_NAME)
+        self._index_checked = False
 
     def init_storage(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -114,16 +115,54 @@ class Storage:
         # Search index is created on-demand (first write or rebuild-index command)
     
     def _get_search_index(self) -> SearchIndex:
-        """Create a new search index instance (no caching, use as context manager)."""
+        """Open the search index (use as context manager).
+
+        The first time, an index that is missing or was built by an older version
+        (titles only, no entry bodies) is rebuilt from the data files.
+        """
+        if not self._index_checked:
+            self._index_checked = True
+            if index_content_version(self.index_path) != INDEX_CONTENT_VERSION:
+                try:
+                    self.rebuild_search_index()
+                except Exception:
+                    logger.warning("Could not rebuild the search index", exc_info=True)
         return SearchIndex(self.index_path)
-    
+
+    def _project_name(self, project_id: str) -> str:
+        for project in self.read_projects():
+            if project.id == project_id:
+                return project.name
+        return ""
+
     def _auto_index_entry(self, entry: EntryMeta) -> None:
-        """Index an entry in FTS, silently ignoring errors."""
+        """Index an entry (title, tags, people, body, project), never failing the write."""
         try:
+            body = self.read_entry_body(entry)
             with self._get_search_index() as idx:
-                idx.index_entry(entry)
+                idx.index_entry(entry, body, self._project_name(entry.project_id))
         except Exception:
             logger.warning("Auto-indexing failed for entry %s, run rebuild-index", entry.id, exc_info=True)
+
+    def _auto_index_projects(self, projects: list[Project]) -> None:
+        try:
+            with self._get_search_index() as idx:
+                idx.index_projects_bulk(projects)
+        except Exception:
+            logger.warning("Auto-indexing of projects failed, run rebuild-index", exc_info=True)
+
+    def _auto_index_tasks(self, tasks: list[Task]) -> None:
+        try:
+            names = {p.id: p.name for p in self.read_projects()}
+            titles = {e.id: e.title for e in self.read_entries_meta()}
+            data = [
+                (t, names.get(t.project_id), titles.get(t.linked_entry_id) if t.linked_entry_id else None)
+                for t in tasks
+            ]
+            with self._get_search_index() as idx:
+                idx.index_tasks_bulk(data)
+        except Exception:
+            logger.warning("Auto-indexing of tasks failed, run rebuild-index", exc_info=True)
     
     def _auto_remove_entry(self, entry_id: str) -> None:
         """Remove an entry from FTS, silently ignoring errors."""
@@ -158,8 +197,10 @@ class Storage:
         return projects
 
     def write_projects(self, projects: Iterable[Project]) -> None:
+        projects = list(projects)
         data = [asdict(project) for project in projects]
         io_utils.safe_write_json(self.projects_path, data)
+        self._auto_index_projects(projects)
 
     def append_entry_meta(self, entry: EntryMeta) -> None:
         self.append_entry_event(entry)
@@ -239,6 +280,9 @@ class Storage:
             raise ValueError(f"Invalid entry id: {entry_id!r}")
         path = self.entries_dir / f"{entry_id}.md"
         io_utils.safe_write_text(path, content)
+        entry = self.get_entry(entry_id)
+        if entry is not None:  # not yet logged while an entry is being created
+            self._auto_index_entry(entry)
         return path
 
     def read_entry_content(self, content_path: Path) -> str:
@@ -343,8 +387,10 @@ class Storage:
                 shutil.copy2(path, dest)
 
     def write_tasks(self, tasks: Iterable[Task]) -> None:
+        tasks = list(tasks)
         data = [asdict(task) for task in tasks]
         io_utils.safe_write_json(self.tasks_path, data)
+        self._auto_index_tasks(tasks)
 
     def read_timer_state(self) -> TimerState:
         default_data = asdict(default_timer_state())
@@ -603,9 +649,10 @@ class Storage:
             
             tasks_data.append((task, project_name_str, entry_title))
         
-        # Rebuild index
-        with self._get_search_index() as idx:
-            stats = idx.rebuild(entries, projects, tasks_data)
+        bodies = {entry.id: self.read_entry_body(entry) for entry in entries}
+        self._index_checked = True  # avoid re-entering from _get_search_index
+        with SearchIndex(self.index_path) as idx:
+            stats = idx.rebuild(entries, projects, tasks_data, bodies)
         logger.info(f"Search index rebuilt: {stats}")
         return stats
 
