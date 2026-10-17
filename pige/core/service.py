@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dc_replace
 from datetime import datetime, timezone, date, time, timedelta
 import logging
 import os
@@ -37,6 +37,8 @@ VALID_ENTRY_TYPES = ("note", "meeting", "decision", "log")
 VALID_CONTEXT_STATUSES = ("created", "actual", "treated")
 _UNSET = object()
 REDACTED_PLACEHOLDER = "[Content redacted]"
+INBOX_TAG = "inbox"
+INBOX_PROJECT_NAME = "Boîte de réception"
 
 
 def normalize_context_status(value: str | None) -> str:
@@ -488,6 +490,34 @@ class PigeService:
         tasks.sort(key=_task_sort_key)
         return tasks
 
+    def list_all_tasks(self, status: str = "open") -> list[Task]:
+        """Tasks of every project, filtered by status ("all" for no filter)."""
+        if status not in ("open", "in_progress", "done", "all"):
+            raise ValueError(
+                "Invalid task status. Valid statuses: open, in_progress, done, all"
+            )
+        tasks = self.storage.read_tasks()
+        if status != "all":
+            tasks = [task for task in tasks if task.status == status]
+        tasks.sort(key=_task_sort_key)
+        return tasks
+
+    def get_task(self, task_id: str) -> Task:
+        for task in self.storage.read_tasks():
+            if task.id == task_id:
+                return task
+        raise TaskNotFoundError(task_id)
+
+    def ensure_inbox_project(self, name: str = INBOX_PROJECT_NAME) -> Project:
+        """Return the inbox project (quick capture without choosing a project).
+
+        It is found by its ``inbox`` tag, and created on first use.
+        """
+        for project in self.storage.read_projects():
+            if INBOX_TAG in project.tags and project.status == "active":
+                return project
+        return self.create_project(name, "Saisies rapides à trier", [INBOX_TAG])
+
     def list_in_progress_threads(self, *, days: int = 14) -> list[ThreadSummary]:
         try:
             days_value = int(days)
@@ -601,7 +631,22 @@ class PigeService:
         note: str | None,
         linked_entry_id: str | None,
         due_date: str | None = None,
+        *,
+        task_id: str | None = None,
+        mail_message_id: str | None = None,
     ) -> Task:
+        """Create a task.
+
+        ``task_id`` lets a client (e.g. an offline phone) choose the id. Creation
+        is then idempotent: if a task with that id already exists, it is
+        returned unchanged instead of creating a duplicate.
+        """
+        if task_id is not None:
+            if not ids.is_valid_id(task_id):
+                raise ValueError("Invalid task id: expected 32 lowercase hex characters")
+            for existing in self.storage.read_tasks():
+                if existing.id == task_id:
+                    return existing
         self._ensure_project_exists(project_id)
         clean_title = (title or "").strip()
         if not clean_title:
@@ -609,8 +654,9 @@ class PigeService:
         clean_tags = _clean_task_tags(tags)
         clean_note = (note or "").strip() or None
         clean_due_date = _normalize_due_date(due_date)
+        clean_message_id = (mail_message_id or "").strip() or None
         task = Task(
-            id=ids.new_id(),
+            id=task_id or ids.new_id(),
             project_id=project_id,
             title=clean_title,
             status="open",
@@ -620,6 +666,7 @@ class PigeService:
             tags=clean_tags,
             linked_entry_id=linked_entry_id,
             note=clean_note,
+            mail_message_id=clean_message_id,
         )
         tasks = self.storage.read_tasks()
         tasks.append(task)
@@ -665,22 +712,19 @@ class PigeService:
                     done_at = task.done_at or dates.utc_now_iso()
                 else:
                     done_at = None
-            updated = Task(
-                id=task.id,
-                project_id=task.project_id,
+            updated = dc_replace(
+                task,
                 title=title,
                 status=status,
-                created_at=task.created_at,
                 done_at=done_at,
                 due_date=due_date,
                 tags=tags,
-                linked_entry_id=task.linked_entry_id,
                 note=note,
             )
             tasks[idx] = updated
             break
         if updated is None:
-            raise ValueError(f"Task {task_id} not found")
+            raise TaskNotFoundError(task_id)
         self.storage.write_tasks(tasks)
         return updated
 
@@ -696,22 +740,11 @@ class PigeService:
             else:
                 status = "open"
                 done_at = None
-            updated = Task(
-                id=task.id,
-                project_id=task.project_id,
-                title=task.title,
-                status=status,
-                created_at=task.created_at,
-                done_at=done_at,
-                due_date=task.due_date,
-                tags=list(task.tags),
-                linked_entry_id=task.linked_entry_id,
-                note=task.note,
-            )
+            updated = dc_replace(task, status=status, done_at=done_at, tags=list(task.tags))
             tasks[idx] = updated
             break
         if updated is None:
-            raise ValueError(f"Task {task_id} not found")
+            raise TaskNotFoundError(task_id)
         self.storage.write_tasks(tasks)
         return updated
 
@@ -719,7 +752,7 @@ class PigeService:
         tasks = self.storage.read_tasks()
         remaining = [task for task in tasks if task.id != task_id]
         if len(remaining) == len(tasks):
-            raise ValueError(f"Task {task_id} not found")
+            raise TaskNotFoundError(task_id)
         self.storage.write_tasks(remaining)
 
     def backup_data(self, out_path: str | None = None) -> str:

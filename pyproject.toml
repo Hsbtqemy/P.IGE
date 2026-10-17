@@ -11,6 +11,17 @@ dependencies = [
     "icalendar>=5.0.0"
 ]
 
+[project.optional-dependencies]
+# HTTP server for the web interface and the Thunderbird extension.
+server = [
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
+]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["pige*"]

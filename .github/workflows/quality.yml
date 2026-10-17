@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   quality-checks:
     runs-on: ubuntu-latest
@@ -20,8 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install .
-          pip install pytest
+          pip install ".[server,dev]"
 
       - name: Syntax check
         run: python -m compileall pige tests
@@ -40,4 +42,30 @@ jobs:
             tests/test_hierarchy.py \
             tests/test_service_hierarchy.py \
             tests/test_pagination.py \
-            tests/test_tree_diff.py
+            tests/test_tree_diff.py \
+            tests/test_service_tasks_sync.py \
+            tests/test_server.py
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Build
+        run: npm run build

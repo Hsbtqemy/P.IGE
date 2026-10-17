@@ -1,0 +1,32 @@
+[Unit]
+Description=P.IGE server
+After=network.target
+
+[Service]
+Type=simple
+User=pige
+Group=pige
+WorkingDirectory=/opt/pige/app
+# Secrets (password hash, session secret, token hashes): root-owned, mode 0640, group pige.
+EnvironmentFile=/etc/pige/pige.env
+ExecStart=/opt/pige/venv/bin/python -m pige.server serve --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=3
+
+# Hardening: the service only writes to its data directory.
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pige
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
