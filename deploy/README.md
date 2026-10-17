@@ -21,6 +21,8 @@ sudo install -d -o root -g pige -m 0750 /etc/pige
 
 ## 3. Code et environnement Python (3.11 ou plus)
 
+Sur Ubuntu, le module venv est un paquet à part : `sudo apt install python3-venv git`.
+
 ```sh
 sudo -u pige git clone --branch poc https://github.com/Hsbtqemy/P.IGE.git /opt/pige/app
 sudo -u pige python3 -m venv /opt/pige/venv
@@ -29,11 +31,27 @@ sudo -u pige /opt/pige/venv/bin/pip install "/opt/pige/app[server]"
 
 ## 4. Interface web
 
-Elle se compile avec Node 22 ou plus. Sur le VPS :
+Elle se compile avec Node 22.17 ou plus (exigé par SvelteKit 3). Si le Node du système est
+plus ancien, installe un Node 22 réservé à P.IGE, sans toucher à celui du système :
 
 ```sh
-sudo -u pige sh -c 'cd /opt/pige/app/web && npm ci && npm run build'
+cd /tmp
+ARCH=$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')
+TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt | grep -o "node-v22[0-9.]*-linux-$ARCH.tar.xz" | head -1)
+curl -fsSLO "https://nodejs.org/dist/latest-v22.x/$TARBALL"
+curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt | grep " $TARBALL\$" | sha256sum -c -
+sudo mkdir -p /opt/pige/node && sudo tar -xJf "$TARBALL" -C /opt/pige/node --strip-components=1
+sudo chown -R root:root /opt/pige/node
+/opt/pige/node/bin/node --version
 ```
+
+Puis, sur le VPS :
+
+```sh
+sudo -u pige sh -c 'export PATH=/opt/pige/node/bin:$PATH; cd /opt/pige/app/web && npm ci && npm run build'
+```
+
+(Si le Node du système suffit, la partie `export PATH=…;` est inutile.)
 
 Sans Node sur le VPS : lance les deux dernières commandes sur ton ordinateur, puis copie
 le dossier `web/build` vers `/opt/pige/app/web/build`.
@@ -126,7 +144,7 @@ de la preuve de concept (injection du script dans l'onglet de l'espace).
 ```sh
 sudo -u pige git -C /opt/pige/app pull
 sudo -u pige /opt/pige/venv/bin/pip install "/opt/pige/app[server]"
-sudo -u pige sh -c 'cd /opt/pige/app/web && npm ci && npm run build'
+sudo -u pige sh -c 'export PATH=/opt/pige/node/bin:$PATH; cd /opt/pige/app/web && npm ci && npm run build'
 sudo systemctl restart pige
 ```
 
