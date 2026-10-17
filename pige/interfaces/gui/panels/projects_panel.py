@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from pige.interfaces.gui.dialogs import show_new_project_dialog
 from pige.interfaces.gui.pagination import PaginationControl, PaginationState
-from pige.interfaces.gui.tree_diff import IncrementalTreeView, TreeNode, tree_from_items
+from pige.interfaces.gui.tree_diff import IncrementalTreeView, TreeNode
 
 if TYPE_CHECKING:
     from pige.core.models import Project
@@ -312,7 +312,6 @@ class ProjectsPanel(ttk.Frame):
     
     def _on_tree_right_click(self, event: tk.Event) -> None:
         """Show context menu on right-click on a project."""
-        from tkinter import messagebox
         item = self.tree.identify_row(event.y)
         if not item:
             return

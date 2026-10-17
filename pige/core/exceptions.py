@@ -88,7 +88,7 @@ class TimerNotRunningError(ValueError):
     def __init__(self):
         super().__init__(
             "No timer is currently running.\n"
-            f"Tip: Start a timer with 'python -m pige time start <PROJECT_ID>'"
+            "Tip: Start a timer with 'python -m pige time start <PROJECT_ID>'"
         )
 
 

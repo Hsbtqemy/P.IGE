@@ -175,7 +175,7 @@ class CalendarSyncManager:
         - errors: list of error messages
         """
         from pige.core.models import CalendarEvent
-        from pige.core.storage import read_calendar_events, write_calendar_events
+        from pige.core.storage import read_calendar_events
         
         subs = self.list_subscriptions()
         subscription = None

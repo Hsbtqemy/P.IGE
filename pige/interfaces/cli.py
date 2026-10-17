@@ -232,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
         
         if args.command == "migrate":
             stats = service.storage.migrate_projects_hierarchy()
-            print(f"Migration complete:")
+            print("Migration complete:")
             print(f"  Total projects: {stats['total']}")
             print(f"  Migrated: {stats['migrated']}")
             print(f"  Already migrated: {stats['already_migrated']}")
@@ -241,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "rebuild-index":
             print("Rebuilding search index...")
             stats = service.storage.rebuild_search_index()
-            print(f"Search index rebuilt successfully:")
+            print("Search index rebuilt successfully:")
             print(f"  Entries: {stats['entries']}")
             print(f"  Projects: {stats['projects']}")
             print(f"  Tasks: {stats['tasks']}")

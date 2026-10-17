@@ -30,7 +30,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any
 
 from pige.core.models import EntryMeta
 from pige.utils import dates

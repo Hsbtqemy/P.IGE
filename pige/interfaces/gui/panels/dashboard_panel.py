@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import tkinter as tk
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from tkinter import ttk
 from typing import TYPE_CHECKING
 

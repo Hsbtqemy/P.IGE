@@ -1,5 +1,7 @@
 # Audit : fonctionnalités Core / CLI non exposées dans la nouvelle GUI
 
+> **Note du 2026-10-17** : cet audit est antérieur au serveur (`pige/server/`), à l'interface web et à l'extension Thunderbird. Les 49 accès directs à `service.storage` depuis les interfaces sont suivis dans `BACKLOG.md`, étape 3 (« service assaini »).
+
 Ce document liste ce qui est disponible dans le **core** (service, storage) et la **CLI** mais **pas** (ou pas clairement) dans la nouvelle interface graphique (main_window + panels + dialogs).
 
 ---

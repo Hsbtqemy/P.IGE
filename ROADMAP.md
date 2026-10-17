@@ -15,7 +15,7 @@ PIGE évolue d'un outil de journaling local fonctionnel vers une solution produc
 - **Tests**: 72 tests passants ✅
 - **Couverture**: Storage 78%, Service 58%, Utils 92-100%
 - **Architecture**: Core/Interfaces/Utils bien séparés ✅
-- **Documentation**: README complet, CODE_ANALYSIS, CODE_REVIEW ✅
+- **Documentation**: README complet, CODE_ANALYSIS, CODE_REVIEW (archivés dans `docs/archives/`) ✅
 
 ---
 
@@ -289,8 +289,8 @@ PIGE évolue d'un outil de journaling local fonctionnel vers une solution produc
 - Commande CLI opérationnelle: `python -m pige rebuild-index`
 
 **Documentation**:
-- `FTS5_SOLUTION_APPLIQUEE.md` - Solution complète du problème PermissionError
-- `TODO_FTS5_INDEXATION_AUTO.md` - Historique et analyse (archivé, résolu)
+- `docs/archives/FTS5_SOLUTION_APPLIQUEE.md` - Solution complète du problème PermissionError
+- `docs/archives/TODO_FTS5_INDEXATION_AUTO.md` - Historique et analyse (archivé, résolu)
 - `pige/core/INDEXING_TODO.py` - Mémo mis à jour (✅ RÉSOLU)
 
 **Performance attendue**: < 50ms pour 10K entrées (validé à < 100ms pour 1K)

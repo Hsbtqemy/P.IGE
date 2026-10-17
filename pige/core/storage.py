@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from dataclasses import asdict
 from datetime import datetime, time, timezone
 from pathlib import Path
@@ -14,7 +16,7 @@ logger = logging.getLogger(__name__)
 from pige.core.cache import EntryCache
 from pige.core.indexing import SearchIndex
 from pige.core.models import EntryMeta, Project, Task, TimeLog, TimerState, CalendarEvent
-from pige.utils import dates
+from pige.utils import dates, ids
 from pige.utils import io as io_utils
 
 
@@ -54,6 +56,8 @@ TASK_KEYS = frozenset(
 )
 TASK_REQUIRED_KEYS = ("id", "project_id", "title")
 
+LOCK_FILE_NAME = ".pige.lock"
+
 TIMER_STATE_KEYS = frozenset(("running", "project_id", "start_ts", "note"))
 
 PROJECT_KEYS = frozenset(
@@ -87,6 +91,8 @@ class Storage:
         self.exports_dir = data_dir / "exports"
         self.index_path = data_dir / ".pige_index.db"
         self._entry_cache = EntryCache()  # Cache for entry metadata
+        # One lock for every process using this data directory (server, CLI, GUI).
+        self.lock = io_utils.FileLock(data_dir / LOCK_FILE_NAME)
 
     def init_storage(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -183,18 +189,16 @@ class Storage:
         self._auto_remove_entry(entry_id)
 
     def read_entries_meta(self) -> list[EntryMeta]:
-        # Check cache first
-        cached = self._entry_cache.get_entries()
+        # The cache is only valid while entries.jsonl is unchanged on disk, so a
+        # write by another process (server, CLI, GUI) is picked up on next read.
+        signature = io_utils.file_signature(self.entries_path)
+        cached = self._entry_cache.get_entries(signature)
         if cached is not None:
             return cached
-        
-        # Cache miss - read from disk
+
         events = io_utils.read_jsonl(self.entries_path)
         entries = _fold_entry_events(events)
-        
-        # Store in cache
-        self._entry_cache.set_entries(entries)
-        
+        self._entry_cache.set_entries(entries, signature)
         return entries
     
     def invalidate_entry_cache(self) -> None:
@@ -213,13 +217,26 @@ class Storage:
                 return entry
         return None
 
+    def entry_path(self, entry: EntryMeta) -> Path | None:
+        """Absolute path of an entry's Markdown file, or None if ``content_path``
+        points outside ``entries/`` (corrupt or hostile data, e.g. a crafted backup)."""
+        candidate = (self.data_dir / entry.content_path).resolve()
+        try:
+            candidate.relative_to(self.entries_dir.resolve())
+        except ValueError:
+            logger.warning("Ignoring unsafe content path for entry %s: %r", entry.id, entry.content_path)
+            return None
+        return candidate
+
     def read_entry_body(self, entry: EntryMeta) -> str:
-        content_path = self.data_dir / entry.content_path
-        if not content_path.exists():
+        content_path = self.entry_path(entry)
+        if content_path is None or not content_path.exists():
             return ""
         return self.read_entry_content(content_path)
 
     def write_entry_content(self, entry_id: str, content: str) -> Path:
+        if not ids.is_safe_id(entry_id):
+            raise ValueError(f"Invalid entry id: {entry_id!r}")
         path = self.entries_dir / f"{entry_id}.md"
         io_utils.safe_write_text(path, content)
         return path
@@ -260,9 +277,13 @@ class Storage:
             for path in paths:
                 if not path.is_file():
                     continue
-                if path.suffix == ".tmp":
+                if path.suffix == ".tmp" or path.name == LOCK_FILE_NAME:
                     continue
                 rel_path = path.relative_to(self.data_dir).as_posix()
+                if rel_path == "calendar_subscriptions.json":
+                    # Never copy calendar passwords into a backup that may travel.
+                    handle.writestr(rel_path, _without_credentials(path))
+                    continue
                 handle.write(path, rel_path)
         return zip_path
 
@@ -294,6 +315,8 @@ class Storage:
             for item in self.data_dir.iterdir():
                 if item.resolve() == safety_backup.resolve():
                     continue
+                if item.name == LOCK_FILE_NAME:
+                    continue  # held by this process during the restore
                 if item.is_dir():
                     if _path_contains(item, safety_backup):
                         for child in item.iterdir():
@@ -310,6 +333,8 @@ class Storage:
 
             for path in sorted(source_dir.rglob("*")):
                 rel_path = path.relative_to(source_dir)
+                if rel_path.name == LOCK_FILE_NAME:
+                    continue
                 dest = self.data_dir / rel_path
                 if path.is_dir():
                     dest.mkdir(parents=True, exist_ok=True)
@@ -504,7 +529,7 @@ class Storage:
         if new_parent_id is not None:
             descendants = self.get_project_descendants(project_id)
             if any(d.id == new_parent_id for d in descendants):
-                raise ValueError(f"Cannot move project: would create a cycle")
+                raise ValueError("Cannot move project: would create a cycle")
         
         # Update the project
         project = projects_by_id[project_id]
@@ -738,6 +763,8 @@ def _fold_entry_events(events: list[object]) -> list[EntryMeta]:
                 entry_data.get("ts"), entry_data.get("entry_date")
             )
             entry = EntryMeta(**entry_data)
+            if not ids.is_safe_id(entry.id):
+                raise ValueError(f"Invalid entry id {entry.id!r} in entries log")
             if not entry.context_status:
                 entry.context_status = None
             entries[entry.id] = entry
@@ -859,3 +886,16 @@ def delete_calendar_events_by_subscription(storage: Storage, subscription_id: st
     write_calendar_events(storage, events)
     logger.info(f"Deleted all events for subscription {subscription_id}")
 
+
+def _without_credentials(path: Path) -> str:
+    """calendar_subscriptions.json with usernames and passwords removed."""
+    try:
+        data = io_utils.read_json(path, default=[])
+    except (OSError, ValueError):
+        return "[]\n"
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                item.pop("password", None)
+                item.pop("username", None)
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
