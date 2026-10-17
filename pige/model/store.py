@@ -39,6 +39,10 @@ class InvalidOperationError(ValueError):
     """The operation breaks a rule of the model."""
 
 
+class ConflictError(InvalidOperationError):
+    """Someone else saved the row in between (stale revision)."""
+
+
 def _new_id() -> str:
     return uuid.uuid4().hex
 
@@ -277,6 +281,10 @@ class ModelStore:
         if conn is not None:
             conn.close()
             self._local.conn = None
+
+    def transaction(self) -> Any:
+        """Group several operations into one transaction (``with store.transaction(): ...``)."""
+        return self._tx()
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
@@ -981,7 +989,7 @@ class ModelStore:
         with self._tx():
             current = self.get_entry(entry_id)
             if expected_revision is not None and expected_revision != current.revision:
-                raise InvalidOperationError(
+                raise ConflictError(
                     f"entry changed elsewhere (revision {current.revision}, expected {expected_revision})"
                 )
             changes: dict[str, Any] = {}
@@ -1079,6 +1087,7 @@ class ModelStore:
         tag_id: str | None = None,
         day: str | None = None,
         limit: int = 200,
+        offset: int = 0,
     ) -> list[Entry]:
         """Entries, newest first, filtered by any combination of the arguments.
 
@@ -1116,8 +1125,8 @@ class ModelStore:
         sql = "SELECT e.* FROM entries e"
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY e.entry_date DESC, coalesce(e.start_time, '99:99') DESC, e.created_at DESC LIMIT ?"
-        params.append(int(limit))
+        sql += " ORDER BY e.entry_date DESC, coalesce(e.start_time, '99:99') DESC, e.created_at DESC LIMIT ? OFFSET ?"
+        params += [int(limit), int(offset)]
         out = []
         for r in self.conn.execute(sql, params).fetchall():
             applied = r["decision_applied"]
@@ -1130,6 +1139,72 @@ class ModelStore:
             (person_id,),
         )
         return row[0] if row is not None else None
+
+    # ------------------------------------------------------------ deleting
+
+    def _delete(self, table: str, row_id: str, refusal: str) -> None:
+        with self._tx():
+            self._require(table, row_id)
+            try:
+                self.conn.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
+            except sqlite3.IntegrityError as exc:
+                raise InvalidOperationError(refusal) from exc
+
+    def delete_entry(self, entry_id: str) -> None:
+        """Delete an entry and its versions (time blocks and tasks keep existing, unlinked)."""
+        self._delete("entries", entry_id, "entry cannot be deleted")
+
+    def delete_task(self, task_id: str) -> None:
+        """Delete a task and its steps; its entries and time stay, detached from it."""
+        self._delete("tasks", task_id, "task cannot be deleted")
+
+    def delete_step(self, step_id: str) -> None:
+        self._delete("task_steps", step_id, "step cannot be deleted")
+
+    def delete_block(self, block_id: str) -> None:
+        self._delete("time_blocks", block_id, "time block cannot be deleted")
+
+    def delete_project(self, project_id: str) -> None:
+        """Only an empty project (no sub-project, task, entry or time) can be deleted."""
+        self._delete("projects", project_id, "move or delete what the project contains first")
+
+    def delete_space(self, space_id: str) -> None:
+        self._delete("spaces", space_id, "move or delete what the space contains first")
+
+    def delete_person(self, person_id: str) -> None:
+        """Delete a person; refused while a task is waiting on them."""
+        self._delete("people", person_id, "a task is waiting on this person")
+
+    # ------------------------------------------------------------ counts
+
+    def open_task_counts(self) -> dict[str, int]:
+        """Open (not done) tasks per project id."""
+        rows = self.conn.execute(
+            "SELECT project_id, count(*) AS n FROM tasks WHERE status <> 'done' AND project_id IS NOT NULL"
+            " GROUP BY project_id"
+        ).fetchall()
+        return {r["project_id"]: int(r["n"]) for r in rows}
+
+    def person_tags(self, person_id: str) -> list[Tag]:
+        rows = self.conn.execute(
+            "SELECT t.* FROM tags t JOIN person_tags pt ON pt.tag_id = t.id WHERE pt.person_id = ? ORDER BY t.name",
+            (person_id,),
+        ).fetchall()
+        return [_row_to(Tag, r, pinned=bool(r["pinned"])) for r in rows]
+
+    def entry_tags(self, entry_id: str) -> list[Tag]:
+        rows = self.conn.execute(
+            "SELECT t.* FROM tags t JOIN entry_tags et ON et.tag_id = t.id WHERE et.entry_id = ? ORDER BY t.name",
+            (entry_id,),
+        ).fetchall()
+        return [_row_to(Tag, r, pinned=bool(r["pinned"])) for r in rows]
+
+    def tasks_for_person(self, person_id: str) -> list[Task]:
+        """Open tasks where this person is involved (not counting « waiting on »)."""
+        return self._tasks(
+            "t.status <> 'done' AND EXISTS (SELECT 1 FROM task_people tp WHERE tp.task_id = t.id AND tp.person_id = ?)",
+            (person_id,),
+        )
 
     # ------------------------------------------------------------ search
 

@@ -17,6 +17,8 @@ from pige.core.exceptions import ProjectNotFoundError, TaskNotFoundError
 from pige.core.models import Task
 from pige.core.service import INBOX_TAG, PigeService
 from pige.core.storage import Storage
+from pige.model import DB_FILE_NAME, ConflictError, ModelStore, NotFoundError
+from pige.server.api_model import build_router
 from pige.server.auth import LoginThrottle, SessionSigner, verify_api_token, verify_password
 from pige.server.config import Settings
 
@@ -77,10 +79,15 @@ class _SecurityHeaders(BaseHTTPMiddleware):
         return response
 
 
-def create_app(settings: Settings, service: PigeService | None = None) -> FastAPI:
+def create_app(
+    settings: Settings, service: PigeService | None = None, model_store: ModelStore | None = None
+) -> FastAPI:
     if service is None:
         service = PigeService(Storage(settings.data_dir))
         service.init_storage()
+    if model_store is None:
+        # New model (/api/v2). The server's data never sits in a synced folder: WAL is fine.
+        model_store = ModelStore(settings.data_dir / DB_FILE_NAME, wal=True)
     signer = SessionSigner(
         settings.session_secret,
         settings.session_days * 86400,
@@ -115,6 +122,14 @@ def create_app(settings: Settings, service: PigeService | None = None) -> FastAP
     @app.exception_handler(ProjectNotFoundError)
     async def _not_found(_request: Request, exc: Exception) -> JSONResponse:
         return JSONResponse({"detail": str(exc).splitlines()[0]}, status_code=404)
+
+    @app.exception_handler(NotFoundError)
+    async def _model_not_found(_request: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse({"detail": str(exc).splitlines()[0]}, status_code=404)
+
+    @app.exception_handler(ConflictError)
+    async def _conflict(_request: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse({"detail": str(exc).splitlines()[0]}, status_code=409)
 
     @app.exception_handler(ValueError)
     async def _bad_request(_request: Request, exc: ValueError) -> JSONResponse:
@@ -203,6 +218,8 @@ def create_app(settings: Settings, service: PigeService | None = None) -> FastAP
             task = service.update_task(task_id, patch)
             names = {p.id: p.name for p in service.list_projects("all")}
         return _task_out(task, names)
+
+    app.include_router(build_router(model_store, require_auth, settings.timezone))
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
     def api_not_found(path: str) -> None:

@@ -160,3 +160,21 @@ sudo systemctl restart pige
 
 `sudo systemctl disable --now pige`, retirer le site Nginx, supprimer `/opt/pige`,
 `/var/lib/pige` et `/etc/pige`. Rien d'autre sur le VPS n'est modifié.
+
+
+## Nouveau modèle de données (API /api/v2)
+
+Depuis l'étape 3, le serveur ouvre aussi une base SQLite `pige.sqlite3` dans `PIGE_DATA_DIR`
+(avec ses fichiers `-wal` et `-shm`). Elle est créée et mise à jour toute seule au démarrage.
+Les anciennes routes `/api/tasks` (appli web actuelle, extension Thunderbird) continuent
+d'utiliser les fichiers JSON.
+
+Pour sauvegarder la base sans arrêter le service, utiliser la commande de sauvegarde de SQLite
+plutôt qu'une simple copie :
+
+```bash
+sudo -u pige sqlite3 /var/lib/pige/data/pige.sqlite3 ".backup '/var/lib/pige/sauvegardes/pige-$(date +%F).sqlite3'"
+```
+
+Variable facultative : `PIGE_TIMEZONE` (par défaut `Europe/Paris`), qui découpe les journées
+dans les relevés de temps.
