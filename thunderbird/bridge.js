@@ -12,3 +12,8 @@ window.addEventListener('message', (event) => {
   if (typeof data.messageId !== 'string' || data.messageId.length > 998) return;
   browser.runtime.sendMessage({ type: 'open-mail', messageId: data.messageId });
 });
+
+// The extension asks the page to reload its tasks (e.g. after a task was created from an email).
+browser.runtime.onMessage.addListener((message) => {
+  if (message?.type === 'refresh') window.dispatchEvent(new Event('pige-refresh'));
+});

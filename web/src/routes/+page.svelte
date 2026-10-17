@@ -208,6 +208,13 @@
 		const goOffline = () => (online = false);
 		window.addEventListener('online', goOnline);
 		window.addEventListener('offline', goOffline);
+		// Refresh when coming back to the tab or app, and when Thunderbird reports a new task.
+		const refresh = () => {
+			if (phase === 'app' && document.visibilityState === 'visible') void sync();
+		};
+		document.addEventListener('visibilitychange', refresh);
+		window.addEventListener('focus', refresh);
+		window.addEventListener('pige-refresh', refresh);
 		const timer = setInterval(() => {
 			if (phase === 'app' && (pending.length || !online)) void sync();
 		}, 30_000);
@@ -216,6 +223,9 @@
 			window.removeEventListener('pige-bridge-ready', detect);
 			window.removeEventListener('online', goOnline);
 			window.removeEventListener('offline', goOffline);
+			document.removeEventListener('visibilitychange', refresh);
+			window.removeEventListener('focus', refresh);
+			window.removeEventListener('pige-refresh', refresh);
 			clearInterval(timer);
 		};
 	});

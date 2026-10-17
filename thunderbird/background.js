@@ -141,12 +141,24 @@ browser.menus.onClicked.addListener(async (info) => {
       failed += 1;
     }
   }
+  if (created) await refreshOpenTabs(serverUrl);
   if (failed) {
     notify('Tâches non créées', `${failed} sur ${created + failed} n’ont pas pu être envoyées. Vérifie la connexion et le jeton.`);
   } else {
     notify(created > 1 ? `${created} tâches créées` : 'Tâche créée', 'Elle est dans la boîte de réception de P.IGE.');
   }
 });
+
+async function refreshOpenTabs(serverUrl) {
+  const origin = originOf(serverUrl);
+  if (!origin) return;
+  const tabs = await browser.tabs.query({ url: `${origin}/*` });
+  for (const tab of tabs) {
+    browser.tabs.sendMessage(tab.id, { type: 'refresh' }).catch(() => {
+      /* tab without the bridge (still loading): it refreshes when shown */
+    });
+  }
+}
 
 function notify(title, message) {
   browser.notifications.create({ type: 'basic', iconUrl: 'icons/icon-64.png', title, message });
