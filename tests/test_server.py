@@ -83,8 +83,23 @@ class AuthPrimitivesTests(unittest.TestCase):
             self.assertFalse(signer.is_valid(junk))
         self.assertFalse(verify_api_token("pige_é", frozenset({"0" * 64})))
 
+    def test_malformed_password_hash_never_raises(self) -> None:
+        good = hash_password("abc def ghi jkl")
+        truncated = good[:-5]
+        self.assertFalse(verify_password("abc def ghi jkl", truncated))
+        self.assertFalse(verify_password("abc def ghi jkl", good.replace("$", "")))
+
+    def test_malformed_password_hash_rejected_at_startup(self) -> None:
+        base = {"PIGE_DATA_DIR": "/tmp/x", "PIGE_SESSION_SECRET": SECRET}
+        good = hash_password("abc def ghi jkl")
+        for bad in (good[:-5], good.replace("$", ""), "scrypt$1$2$3$x$y"):
+            with self.assertRaises(ConfigError):
+                Settings.from_env({**base, "PIGE_PASSWORD_HASH": bad})
+        quoted = Settings.from_env({**base, "PIGE_PASSWORD_HASH": f"'{good}'"})
+        self.assertEqual(quoted.password_hash, good)
+
     def test_token_hashes_are_validated(self) -> None:
-        env = {"PIGE_DATA_DIR": "/tmp/x", "PIGE_PASSWORD_HASH": "h", "PIGE_SESSION_SECRET": SECRET}
+        env = {"PIGE_DATA_DIR": "/tmp/x", "PIGE_PASSWORD_HASH": hash_password("abc def ghi jkl"), "PIGE_SESSION_SECRET": SECRET}
         with self.assertRaises(ConfigError):
             Settings.from_env({**env, "PIGE_API_TOKEN_HASHES": "not-a-hash"})
         ok = Settings.from_env({**env, "PIGE_API_TOKEN_HASHES": "A" * 64})
@@ -93,6 +108,8 @@ class AuthPrimitivesTests(unittest.TestCase):
     def test_settings_require_secrets(self) -> None:
         with self.assertRaises(ConfigError):
             Settings.from_env({"PIGE_DATA_DIR": "/tmp/x"})
+        with self.assertRaises(ConfigError):
+            Settings.from_env({"PIGE_DATA_DIR": "/tmp/x", "PIGE_PASSWORD_HASH": "h", "PIGE_SESSION_SECRET": SECRET})
 
 
 @unittest.skipUnless(HAVE_SERVER, "server extras not installed (pip install .[server])")

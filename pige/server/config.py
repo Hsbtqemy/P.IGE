@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from pige.server.auth import is_password_hash
+
 
 class ConfigError(RuntimeError):
     pass
@@ -45,10 +47,16 @@ class Settings:
         for token_hash in tokens:
             if not re.fullmatch(r"[0-9a-f]{64}", token_hash):
                 raise ConfigError("PIGE_API_TOKEN_HASHES must hold sha256 hex digests")
+        password_hash = required("PIGE_PASSWORD_HASH").strip("'\"")
+        if not is_password_hash(password_hash):
+            raise ConfigError(
+                "PIGE_PASSWORD_HASH is malformed: paste the whole line printed by "
+                "`python -m pige.server hash-password`, in single quotes"
+            )
         web_dir = env.get("PIGE_WEB_DIR", "").strip()
         return cls(
             data_dir=Path(required("PIGE_DATA_DIR")).expanduser(),
-            password_hash=required("PIGE_PASSWORD_HASH"),
+            password_hash=password_hash,
             session_secret=required("PIGE_SESSION_SECRET"),
             api_token_hashes=tokens,
             web_dir=Path(web_dir).expanduser() if web_dir else None,

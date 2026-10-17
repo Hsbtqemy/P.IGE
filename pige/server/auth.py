@@ -50,9 +50,21 @@ def verify_password(password: str, encoded: str) -> bool:
             password.encode("utf-8"), salt=_b64d(salt), n=int(n), r=int(r), p=int(p),
             maxmem=_SCRYPT_MAXMEM, dklen=32,
         )
+        return hmac.compare_digest(digest, _b64d(expected))
     except (ValueError, TypeError):
         return False
-    return hmac.compare_digest(digest, _b64d(expected))
+
+
+def is_password_hash(encoded: str) -> bool:
+    """True when ``encoded`` has the shape produced by :func:`hash_password`."""
+    parts = encoded.split("$")
+    if len(parts) != 6 or parts[0] != "scrypt":
+        return False
+    try:
+        int(parts[1]), int(parts[2]), int(parts[3])
+        return len(_b64d(parts[4])) == 16 and len(_b64d(parts[5])) == 32
+    except (ValueError, TypeError):
+        return False
 
 
 def new_api_token() -> tuple[str, str]:
