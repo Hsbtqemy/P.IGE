@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from pige.interfaces.gui.pagination import PaginationState, paginate_items
 

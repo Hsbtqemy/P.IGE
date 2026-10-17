@@ -13,10 +13,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -27,6 +29,17 @@ jobs:
 
       - name: Syntax check
         run: python -m compileall pige tests
+
+      # Linters are pinned here (not in pyproject.toml) so that upgrades are
+      # explicit. Config: ruff.toml, mypy.ini.
+      - name: Install linters
+        run: pip install "ruff==0.17.1" "mypy==2.4.0"
+
+      - name: Lint (ruff)
+        run: ruff check pige tests --output-format github
+
+      - name: Type check (mypy)
+        run: python -m mypy
 
       - name: Unit tests (unittest suite)
         run: python -m unittest discover tests
@@ -52,10 +65,12 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm

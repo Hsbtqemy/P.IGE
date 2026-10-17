@@ -7,7 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Ajouté
+
+- **Serveur, interface web et extension Thunderbird** (PR #1, 2026-10-17), à l'état de preuve de concept :
+  - Serveur HTTP FastAPI (`pige/server/`) au-dessus de `PigeService`.
+  - Interface web SvelteKit installable et utilisable hors ligne (`web/`).
+  - Extension Thunderbird (`thunderbird/`).
+  - Fichiers de déploiement (`deploy/`, voir `deploy/README.md`).
+
+### Étape 2 – socle sûr
+
+- **Emplacement des données** : `PIGE_DATA_DIR`, puis le dossier choisi dans la GUI, puis `./data` s'il contient déjà des données, sinon le dossier utilisateur du système (`~/.local/share/PIGE/data`, `~/Library/Application Support/PIGE/data`, `%LOCALAPPDATA%\PIGE\data`). **Changement** : `python -m pige init` lancé hors d'un dossier `./data` existant ne crée plus `./data` ; il affiche le dossier utilisé. Journaux dans le dossier de logs utilisateur, avec rotation.
+- **Écritures sûres** : écriture atomique avec fsync, verrou partagé par le serveur, la CLI et la GUI, ligne tronquée par un crash mise de côté dans `entries.jsonl.torn` au lieu de bloquer le journal, corps d'une entrée écrit avant sa ligne de journal, chemins de contenu vérifiés.
+- **Recherche** : texte des entrées, projets et tâches indexés automatiquement ; un ancien index (titres seuls) est reconstruit une fois.
+- **Sauvegardes** : sans l'index de recherche (reconstruit) ni les mots de passe d'agenda (conservés à la restauration).
+- **Agenda** : identifiants envoyés seulement en HTTPS, redirections sûres, taille limitée à 10 Mo, adresses masquées dans les journaux et l'interface, un flux vide ne supprime plus les événements locaux.
+- **Export masqué** : masque aussi les notes de temps ; libellé précisant ce qui reste visible.
+- **CI** : actions épinglées, publication isolée avec `SHA256SUMS`, ruff et mypy.
+
+### Tests
+
+- 192 tests passent avec pytest (suites tkinter exclues).
+
+### Added (historique Phase 3.9 / 4.0, février–mars 2026)
 
 #### Phase 4.0 - Dashboard Vue d'Ensemble
 
@@ -54,7 +76,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Search en Tab 3
   - Réorganisation layout pour meilleure ergonomie
 
-- **Tests**: 177 tests passants (100%), 0 régression
 
 #### Phase 3.9 - Integration & Polish
 
@@ -93,8 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Affichage instantané (pagination page courante only)
     - Tree diff évite full rebuild (30x speedup théorique)
     - 150x speedup pour 10K+ projets
-  - **Tests**: 177 tests passants (100%), 0 régression
-
+  
 - **Pagination TreeView** - Widget réutilisable pour afficher grandes quantités de données:
   - **Module `pige/interfaces/gui/pagination.py`** (350+ lignes):
     - `PaginationState`: Dataclass pour état pagination (page, page_size, total_items)
@@ -163,7 +183,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Affiche stats: entries/projects/tasks indexés
     - Idempotent et safe (peut être relancé)
   - **Performance**: < 100ms pour 1000 entrées (indexation bulk)
-  - **Tests**: 12 tests unitaires FTS, 177 tests total (tous passants)
+  - **Tests**: 12 tests unitaires FTS
   - Gain: Recherche ultra-rapide pour grandes bases (10K+ entrées)
 
 - **Architecture GUI Modulaire** - Découpage de l'interface monolithique en structure extensible:
@@ -257,12 +277,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI: Parité complète avec GUI pour création et gestion d'entrées
 - Messages d'erreur améliorés avec suggestions concrètes
 - Documentation README mise à jour avec menus contextuels, commandes CLI et syntaxe de recherche avancée
-- Tous les tests passent (177/177, +68 depuis v0.1.0) ✅
 
 ### Fixed
 - Gestion d'erreurs plus robuste dans l'interface graphique
 
-## [0.1.3] - 2025-02-19
+## [0.1.3] - 2026-02-19
 
 ### Added
 - **Menu Fichier** : « Sauvegarder les données… » (backup ZIP), « Restaurer depuis une sauvegarde… » (avec confirmation).
@@ -273,7 +292,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Documentation : `docs/AUDIT_GUI_VS_CLI_CORE.md` et `pige/interfaces/gui/README.md` mis à jour.
 
-## [0.1.0] - 2024-01-XX
+## [0.1.0] - avant 2026-02 (date exacte inconnue)
 
 ### Added
 - Architecture core/interfaces/utils modulaire

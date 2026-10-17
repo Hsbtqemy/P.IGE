@@ -15,13 +15,11 @@ logger = logging.getLogger(__name__)
 
 from pige.core.exceptions import (
     ProjectNotFoundError,
-    EntryNotFoundError,
     TaskNotFoundError,
     InvalidEntryTypeError,
     MeetingHoursError,
     TimerAlreadyRunningError,
     TimerNotRunningError,
-    BackupFormatError,
 )
 from pige.core.models import EntryMeta, Project, Task, TimeLog, TimerState
 from pige.core.storage import (
@@ -129,7 +127,7 @@ class PigeService:
             # Check maximum depth (prevent excessive nesting)
             parent_depth = self.get_project_depth(parent_id)
             if parent_depth >= 9:  # Parent at depth 9 means child would be at depth 10
-                raise ValueError(f"Cannot create project: maximum hierarchy depth (10) exceeded")
+                raise ValueError("Cannot create project: maximum hierarchy depth (10) exceeded")
         
         clean_person = (person or "").strip() or None
         clean_group = (group or "").strip() or None
@@ -453,8 +451,8 @@ class PigeService:
         all_entries = self.storage.read_entries_meta()
         for entry in all_entries:
             if entry.project_id in ids_to_delete:
-                entry_path = self.storage.data_dir / entry.content_path
-                if entry_path.exists():
+                entry_path = self.storage.entry_path(entry)
+                if entry_path is not None and entry_path.exists():
                     entry_path.unlink()
                 self.storage.append_entry_delete(entry.id, delete_ts)
 
@@ -840,9 +838,10 @@ class PigeService:
             decision_done=decision_done if entry_type == "decision" else None,
             priority=priority_val,
         )
+        # Body first, then the log line: a crash in between leaves at worst an
+        # orphan Markdown file, never an entry whose body is missing.
+        md_path = self.storage.write_entry_content(entry_id, body or "")
         self.storage.append_entry_event(entry)
-        content = body or ""
-        md_path = self.storage.write_entry_content(entry_id, content)
         return entry, md_path
 
     def update_entry_content(self, entry_id: str, content: str) -> Path:
@@ -1059,8 +1058,8 @@ class PigeService:
         entry = entries.get(entry_id)
         if not entry:
             raise ValueError(f"Entry {entry_id} not found")
-        entry_path = self.storage.data_dir / entry.content_path
-        if entry_path.exists():
+        entry_path = self.storage.entry_path(entry)
+        if entry_path is not None and entry_path.exists():
             entry_path.unlink()
         self.storage.append_entry_delete(entry_id, dates.utc_now_iso())
 
@@ -1296,8 +1295,8 @@ class PigeService:
                     "",
                 ]
             )
-            content_path = self.storage.data_dir / entry.content_path
-            if content_path.exists():
+            content_path = self.storage.entry_path(entry)
+            if content_path is not None and content_path.exists():
                 if redact_bodies:
                     lines.append(REDACTED_PLACEHOLDER)
                 else:
@@ -1423,8 +1422,8 @@ class PigeService:
                     f"*{_format_date_ddmmyyyy(_entry_local_date(entry))}*",
                     "",
                 ])
-                content_path = self.storage.data_dir / entry.content_path
-                if content_path.exists():
+                content_path = self.storage.entry_path(entry)
+                if content_path is not None and content_path.exists():
                     if redact_bodies:
                         lines.append(REDACTED_PLACEHOLDER)
                     else:
@@ -1449,8 +1448,8 @@ class PigeService:
                 else:
                     lines.append(f"### {date_label} — {title_part}")
                 lines.append("")
-                content_path = self.storage.data_dir / entry.content_path
-                if content_path.exists():
+                content_path = self.storage.entry_path(entry)
+                if content_path is not None and content_path.exists():
                     if redact_bodies:
                         lines.append(REDACTED_PLACEHOLDER)
                     else:
@@ -1499,7 +1498,7 @@ class PigeService:
                         start_str = log.start
                         end_str = log.end or ""
                     dur = _timelog_duration_sec(log)
-                    note = (log.note or "").replace("|", "\\|")
+                    note = "" if redact_bodies else (log.note or "").replace("|", "\\|")
                     lines.append(f"| {start_str} | {end_str} | {_format_duration_hms(dur)} | {note} |")
                 lines.append("")
                 lines.append(f"**Sous-total jour:** {_format_duration_hms(day_sec)}")
@@ -2451,3 +2450,32 @@ def _format_task_line(task: Task, done: bool) -> str:
         parts.append(f"(source entry: {task.linked_entry_id})")
     return f"- [{checkbox}] " + " ".join(parts)
 
+
+def _hold_storage_lock(cls: type) -> type:
+    """Run every public method of ``cls`` under the data directory lock.
+
+    The service reads whole files, changes them and writes them back; without a
+    lock shared by every process (server, CLI, GUI), two writers could silently
+    overwrite each other. The lock is re-entrant, so methods may call each other.
+    """
+    import functools
+
+    for name, member in list(vars(cls).items()):
+        if name.startswith("_") or not callable(member):
+            continue
+        if isinstance(member, (staticmethod, classmethod)):
+            continue
+
+        def wrap(method):  # type: ignore[no-untyped-def]
+            @functools.wraps(method)
+            def locked(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+                with self.storage.lock.hold():
+                    return method(self, *args, **kwargs)
+
+            return locked
+
+        setattr(cls, name, wrap(member))
+    return cls
+
+
+PigeService = _hold_storage_lock(PigeService)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from dataclasses import asdict
 from datetime import datetime, time, timezone
 from pathlib import Path
@@ -12,9 +14,9 @@ import zipfile
 logger = logging.getLogger(__name__)
 
 from pige.core.cache import EntryCache
-from pige.core.indexing import SearchIndex
+from pige.core.indexing import INDEX_CONTENT_VERSION, SearchIndex, index_content_version
 from pige.core.models import EntryMeta, Project, Task, TimeLog, TimerState, CalendarEvent
-from pige.utils import dates
+from pige.utils import dates, ids
 from pige.utils import io as io_utils
 
 
@@ -54,6 +56,8 @@ TASK_KEYS = frozenset(
 )
 TASK_REQUIRED_KEYS = ("id", "project_id", "title")
 
+LOCK_FILE_NAME = ".pige.lock"
+
 TIMER_STATE_KEYS = frozenset(("running", "project_id", "start_ts", "note"))
 
 PROJECT_KEYS = frozenset(
@@ -87,6 +91,9 @@ class Storage:
         self.exports_dir = data_dir / "exports"
         self.index_path = data_dir / ".pige_index.db"
         self._entry_cache = EntryCache()  # Cache for entry metadata
+        # One lock for every process using this data directory (server, CLI, GUI).
+        self.lock = io_utils.FileLock(data_dir / LOCK_FILE_NAME)
+        self._index_checked = False
 
     def init_storage(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -108,16 +115,54 @@ class Storage:
         # Search index is created on-demand (first write or rebuild-index command)
     
     def _get_search_index(self) -> SearchIndex:
-        """Create a new search index instance (no caching, use as context manager)."""
+        """Open the search index (use as context manager).
+
+        The first time, an index that is missing or was built by an older version
+        (titles only, no entry bodies) is rebuilt from the data files.
+        """
+        if not self._index_checked:
+            self._index_checked = True
+            if index_content_version(self.index_path) != INDEX_CONTENT_VERSION:
+                try:
+                    self.rebuild_search_index()  # takes the data lock
+                except Exception:
+                    logger.warning("Could not rebuild the search index", exc_info=True)
         return SearchIndex(self.index_path)
-    
+
+    def _project_name(self, project_id: str) -> str:
+        for project in self.read_projects():
+            if project.id == project_id:
+                return project.name
+        return ""
+
     def _auto_index_entry(self, entry: EntryMeta) -> None:
-        """Index an entry in FTS, silently ignoring errors."""
+        """Index an entry (title, tags, people, body, project), never failing the write."""
         try:
+            body = self.read_entry_body(entry)
             with self._get_search_index() as idx:
-                idx.index_entry(entry)
+                idx.index_entry(entry, body, self._project_name(entry.project_id))
         except Exception:
             logger.warning("Auto-indexing failed for entry %s, run rebuild-index", entry.id, exc_info=True)
+
+    def _auto_index_projects(self, projects: list[Project]) -> None:
+        try:
+            with self._get_search_index() as idx:
+                idx.index_projects_bulk(projects)
+        except Exception:
+            logger.warning("Auto-indexing of projects failed, run rebuild-index", exc_info=True)
+
+    def _auto_index_tasks(self, tasks: list[Task]) -> None:
+        try:
+            names = {p.id: p.name for p in self.read_projects()}
+            titles = {e.id: e.title for e in self.read_entries_meta()}
+            data = [
+                (t, names.get(t.project_id), titles.get(t.linked_entry_id) if t.linked_entry_id else None)
+                for t in tasks
+            ]
+            with self._get_search_index() as idx:
+                idx.index_tasks_bulk(data)
+        except Exception:
+            logger.warning("Auto-indexing of tasks failed, run rebuild-index", exc_info=True)
     
     def _auto_remove_entry(self, entry_id: str) -> None:
         """Remove an entry from FTS, silently ignoring errors."""
@@ -152,8 +197,10 @@ class Storage:
         return projects
 
     def write_projects(self, projects: Iterable[Project]) -> None:
+        projects = list(projects)
         data = [asdict(project) for project in projects]
         io_utils.safe_write_json(self.projects_path, data)
+        self._auto_index_projects(projects)
 
     def append_entry_meta(self, entry: EntryMeta) -> None:
         self.append_entry_event(entry)
@@ -183,18 +230,16 @@ class Storage:
         self._auto_remove_entry(entry_id)
 
     def read_entries_meta(self) -> list[EntryMeta]:
-        # Check cache first
-        cached = self._entry_cache.get_entries()
+        # The cache is only valid while entries.jsonl is unchanged on disk, so a
+        # write by another process (server, CLI, GUI) is picked up on next read.
+        signature = io_utils.file_signature(self.entries_path)
+        cached = self._entry_cache.get_entries(signature)
         if cached is not None:
             return cached
-        
-        # Cache miss - read from disk
+
         events = io_utils.read_jsonl(self.entries_path)
         entries = _fold_entry_events(events)
-        
-        # Store in cache
-        self._entry_cache.set_entries(entries)
-        
+        self._entry_cache.set_entries(entries, signature)
         return entries
     
     def invalidate_entry_cache(self) -> None:
@@ -213,15 +258,31 @@ class Storage:
                 return entry
         return None
 
+    def entry_path(self, entry: EntryMeta) -> Path | None:
+        """Absolute path of an entry's Markdown file, or None if ``content_path``
+        points outside ``entries/`` (corrupt or hostile data, e.g. a crafted backup)."""
+        candidate = (self.data_dir / entry.content_path).resolve()
+        try:
+            candidate.relative_to(self.entries_dir.resolve())
+        except ValueError:
+            logger.warning("Ignoring unsafe content path for entry %s: %r", entry.id, entry.content_path)
+            return None
+        return candidate
+
     def read_entry_body(self, entry: EntryMeta) -> str:
-        content_path = self.data_dir / entry.content_path
-        if not content_path.exists():
+        content_path = self.entry_path(entry)
+        if content_path is None or not content_path.exists():
             return ""
         return self.read_entry_content(content_path)
 
     def write_entry_content(self, entry_id: str, content: str) -> Path:
+        if not ids.is_safe_id(entry_id):
+            raise ValueError(f"Invalid entry id: {entry_id!r}")
         path = self.entries_dir / f"{entry_id}.md"
         io_utils.safe_write_text(path, content)
+        entry = self.get_entry(entry_id)
+        if entry is not None:  # not yet logged while an entry is being created
+            self._auto_index_entry(entry)
         return path
 
     def read_entry_content(self, content_path: Path) -> str:
@@ -260,13 +321,29 @@ class Storage:
             for path in paths:
                 if not path.is_file():
                     continue
-                if path.suffix == ".tmp":
+                if path.suffix == ".tmp" or path.name == LOCK_FILE_NAME:
                     continue
+                if path.name.startswith(self.index_path.name):
+                    continue  # rebuilt from the data; a live SQLite copy may be inconsistent
                 rel_path = path.relative_to(self.data_dir).as_posix()
+                if rel_path == "calendar_subscriptions.json":
+                    # Never copy calendar passwords into a backup that may travel.
+                    handle.writestr(rel_path, _without_credentials(path))
+                    continue
                 handle.write(path, rel_path)
         return zip_path
 
     def restore_backup(self, zip_path: Path) -> None:
+        with self.lock.hold():
+            self._restore_backup(zip_path)
+        self.invalidate_entry_cache()
+        # The search index is never taken from a backup: rebuild it from the data.
+        self._index_checked = False
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            Path(str(self.index_path) + suffix).unlink(missing_ok=True)
+
+    def _restore_backup(self, zip_path: Path) -> None:
+        saved_credentials = _read_credentials(self.data_dir / "calendar_subscriptions.json")
         zip_path = Path(zip_path)
         if not zip_path.exists():
             raise ValueError(f"Backup file not found: {zip_path}")
@@ -294,6 +371,8 @@ class Storage:
             for item in self.data_dir.iterdir():
                 if item.resolve() == safety_backup.resolve():
                     continue
+                if item.name == LOCK_FILE_NAME:
+                    continue  # held by this process during the restore
                 if item.is_dir():
                     if _path_contains(item, safety_backup):
                         for child in item.iterdir():
@@ -310,6 +389,8 @@ class Storage:
 
             for path in sorted(source_dir.rglob("*")):
                 rel_path = path.relative_to(source_dir)
+                if rel_path.name == LOCK_FILE_NAME or rel_path.name.startswith(self.index_path.name):
+                    continue
                 dest = self.data_dir / rel_path
                 if path.is_dir():
                     dest.mkdir(parents=True, exist_ok=True)
@@ -317,9 +398,13 @@ class Storage:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, dest)
 
+        _merge_credentials(self.data_dir / "calendar_subscriptions.json", saved_credentials)
+
     def write_tasks(self, tasks: Iterable[Task]) -> None:
+        tasks = list(tasks)
         data = [asdict(task) for task in tasks]
         io_utils.safe_write_json(self.tasks_path, data)
+        self._auto_index_tasks(tasks)
 
     def read_timer_state(self) -> TimerState:
         default_data = asdict(default_timer_state())
@@ -383,6 +468,10 @@ class Storage:
         }
 
     def migrate_projects_hierarchy(self) -> dict[str, int]:
+        with self.lock.hold():
+            return self._migrate_projects_hierarchy()
+
+    def _migrate_projects_hierarchy(self) -> dict[str, int]:
         """
         Migrate existing projects to include hierarchy fields (parent_id, display_order).
         This is idempotent and safe to run multiple times.
@@ -504,7 +593,7 @@ class Storage:
         if new_parent_id is not None:
             descendants = self.get_project_descendants(project_id)
             if any(d.id == new_parent_id for d in descendants):
-                raise ValueError(f"Cannot move project: would create a cycle")
+                raise ValueError("Cannot move project: would create a cycle")
         
         # Update the project
         project = projects_by_id[project_id]
@@ -555,8 +644,12 @@ class Storage:
         Returns:
             Statistics dict with counts of indexed items
         """
+        with self.lock.hold():
+            return self._rebuild_search_index()
+
+    def _rebuild_search_index(self) -> dict[str, int]:
         logger.info("Rebuilding search index from all data...")
-        
+
         # Load all data
         entries = self.read_entries_meta()
         projects = self.read_projects()
@@ -578,9 +671,10 @@ class Storage:
             
             tasks_data.append((task, project_name_str, entry_title))
         
-        # Rebuild index
-        with self._get_search_index() as idx:
-            stats = idx.rebuild(entries, projects, tasks_data)
+        bodies = {entry.id: self.read_entry_body(entry) for entry in entries}
+        self._index_checked = True  # avoid re-entering from _get_search_index
+        with SearchIndex(self.index_path) as idx:
+            stats = idx.rebuild(entries, projects, tasks_data, bodies)
         logger.info(f"Search index rebuilt: {stats}")
         return stats
 
@@ -738,6 +832,8 @@ def _fold_entry_events(events: list[object]) -> list[EntryMeta]:
                 entry_data.get("ts"), entry_data.get("entry_date")
             )
             entry = EntryMeta(**entry_data)
+            if not ids.is_safe_id(entry.id):
+                raise ValueError(f"Invalid entry id {entry.id!r} in entries log")
             if not entry.context_status:
                 entry.context_status = None
             entries[entry.id] = entry
@@ -828,6 +924,11 @@ def write_calendar_events(storage: Storage, events: list[CalendarEvent]) -> None
 
 def upsert_calendar_event(storage: Storage, event: CalendarEvent) -> None:
     """Insert or update a calendar event."""
+    with storage.lock.hold():
+        _upsert_calendar_event(storage, event)
+
+
+def _upsert_calendar_event(storage: Storage, event: CalendarEvent) -> None:
     events = read_calendar_events(storage)
     
     # Find existing event
@@ -847,6 +948,11 @@ def upsert_calendar_event(storage: Storage, event: CalendarEvent) -> None:
 
 def delete_calendar_event(storage: Storage, event_id: str) -> None:
     """Delete a calendar event by ID."""
+    with storage.lock.hold():
+        _delete_calendar_event(storage, event_id)
+
+
+def _delete_calendar_event(storage: Storage, event_id: str) -> None:
     events = read_calendar_events(storage)
     events = [e for e in events if e.id != event_id]
     write_calendar_events(storage, events)
@@ -854,8 +960,57 @@ def delete_calendar_event(storage: Storage, event_id: str) -> None:
 
 def delete_calendar_events_by_subscription(storage: Storage, subscription_id: str) -> None:
     """Delete all events from a specific subscription."""
+    with storage.lock.hold():
+        _delete_calendar_events_by_subscription(storage, subscription_id)
+
+
+def _delete_calendar_events_by_subscription(storage: Storage, subscription_id: str) -> None:
     events = read_calendar_events(storage)
     events = [e for e in events if e.subscription_id != subscription_id]
     write_calendar_events(storage, events)
     logger.info(f"Deleted all events for subscription {subscription_id}")
 
+
+def _without_credentials(path: Path) -> str:
+    """calendar_subscriptions.json with usernames and passwords removed."""
+    try:
+        data = io_utils.read_json(path, default=[])
+    except (OSError, ValueError):
+        return "[]\n"
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                item.pop("password", None)
+                item.pop("username", None)
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
+def _read_credentials(path: Path) -> dict[str, dict[str, str]]:
+    """{subscription id: {"username", "password"}} from the current subscriptions file."""
+    try:
+        data = io_utils.read_json(path, default=[])
+    except (OSError, ValueError):
+        return {}
+    found: dict[str, dict[str, str]] = {}
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and item.get("id") and (item.get("username") or item.get("password")):
+                found[str(item["id"])] = {k: item[k] for k in ("username", "password") if item.get(k)}
+    return found
+
+
+def _merge_credentials(path: Path, credentials: dict[str, dict[str, str]]) -> None:
+    """Put back the calendar credentials a restored backup does not contain."""
+    if not credentials or not path.exists():
+        return
+    try:
+        data = io_utils.read_json(path, default=[])
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, list):
+        return
+    for item in data:
+        if isinstance(item, dict) and str(item.get("id")) in credentials:
+            for key, value in credentials[str(item["id"])].items():
+                item.setdefault(key, value)
+    io_utils.safe_write_json(path, data)

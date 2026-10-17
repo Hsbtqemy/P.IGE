@@ -1,0 +1,29 @@
+# Ruff configuration for P.IGE.
+# Deliberately small rule set to start with: pyflakes (F) + syntax errors (E9).
+# Widen progressively once the code base is clean.
+target-version = "py311"
+line-length = 110
+
+extend-exclude = [
+    "pige/interfaces/gui_legacy.py",  # dead file, scheduled for deletion
+    "web",
+]
+
+[lint]
+select = ["F", "E9"]
+
+# TEMPORARY baseline: pre-existing findings at the time ruff was introduced
+# (unused imports/variables, f-strings without placeholders). No undefined
+# names (F821) were found. Each entry is scoped to one file and the exact
+# codes it currently triggers -- fix the code, then delete the line.
+# Any NEW file, or any other rule in these files, is still checked.
+[lint.per-file-ignores]
+"pige/core/service.py" = ["F841"]
+"pige/interfaces/cli.py" = ["F841"]
+"pige/interfaces/gui/panels/calendar_panel.py" = ["F841"]
+"pige/interfaces/gui/panels/dashboard_panel.py" = ["F841"]
+"pige/interfaces/gui/panels/projects_panel.py" = ["F841"]
+"tests/test_hierarchy.py" = ["F841"]
+"tests/test_indexing.py" = ["F811"]
+"tests/test_pagination.py" = ["F841"]
+"tests/test_service_hierarchy.py" = ["F841"]

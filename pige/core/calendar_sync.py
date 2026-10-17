@@ -56,6 +56,10 @@ class CalendarSyncManager:
         return subscriptions
     
     def save_subscriptions(self, subscriptions: list[CalendarSubscription]) -> None:
+        with self.service.storage.lock.hold():
+            self._save_subscriptions(subscriptions)
+
+    def _save_subscriptions(self, subscriptions: list[CalendarSubscription]) -> None:
         """Save subscriptions to disk."""
         from pige.utils.io import safe_write_json
         
@@ -175,7 +179,7 @@ class CalendarSyncManager:
         - errors: list of error messages
         """
         from pige.core.models import CalendarEvent
-        from pige.core.storage import read_calendar_events, write_calendar_events
+        from pige.core.storage import read_calendar_events
         
         subs = self.list_subscriptions()
         subscription = None
@@ -214,7 +218,7 @@ class CalendarSyncManager:
             # Fetch ICS data
             ics_data = self._fetch_ics(subscription.source_url, subscription.username, subscription.password)
             if not ics_data:
-                error_msg = f"Impossible de récupérer les données ICS depuis: {subscription.source_url[:100]}"
+                error_msg = f"Impossible de récupérer les données ICS depuis : {_redact_url(_normalize_calendar_url(subscription.source_url))}"
                 if subscription.source_url.startswith(("http://", "https://")):
                     error_msg += "\n\nVérifiez que l'URL est correcte et accessible."
                     if not subscription.username:
@@ -225,7 +229,7 @@ class CalendarSyncManager:
                     error_msg += "\n1. Ouvrez les paramètres du calendrier"
                     error_msg += "\n2. Copiez l'URL 'Adresse secrète au format iCal'"
                 else:
-                    error_msg += f"\n\nVérifiez que le fichier existe: {subscription.source_url}"
+                    error_msg += f"\n\nVérifiez que le fichier existe : {subscription.source_url}"
                 return {"added": 0, "updated": 0, "deleted": 0, "errors": [error_msg]}
             
             # Parse calendar
@@ -355,6 +359,19 @@ class CalendarSyncManager:
                     except Exception as e:
                         stats["errors"].append(f"Failed to update event {uid}: {e}")
             
+            # An empty feed while events exist locally is far more likely a server
+            # glitch than a calendar emptied on purpose: keep everything.
+            raw_event_count = sum(1 for c in cal.walk() if c.name == "VEVENT")
+            if raw_event_count == 0 and subscription_events:
+                logger.warning(
+                    "Calendar '%s' returned no events; keeping the %d local ones",
+                    subscription.name, len(subscription_events),
+                )
+                stats["errors"].append(
+                    "Le calendrier n'a renvoyé aucun événement : rien n'a été supprimé localement."
+                )
+                subscription_events = {}
+
             # Check for deleted events (in storage but not in current ICS)
             for uid, event in subscription_events.items():
                 if uid not in current_events:
@@ -375,71 +392,60 @@ class CalendarSyncManager:
             return stats
         
         except Exception as e:
-            logger.error(f"Sync error for subscription {subscription_id}: {e}", exc_info=True)
+            logger.error("Sync error for subscription %s: %s", subscription_id, type(e).__name__)
             return {"added": 0, "updated": 0, "deleted": 0, "errors": [str(e)]}
     
     def _fetch_ics(self, source_url: str, username: str | None = None, password: str | None = None) -> bytes | None:
-        """Fetch ICS data from URL or file path."""
+        """Fetch ICS data from an http(s)/webcal URL or a local file path.
+
+        Security rules: credentials are only ever sent over HTTPS, are dropped if
+        the server redirects to another host, and a redirect may not downgrade to
+        HTTP. Responses are capped at MAX_ICS_BYTES. Logs never contain the URL
+        path or query, which often embed a private calendar token.
+        """
+        url = _normalize_calendar_url(source_url)
+        shown = _redact_url(url)
         try:
-            # Handle webcal and webcals protocols (convert to http/https)
-            if source_url.startswith("webcal://"):
-                source_url = source_url.replace("webcal://", "http://")
-            elif source_url.startswith("webcals://"):
-                source_url = source_url.replace("webcals://", "https://")
-            
-            if source_url.startswith(("http://", "https://")):
-                # Fetch from URL
-                import ssl
-                import base64
-                
-                logger.info(f"Fetching ICS from URL: {source_url[:50]}...")
-                
-                # Create SSL context (some calendars need this)
-                ssl_context = ssl.create_default_context()
-                
-                # Build headers
-                headers = {
-                    'User-Agent': 'PIGE-Calendar-Sync/1.0',
-                    'Accept': 'text/calendar,text/plain,*/*'
-                }
-                
-                # Add Basic Auth if credentials provided
-                if username and password:
-                    logger.info(f"Using Basic Auth with username: {username}")
-                    credentials = f"{username}:{password}"
-                    encoded_credentials = base64.b64encode(credentials.encode()).decode()
-                    headers['Authorization'] = f'Basic {encoded_credentials}'
-                
-                req = urllib.request.Request(source_url, headers=headers)
-                
-                with urllib.request.urlopen(req, timeout=30, context=ssl_context) as response:
-                    data = response.read()
-                    logger.info(f"Successfully fetched {len(data)} bytes")
-                    return data
-            else:
-                # Read from local file
-                logger.info(f"Reading ICS from file: {source_url}")
-                path = Path(source_url)
-                
-                if not path.exists():
-                    logger.error(f"File not found: {source_url}")
+            if url.startswith(("http://", "https://")):
+                with_credentials = bool(username and password)
+                if with_credentials and not url.startswith("https://"):
+                    logger.error("Refusing to send calendar credentials over plain HTTP to %s", shown)
                     return None
-                
-                data = path.read_bytes()
-                logger.info(f"Successfully read {len(data)} bytes from file")
-                return data
-                
-        except urllib.error.HTTPError as e:
-            if e.code == 401:
-                logger.error(f"HTTP 401 Unauthorized - Authentication required for {source_url}")
+                headers = {
+                    "User-Agent": "PIGE-Calendar-Sync/1.0",
+                    "Accept": "text/calendar,text/plain,*/*",
+                }
+                if with_credentials:
+                    import base64
+
+                    token = base64.b64encode(f"{username}:{password}".encode()).decode()
+                    headers["Authorization"] = f"Basic {token}"
+                logger.info("Fetching ICS from %s", shown)
+                opener = urllib.request.build_opener(_SafeRedirectHandler())
+                request = urllib.request.Request(url, headers=headers)
+                with opener.open(request, timeout=30) as response:
+                    data = response.read(MAX_ICS_BYTES + 1)
             else:
-                logger.error(f"HTTP Error {e.code} fetching ICS from {source_url}: {e.reason}")
+                path = Path(url)
+                logger.info("Reading ICS from file %s", path.name)
+                if not path.exists():
+                    logger.error("Calendar file not found: %s", path.name)
+                    return None
+                with open(path, "rb") as handle:
+                    data = handle.read(MAX_ICS_BYTES + 1)
+            if len(data) > MAX_ICS_BYTES:
+                logger.error("Calendar from %s exceeds %d bytes, ignored", shown, MAX_ICS_BYTES)
+                return None
+            logger.info("Fetched %d bytes from %s", len(data), shown)
+            return data
+        except urllib.error.HTTPError as e:
+            logger.error("HTTP %s fetching calendar from %s: %s", e.code, shown, e.reason)
             return None
         except urllib.error.URLError as e:
-            logger.error(f"URL Error fetching ICS from {source_url}: {e.reason}")
+            logger.error("Network error fetching calendar from %s: %s", shown, e.reason)
             return None
         except Exception as e:
-            logger.error(f"Failed to fetch ICS from {source_url}: {type(e).__name__}: {e}", exc_info=True)
+            logger.error("Failed to fetch calendar from %s: %s", shown, type(e).__name__)
             return None
     
     def sync_all_active(self) -> dict[str, dict]:
@@ -466,3 +472,51 @@ class CalendarSyncManager:
                     results[sub.id] = self.sync_subscription(sub.id)
         
         return results
+
+
+MAX_ICS_BYTES = 10 * 1024 * 1024
+
+
+def _normalize_calendar_url(source_url: str) -> str:
+    """webcal:// and webcals:// become https:// (webcal feeds are served over HTTPS)."""
+    url = source_url.strip()
+    for prefix in ("webcals://", "webcal://"):
+        if url.lower().startswith(prefix):
+            return "https://" + url[len(prefix):]
+    return url
+
+
+def _redact_url(url: str) -> str:
+    """scheme://host/… : what logs and messages may show of a calendar URL."""
+    import urllib.parse
+
+    if not url.startswith(("http://", "https://")):
+        return Path(url).name or "(fichier)"
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname or "?"
+    return f"{parts.scheme}://{host}/…"
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects without leaking credentials or downgrading to HTTP."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        import urllib.parse
+
+        old = urllib.parse.urlsplit(req.full_url)
+        new = urllib.parse.urlsplit(newurl)
+        if new.scheme not in ("http", "https"):
+            raise urllib.error.HTTPError(newurl, code, "Redirect to a non-HTTP URL refused", headers, fp)
+        has_auth = req.has_header("Authorization") or "Authorization" in getattr(req, "unredirected_hdrs", {})
+        if has_auth and new.scheme != "https":
+            raise urllib.error.HTTPError(newurl, code, "Redirect from HTTPS to HTTP refused", headers, fp)
+        new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        same_origin = (
+            (new.hostname or "").lower() == (old.hostname or "").lower()
+            and new.scheme == old.scheme
+            and (new.port or 0) == (old.port or 0)
+        )
+        if new_req is not None and not same_origin:
+            new_req.headers.pop("Authorization", None)
+            new_req.unredirected_hdrs.pop("Authorization", None)
+        return new_req

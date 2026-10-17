@@ -7,7 +7,7 @@ from tkinter import ttk, messagebox
 
 from pige.core.service import PigeService
 from pige.interfaces.gui.dialogs import show_edit_entry_dialog, show_new_entry_dialog
-from pige.interfaces.gui.pagination import PaginationControl, PaginationState
+from pige.interfaces.gui.pagination import PaginationControl
 
 logger = logging.getLogger(__name__)
 

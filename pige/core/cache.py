@@ -26,9 +26,10 @@ class EntryCache:
     def __init__(self) -> None:
         self._entries: list[EntryMeta] | None = None
         self._timestamp: datetime | None = None
+        self._signature: object = None
         self._enabled = True
     
-    def get_entries(self) -> list[EntryMeta] | None:
+    def get_entries(self, signature: object = None) -> list[EntryMeta] | None:
         """Get cached entries if available and valid.
         
         Returns:
@@ -36,9 +37,12 @@ class EntryCache:
         """
         if not self._enabled:
             return None
+        if signature is not None and signature != self._signature:
+            # The file changed on disk since it was cached (possibly another process).
+            return None
         return self._entries
     
-    def set_entries(self, entries: list[EntryMeta]) -> None:
+    def set_entries(self, entries: list[EntryMeta], signature: object = None) -> None:
         """Store entries in cache.
         
         Args:
@@ -48,6 +52,7 @@ class EntryCache:
             return
         self._entries = entries  # Store reference (no copy for performance)
         self._timestamp = datetime.now()
+        self._signature = signature
     
     def invalidate(self) -> None:
         """Invalidate the cache (clear all cached data)."""

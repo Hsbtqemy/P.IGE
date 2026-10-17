@@ -15,7 +15,6 @@ FRENCH_MONTHS_ABBREV = [
 import tkinter as tk
 from datetime import date, datetime, timedelta
 from tkinter import ttk, messagebox, filedialog
-from pathlib import Path
 from typing import Callable, Any
 
 from pige.core.service import PigeService

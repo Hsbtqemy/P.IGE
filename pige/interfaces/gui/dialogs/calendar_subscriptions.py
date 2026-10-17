@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from typing import Callable
 
+from pige.core.calendar_sync import _redact_url
 from pige.core.calendar_sync import CalendarSyncManager
 from pige.core.service import PigeService
 
@@ -592,7 +593,7 @@ class EditSubscriptionDialog(tk.Toplevel):
         
         # Source (read-only)
         ttk.Label(form_frame, text="Source:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        ttk.Label(form_frame, text=self.subscription.source_url[:50], foreground="#666").grid(
+        ttk.Label(form_frame, text=_redact_url(self.subscription.source_url), foreground="#666").grid(
             row=1, column=1, sticky=tk.W, pady=5
         )
         

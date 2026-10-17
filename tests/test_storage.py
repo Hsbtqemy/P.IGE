@@ -200,6 +200,11 @@ class TestStorage(unittest.TestCase):
             )
             with open(storage.entries_path, "a", encoding="utf-8") as f:
                 f.write("not valid json\n")
+            # Corruption followed by valid data is not a torn last write: it must raise.
+            io_utils.append_jsonl(
+                storage.entries_path,
+                {"kind": "entry_update", "entry_id": "e1", "ts": "2024-01-02T12:00:00Z", "patch": {"title": "T2"}},
+            )
             with self.assertRaises(ValueError) as ctx:
                 storage.read_entries_meta()
             self.assertIn("line 2", str(ctx.exception))

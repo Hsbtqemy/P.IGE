@@ -102,7 +102,6 @@ python -m pige export hierarchy --include-archived
 - Automatic cycle detection when moving projects
 - Custom display order within same level
 - Migration command for existing projects: `python -m pige migrate`
-```
 
 ## Data layout
 
@@ -114,6 +113,8 @@ data/
   tasks.json
   timers.json
   timelogs.jsonl
+  calendar_events.json           # Calendar events (local + synced)
+  calendar_subscriptions.json    # Calendar (ICS/CalDAV) subscriptions
   .pige_index.db         # FTS5 full-text search index
   .pige_prefs.json       # GUI preferences (pagination, etc.)
   exports/
@@ -121,13 +122,10 @@ data/
 
 ## Full-Text Search
 
-PIGE uses SQLite FTS5 for instant full-text search:
+PIGE uses SQLite FTS5 for instant full-text search. Search is available in the
+GUI only: the CLI has no `search` command yet.
 
 ```sh
-# CLI search (coming soon)
-python -m pige search "meeting notes" --type entries
-
-# GUI search (available now!)
 python -m pige gui
 # Then: Menu "Search > Find..." or press Ctrl+F
 # Search across: All / Entries / Projects / Tasks
@@ -135,10 +133,11 @@ python -m pige gui
 ```
 
 **Features:**
-- Automatic indexing on create/update/delete
+- Automatic indexing on create/update/delete of entries (title, tags, people, body),
+  projects and tasks
 - Search syntax: plain text or FTS5 queries
 - Performance: <50ms for 10K+ entries
-- Manual rebuild: `python -m pige rebuild-index`
+- Repair: `python -m pige rebuild-index` rebuilds the index from the data files
 
 ## Narrative export
 
@@ -255,7 +254,7 @@ python -m pige rebuild-index
 #   Tasks: 85
 ```
 
-Recommended after bulk imports or periodically for large databases (1000+ entries). Search is performed on titles, summaries, tags, and metadata.
+Indexing is automatic; use `rebuild-index` to repair the index (e.g. after copying data files by hand or restoring a backup).
 
 **Compaction** — The entries log (`entries.jsonl`) is append-only (events for create/update/delete). To reduce file size and load time, you can compact it to a snapshot (one line per current entry; history is removed). Use the GUI: Tools → Compact entries log… (with confirmation), or the CLI:
 
@@ -272,6 +271,12 @@ python -m pige export meeting --entry <ENTRY_ID> --redact
 ```
 
 **Backup** — File → Backup… (GUI) or create a zip of the data folder. A backup is created automatically before Restore.
+
+## Serveur et interface web
+
+A FastAPI server (`pige/server/`), an installable, offline-capable web app (SvelteKit, `web/`) and a Thunderbird extension (`thunderbird/`) are available as a proof of concept. Installation and deployment: see `deploy/README.md`.
+
+**Important:** for now, the Tkinter app and the server must not share the same data directory (`PIGE_DATA_DIR`).
 
 ## Tests
 

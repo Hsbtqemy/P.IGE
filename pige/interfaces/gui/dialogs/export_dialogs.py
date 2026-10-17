@@ -61,7 +61,7 @@ def show_export_project_raw_dialog(
     row += 1
 
     redact_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(dialog, text="Anonymiser le contenu des entrées", variable=redact_var).grid(
+    ttk.Checkbutton(dialog, text="Masquer le texte des entrées (titres, personnes et tags restent visibles)", variable=redact_var).grid(
         row=row, column=0, columnspan=2, sticky=tk.W, padx=6, pady=4
     )
     row += 1
@@ -165,7 +165,7 @@ def show_export_project_narrative_dialog(
     ttk.Entry(dialog, textvariable=to_var, width=14).grid(row=row, column=1, sticky=tk.W, padx=6, pady=4)
     row += 1
     redact_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(dialog, text="Anonymiser le contenu", variable=redact_var).grid(
+    ttk.Checkbutton(dialog, text="Masquer le texte des entrées (titres, personnes et tags restent visibles)", variable=redact_var).grid(
         row=row, column=0, columnspan=2, sticky=tk.W, padx=6, pady=4
     )
     row += 1
@@ -249,7 +249,7 @@ def show_export_meeting_minutes_dialog(
     ttk.Entry(dialog, textvariable=window_var, width=6).grid(row=row, column=1, sticky=tk.W, padx=6, pady=4)
     row += 1
     redact_var = tk.BooleanVar(value=False)
-    ttk.Checkbutton(dialog, text="Anonymiser le contenu", variable=redact_var).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=6, pady=4)
+    ttk.Checkbutton(dialog, text="Masquer le texte des entrées (titres, personnes et tags restent visibles)", variable=redact_var).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=6, pady=4)
     row += 1
     ttk.Label(dialog, text="Fichier de sortie (optionnel)").grid(row=row, column=0, sticky=tk.W, padx=6, pady=4)
     out_var = tk.StringVar(value="")

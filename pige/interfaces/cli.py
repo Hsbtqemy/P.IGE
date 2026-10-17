@@ -7,15 +7,14 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from pige.core import paths
 from pige.core.service import PigeService
 from pige.core.storage import Storage
 from pige.utils import dates, strings
 
 
 def build_service() -> PigeService:
-    env = os.environ.get("PIGE_DATA_DIR")
-    data_dir = Path(env).expanduser() if env else (Path.cwd() / "data")
-    storage = Storage(data_dir)
+    storage = Storage(paths.resolve_data_dir())
     return PigeService(storage)
 
 
@@ -170,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     export_project.add_argument(
         "--redact",
         action="store_true",
-        help="Replace entry body content with [Content redacted] in export",
+        help="Hide entry bodies and time-log notes (titles, people and tags stay visible)",
     )
     export_meeting = export_sub.add_parser("meeting")
     export_meeting.add_argument("--entry", required=True)
@@ -182,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     export_meeting.add_argument(
         "--redact",
         action="store_true",
-        help="Replace meeting notes with [Content redacted]",
+        help="Hide the meeting notes (title, people and date stay visible)",
     )
     export_weekly = export_sub.add_parser("weekly")
     export_weekly.add_argument("--from", dest="from_date", required=True)
@@ -220,6 +219,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "init":
             service.init_storage()
+            print(f"Data directory: {service.storage.data_dir}")
+            legacy = Path.cwd() / "data"
+            if legacy.is_dir() and legacy.resolve() != service.storage.data_dir.resolve():
+                _print_warning(
+                    f"{legacy} exists but is not a P.IGE data folder, so it was not used. "
+                    "Set PIGE_DATA_DIR to choose a folder explicitly."
+                )
             return 0
 
         if args.command == "compact":
@@ -232,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         
         if args.command == "migrate":
             stats = service.storage.migrate_projects_hierarchy()
-            print(f"Migration complete:")
+            print("Migration complete:")
             print(f"  Total projects: {stats['total']}")
             print(f"  Migrated: {stats['migrated']}")
             print(f"  Already migrated: {stats['already_migrated']}")
@@ -241,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "rebuild-index":
             print("Rebuilding search index...")
             stats = service.storage.rebuild_search_index()
-            print(f"Search index rebuilt successfully:")
+            print("Search index rebuilt successfully:")
             print(f"  Entries: {stats['entries']}")
             print(f"  Projects: {stats['projects']}")
             print(f"  Tasks: {stats['tasks']}")

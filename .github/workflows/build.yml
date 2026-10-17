@@ -11,17 +11,24 @@ on:
         description: "Tag pour attacher les binaires (ex. v0.1.0)"
         required: false
 
+# Least privilege by default: build jobs only read the repository.
+# Only the `release` job below is granted `contents: write`.
 permissions:
-  contents: write
+  contents: read
+
+env:
+  PYINSTALLER_VERSION: "6.22.3"
 
 jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -29,7 +36,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install .
-          pip install pyinstaller
+          pip install "pyinstaller==${{ env.PYINSTALLER_VERSION }}"
 
       - name: Build .exe with PyInstaller
         run: pyinstaller --noconfirm --onefile --noconsole --name pige --paths . --hidden-import "pige" --hidden-import "pige.interfaces.gui" --hidden-import "pige.interfaces.gui.main_window" --hidden-import "icalendar" --collect-all icalendar scripts/entry_gui.py
@@ -38,27 +45,21 @@ jobs:
         run: dir dist
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: pige-windows-exe
           path: dist/pige.exe
-
-      - name: Upload pige.exe to Release
-        if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/pige.exe
-          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          if-no-files-found: error
 
   build-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -66,7 +67,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install .
-          pip install pyinstaller
+          pip install "pyinstaller==${{ env.PYINSTALLER_VERSION }}"
 
       - name: Build .app with PyInstaller
         run: |
@@ -83,22 +84,66 @@ jobs:
         run: ls -la dist/
 
       - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: pige-macos-app
           path: dist/PIGE.app
+          if-no-files-found: error
 
+      # The zip is made here, on macOS, so that the bundle's executable bits
+      # and layout are preserved (artifact upload/download drops file modes).
       - name: Zip PIGE.app for Release
         if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
         run: |
           cd dist
           zip -r PIGE-macos.app.zip PIGE.app
           cd ..
-      - name: Upload PIGE.app to Release
+
+      - name: Upload macOS release zip
         if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
-        uses: softprops/action-gh-release@v2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          files: dist/PIGE-macos.app.zip
-          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
+          name: pige-macos-release-zip
+          path: dist/PIGE-macos.app.zip
+          if-no-files-found: error
+
+  # Only job allowed to write to the repository. It runs no build code: it
+  # downloads the artifacts produced above, checksums them and attaches them
+  # to the release with the GitHub CLI (no third-party action gets the token).
+  release:
+    needs: [build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows executable
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pige-windows-exe
+          path: release
+
+      - name: Download macOS release zip
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pige-macos-release-zip
+          path: release
+
+      - name: Write SHA256SUMS
+        working-directory: release
+        run: |
+          sha256sum pige.exe PIGE-macos.app.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload files to Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # Passed through env (not inlined in the script) to avoid injection.
+          TAG_NAME: ${{ github.event.inputs.tag_name || github.ref_name }}
+        working-directory: release
+        run: |
+          if ! gh release view "$TAG_NAME" > /dev/null 2>&1; then
+            gh release create "$TAG_NAME" --title "$TAG_NAME" --target "$GITHUB_SHA" --notes ""
+          fi
+          gh release upload "$TAG_NAME" pige.exe PIGE-macos.app.zip SHA256SUMS --clobber
