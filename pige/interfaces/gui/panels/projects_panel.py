@@ -318,6 +318,10 @@ class ProjectsPanel(ttk.Frame):
         self.tree.selection_set(item)
         project = self._projects_by_id.get(item)
         menu = tk.Menu(self, tearoff=0)
+        new_entry = getattr(self.winfo_toplevel(), "_on_new_entry", None)
+        if callable(new_entry):
+            menu.add_command(label="➕ Nouvelle entrée", command=new_entry)
+            menu.add_separator()
         if project and project.status == "active":
             menu.add_command(
                 label="📦 Archiver le projet",
