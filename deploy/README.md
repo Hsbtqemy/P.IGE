@@ -32,9 +32,7 @@ sudo -u pige /opt/pige/venv/bin/pip install "/opt/pige/app[server]"
 Elle se compile avec Node 22 ou plus. Sur le VPS :
 
 ```sh
-cd /opt/pige/app/web
-sudo -u pige npm ci
-sudo -u pige npm run build
+sudo -u pige sh -c 'cd /opt/pige/app/web && npm ci && npm run build'
 ```
 
 Sans Node sur le VPS : lance les deux dernières commandes sur ton ordinateur, puis copie
@@ -43,19 +41,15 @@ le dossier `web/build` vers `/opt/pige/app/web/build`.
 ## 5. Secrets
 
 ```sh
-cd /opt/pige/app
-sudo -u pige /opt/pige/venv/bin/python -m pige.server hash-password   # choisis un mot de passe d'au moins 12 caractères
+sudo -u pige /opt/pige/venv/bin/python -m pige.server hash-password   # mot de passe d'au moins 12 caractères
 sudo -u pige /opt/pige/venv/bin/python -m pige.server new-secret
 sudo -u pige /opt/pige/venv/bin/python -m pige.server new-token       # garde le jeton pour Thunderbird
+sudo install -m 0640 -o root -g pige /opt/pige/app/deploy/pige.env.example /etc/pige/pige.env
+sudo nano /etc/pige/pige.env
 ```
 
-Copie `deploy/pige.env.example` vers `/etc/pige/pige.env` et colle les trois valeurs
-(pour le jeton, seulement son empreinte). Puis :
-
-```sh
-sudo chown root:pige /etc/pige/pige.env
-sudo chmod 0640 /etc/pige/pige.env
-```
+Colle les trois valeurs dans `/etc/pige/pige.env` (pour le jeton, seulement son
+empreinte).
 
 ## 6. Service
 
@@ -72,14 +66,27 @@ En cas de souci : `journalctl -u pige -n 50`.
 
 Le fichier `deploy/nginx-pige.conf` contient le site et, en commentaire, deux petits
 fichiers annexes (limite de débit et en-têtes du proxy) à créer aux chemins indiqués.
+Nginx refuse un bloc HTTPS sans certificat : l'installation se fait donc en deux temps.
+
+a. Certificat d'abord, avec seulement le bloc du port 80 :
 
 ```sh
 sudo cp /opt/pige/app/deploy/nginx-pige.conf /etc/nginx/sites-available/pige
-# éditer : remplacer pige.example.org, créer les deux fichiers annexes
+sudo nano /etc/nginx/sites-available/pige   # remplacer pige.example.org, commenter tout le bloc « listen 443 »
 sudo ln -s /etc/nginx/sites-available/pige /etc/nginx/sites-enabled/pige
 sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d pige.example.org
+sudo mkdir -p /var/www/html
+sudo certbot certonly --webroot -w /var/www/html -d pige.example.org
 ```
+
+b. Puis HTTPS : crée les deux fichiers annexes, décommente le bloc 443 et recharge.
+
+```sh
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Avec un nginx antérieur à 1.25.1 (Debian 12, Ubuntu 24.04), remplace `http2 on;` par
+`listen 443 ssl http2;`, comme indiqué dans le fichier.
 
 ## 8. Téléphone et iPad
 
@@ -113,6 +120,23 @@ Le bouton P.IGE apparaît dans la barre des espaces, à gauche.
 
 Note ce qui échoue, en particulier le point 4 : c'est là que se trouvent les inconnues
 de la preuve de concept (injection du script dans l'onglet de l'espace).
+
+## Mettre à jour
+
+```sh
+sudo -u pige git -C /opt/pige/app pull
+sudo -u pige /opt/pige/venv/bin/pip install "/opt/pige/app[server]"
+sudo -u pige sh -c 'cd /opt/pige/app/web && npm ci && npm run build'
+sudo systemctl restart pige
+```
+
+## Limites connues de la preuve de concept
+
+- « Se déconnecter » efface la session sur l'appareil, mais un cookie volé resterait
+  valable jusqu'à son expiration. Pour fermer toutes les sessions : changer le mot de
+  passe, ou régler `PIGE_SESSIONS_NOT_BEFORE` (voir `pige.env.example`), puis redémarrer.
+- Le serveur et l'application de bureau Tkinter ne doivent pas écrire dans le même
+  dossier de données : ils ne se verrouillent pas encore l'un l'autre (étape 2 du plan).
 
 ## Retour arrière
 

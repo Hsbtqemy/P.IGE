@@ -15,7 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from pige.core.exceptions import ProjectNotFoundError, TaskNotFoundError
 from pige.core.models import Task
-from pige.core.service import PigeService
+from pige.core.service import INBOX_TAG, PigeService
 from pige.core.storage import Storage
 from pige.server.auth import LoginThrottle, SessionSigner, verify_api_token, verify_password
 from pige.server.config import Settings
@@ -81,8 +81,15 @@ def create_app(settings: Settings, service: PigeService | None = None) -> FastAP
     if service is None:
         service = PigeService(Storage(settings.data_dir))
         service.init_storage()
-    signer = SessionSigner(settings.session_secret, settings.session_days * 86400)
+    signer = SessionSigner(
+        settings.session_secret,
+        settings.session_days * 86400,
+        bound_to=settings.password_hash,
+        not_before=settings.sessions_not_before,
+    )
     throttle = LoginThrottle()
+    # scrypt uses ~32 MiB per check: cap concurrent password checks.
+    password_checks = threading.BoundedSemaphore(2)
     # The service writes whole JSON files; one writer at a time.
     lock = threading.Lock()
 
@@ -122,12 +129,13 @@ def create_app(settings: Settings, service: PigeService | None = None) -> FastAP
     @app.post("/api/login")
     def login(body: LoginIn, request: Request, response: Response) -> dict[str, bool]:
         client = request.client.host if request.client else "unknown"
-        if throttle.is_blocked(client):
+        if not throttle.acquire(client):
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many attempts, try later")
-        if not verify_password(body.password, settings.password_hash):
-            throttle.record_failure(client)
+        with password_checks:
+            ok = verify_password(body.password, settings.password_hash)
+        if not ok:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong password")
-        throttle.reset(client)
+        throttle.succeeded(client)
         response.set_cookie(
             SESSION_COOKIE,
             signer.issue(),
@@ -140,7 +148,9 @@ def create_app(settings: Settings, service: PigeService | None = None) -> FastAP
         return {"authenticated": True}
 
     @app.post("/api/logout")
-    def logout(response: Response) -> dict[str, bool]:
+    def logout(request: Request, response: Response) -> dict[str, bool]:
+        if request.headers.get(CSRF_HEADER) != "web":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Missing client header")
         response.delete_cookie(SESSION_COOKIE, path="/")
         return {"authenticated": False}
 
@@ -151,10 +161,9 @@ def create_app(settings: Settings, service: PigeService | None = None) -> FastAP
     @app.get("/api/projects")
     def projects(_auth: str = Depends(require_auth)) -> list[dict[str, object]]:
         with lock:
-            inbox = service.ensure_inbox_project()
             items = service.list_projects("active")
         return [
-            {"id": p.id, "name": p.name, "parent_id": p.parent_id, "inbox": p.id == inbox.id}
+            {"id": p.id, "name": p.name, "parent_id": p.parent_id, "inbox": INBOX_TAG in p.tags}
             for p in items
         ]
 

@@ -7,7 +7,10 @@ import { immutable, assets, prerendered } from '$app/manifest';
 import { version } from '$app/env';
 
 const CACHE = `pige-shell-${version}`;
-const SHELL = [...immutable, ...assets, ...prerendered].map((f) => f.path);
+// Paths are relative to the app root; resolve them against the scope, not the worker URL
+// (an empty path, the prerendered home page, would otherwise resolve to this script).
+const ROOT = new URL('./', self.registration.scope).href;
+const SHELL = [...immutable, ...assets, ...prerendered].map((f) => new URL(f.path || './', ROOT).href);
 
 self.addEventListener('install', (/** @type {Event & {waitUntil(p: Promise<unknown>): void}} */ event) => {
 	event.waitUntil(
@@ -36,7 +39,7 @@ self.addEventListener('fetch', (/** @type {Event & {request: Request, respondWit
 	if (request.mode === 'navigate') {
 		// Network first so a new version shows up at once; cached shell when offline.
 		event.respondWith(
-			fetch(request).catch(async () => (await caches.match('/')) ?? Response.error())
+			fetch(request).catch(async () => (await caches.match(ROOT)) ?? Response.error())
 		);
 		return;
 	}

@@ -15,6 +15,7 @@ try:
         SessionSigner,
         hash_password,
         new_api_token,
+        verify_api_token,
         verify_password,
     )
     from pige.server.config import ConfigError, Settings
@@ -51,11 +52,43 @@ class AuthPrimitivesTests(unittest.TestCase):
 
     def test_throttle_window(self) -> None:
         throttle = LoginThrottle(max_failures=2, window_seconds=10)
-        throttle.record_failure("a", now=100)
-        throttle.record_failure("a", now=101)
-        self.assertTrue(throttle.is_blocked("a", now=105))
-        self.assertFalse(throttle.is_blocked("b", now=105))
-        self.assertFalse(throttle.is_blocked("a", now=112))
+        self.assertTrue(throttle.acquire("a", now=100))
+        self.assertTrue(throttle.acquire("a", now=101))
+        self.assertFalse(throttle.acquire("a", now=105))
+        self.assertTrue(throttle.acquire("b", now=105))
+        self.assertTrue(throttle.acquire("a", now=112))
+
+    def test_throttle_success_clears_client(self) -> None:
+        throttle = LoginThrottle(max_failures=2, window_seconds=10)
+        throttle.acquire("a", now=100)
+        throttle.succeeded("a")
+        self.assertTrue(throttle.acquire("a", now=101))
+        self.assertTrue(throttle.acquire("a", now=102))
+
+    def test_throttle_global_cap_resists_address_rotation(self) -> None:
+        throttle = LoginThrottle(max_failures=5, max_global_failures=3, window_seconds=10)
+        for i in range(3):
+            self.assertTrue(throttle.acquire(f"ip{i}", now=100))
+        self.assertFalse(throttle.acquire("fresh", now=101))
+
+    def test_session_bound_to_password_and_epoch(self) -> None:
+        value = SessionSigner(SECRET, 60, bound_to="hash-1").issue(now=1000)
+        self.assertTrue(SessionSigner(SECRET, 60, bound_to="hash-1").is_valid(value, now=1001))
+        self.assertFalse(SessionSigner(SECRET, 60, bound_to="hash-2").is_valid(value, now=1001))
+        self.assertFalse(SessionSigner(SECRET, 60, bound_to="hash-1", not_before=1500).is_valid(value, now=1600))
+
+    def test_garbage_cookie_and_token_are_rejected_not_crashing(self) -> None:
+        signer = SessionSigner(SECRET, 60)
+        for junk in ("é.é", "a.b", "", "x" * 5000 + ".y", "Zm9v.\u00ff"):
+            self.assertFalse(signer.is_valid(junk))
+        self.assertFalse(verify_api_token("pige_é", frozenset({"0" * 64})))
+
+    def test_token_hashes_are_validated(self) -> None:
+        env = {"PIGE_DATA_DIR": "/tmp/x", "PIGE_PASSWORD_HASH": "h", "PIGE_SESSION_SECRET": SECRET}
+        with self.assertRaises(ConfigError):
+            Settings.from_env({**env, "PIGE_API_TOKEN_HASHES": "not-a-hash"})
+        ok = Settings.from_env({**env, "PIGE_API_TOKEN_HASHES": "A" * 64})
+        self.assertEqual(ok.api_token_hashes, frozenset({"a" * 64}))
 
     def test_settings_require_secrets(self) -> None:
         with self.assertRaises(ConfigError):
@@ -113,7 +146,9 @@ class ApiTests(unittest.TestCase):
         self.assertIn("httponly", cookie)
         self.assertIn("samesite=strict", cookie)
         self.assertTrue(self.client.get("/api/session").json()["authenticated"])
-        self.client.post("/api/logout")
+        self.assertEqual(self.client.post("/api/logout").status_code, 403)
+        self.assertTrue(self.client.get("/api/session").json()["authenticated"])
+        self.client.post("/api/logout", headers=WEB)
         self.assertFalse(self.client.get("/api/session").json()["authenticated"])
 
     def test_cookie_writes_need_client_header(self) -> None:
@@ -133,6 +168,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual([t["title"] for t in tasks], ["Rappeler Paul"])
         projects = self.client.get("/api/projects").json()
         self.assertEqual([p["inbox"] for p in projects], [True])
+
+    def test_reading_projects_creates_nothing(self) -> None:
+        self.login()
+        self.assertEqual(self.client.get("/api/projects").json(), [])
+
+    def test_forged_cookie_is_401_not_500(self) -> None:
+        self.client.cookies.set(SESSION_COOKIE, "eyJpYXQiOjF9.forged")
+        self.assertEqual(self.client.get("/api/tasks").status_code, 401)
+        self.assertFalse(self.client.get("/api/session").json()["authenticated"])
 
     def test_extension_creates_task_from_mail_with_token(self) -> None:
         response = self.client.post(

@@ -1,17 +1,26 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api, ApiError, newId, type Task } from '#lib/api.js';
-	import { changes, flush, outbox, snapshot, type Pending } from '#lib/outbox.js';
+	import { changes, failed, flush, outbox, snapshot, type Failed, type Pending } from '#lib/outbox.js';
 
 	const INBOX = 'Boîte de réception';
 
-	type Row = { id: string; title: string; project: string; mail: string | null; pending: boolean };
+	type Row = {
+		id: string;
+		title: string;
+		project: string;
+		mail: string | null;
+		state: 'saved' | 'pending' | 'rejected';
+		reason?: string;
+	};
 
 	let phase = $state<'loading' | 'login' | 'app'>('loading');
 	let online = $state(true);
 	let needsLogin = $state(false);
+	let refused = $state(false);
 	let tasks = $state<Task[]>([]);
 	let pending = $state<Pending[]>([]);
+	let rejected = $state<Failed[]>([]);
 	let hidden = $state<Set<string>>(new Set());
 	let draft = $state('');
 	let password = $state('');
@@ -21,11 +30,13 @@
 	let captureInput: HTMLInputElement | undefined = $state();
 
 	let rows = $derived.by(() => {
+		const queued = new Set([...pending, ...rejected].map((p) => p.id));
 		const list: Row[] = [
-			...pending.map((p) => ({ id: p.id, title: p.title, project: INBOX, mail: p.mail_message_id ?? null, pending: true })),
+			...rejected.map((p): Row => ({ id: p.id, title: p.title, project: INBOX, mail: p.mail_message_id ?? null, state: 'rejected', reason: p.reason })),
+			...pending.map((p): Row => ({ id: p.id, title: p.title, project: INBOX, mail: p.mail_message_id ?? null, state: 'pending' })),
 			...tasks
-				.filter((t) => !pending.some((p) => p.id === t.id))
-				.map((t) => ({ id: t.id, title: t.title, project: t.project_name || INBOX, mail: t.mail_message_id, pending: false }))
+				.filter((t) => !queued.has(t.id))
+				.map((t): Row => ({ id: t.id, title: t.title, project: t.project_name || INBOX, mail: t.mail_message_id, state: 'saved' }))
 		].filter((r) => !hidden.has(r.id));
 		const groups = new Map<string, Row[]>();
 		for (const row of list) {
@@ -38,32 +49,56 @@
 
 	let status = $derived.by(() => {
 		const waiting = pending.length;
+		const plural = (n: number) => `${n} ${n > 1 ? 'saisies' : 'saisie'}`;
 		if (needsLogin) return 'Reconnecte-toi pour envoyer tes saisies';
-		if (!online && waiting) return `Hors connexion, ${waiting} ${waiting > 1 ? 'saisies' : 'saisie'} en attente d’envoi`;
+		if (refused) return 'Le serveur refuse les envois. Recharge la page.';
+		if (!online && waiting) return `Hors connexion, ${plural(waiting)} en attente d’envoi`;
 		if (!online) return 'Hors connexion';
-		if (waiting) return `Envoi de ${waiting} ${waiting > 1 ? 'saisies' : 'saisie'}…`;
+		if (waiting) return `Envoi de ${plural(waiting)}…`;
 		return 'À jour';
 	});
 
-	async function sync(): Promise<void> {
+	// One sync at a time; a request made while one runs triggers exactly one more run.
+	let running: Promise<void> | null = null;
+	let again = false;
+
+	function sync(): Promise<void> {
+		if (running) {
+			again = true;
+			return running;
+		}
+		running = (async () => {
+			do {
+				again = false;
+				await syncOnce();
+			} while (again);
+		})().finally(() => (running = null));
+		return running;
+	}
+
+	async function syncOnce(): Promise<void> {
 		const result = await flush();
 		pending = await outbox.list();
+		rejected = await failed.list();
 		if (result === 'unauthenticated') {
 			needsLogin = true;
 			phase = 'login';
 			return;
 		}
+		refused = result === 'refused';
 		if (result === 'offline') {
 			online = false;
 			return;
 		}
 		try {
 			const fresh = await api.tasks();
+			const waitingChanges = new Set((await changes.list()).map((c) => c.id));
 			tasks = fresh;
-			hidden = new Set([...hidden].filter((id) => fresh.some((t) => t.id === id)));
+			hidden = new Set([...hidden].filter((id) => waitingChanges.has(id) || fresh.some((t) => t.id === id)));
 			online = true;
 			needsLogin = false;
 			await snapshot.save($state.snapshot(tasks));
+			await snapshot.setSignedIn(true);
 		} catch (err) {
 			if (err instanceof ApiError && err.status === 401) {
 				needsLogin = true;
@@ -77,6 +112,9 @@
 	async function start(): Promise<void> {
 		tasks = (await snapshot.load()) ?? [];
 		pending = await outbox.list();
+		rejected = await failed.list();
+		// Status changes made offline stay hidden until the server confirms them.
+		hidden = new Set((await changes.list()).map((c) => c.id));
 		try {
 			const { authenticated } = await api.session();
 			if (!authenticated) {
@@ -86,9 +124,14 @@
 			phase = 'app';
 			await sync();
 		} catch {
-			// Offline: work from the snapshot; captures wait in the outbox.
 			online = false;
-			phase = 'app';
+			if (await snapshot.signedIn()) {
+				// Offline: work from the snapshot; captures wait in the outbox.
+				phase = 'app';
+			} else {
+				loginError = 'Hors connexion. La connexion sera possible au retour du réseau.';
+				phase = 'login';
+			}
 		}
 	}
 
@@ -107,11 +150,16 @@
 
 	async function markDone(row: Row): Promise<void> {
 		hidden = new Set([...hidden, row.id]);
-		if (row.pending) {
-			// Never reached the server: simply drop it.
+		if (row.state === 'rejected') {
+			await failed.remove(row.id);
+			rejected = await failed.list();
+			return;
+		}
+		if (row.state === 'pending') {
+			// It may be on its way to the server right now: drop it from the queue AND
+			// queue "done", which the server ignores if the task never arrived.
 			await outbox.remove(row.id);
 			pending = await outbox.list();
-			return;
 		}
 		await changes.add({ id: row.id, change: 'done', queued_at: new Date().toISOString() });
 		void sync();
@@ -139,9 +187,12 @@
 	async function logout(): Promise<void> {
 		try {
 			await api.logout();
-		} finally {
-			phase = 'login';
+		} catch {
+			/* offline: still forget local data below */
 		}
+		await snapshot.clear();
+		tasks = [];
+		phase = 'login';
 	}
 
 	function openMail(messageId: string): void {
@@ -224,13 +275,18 @@
 				<h2>{project} <span class="count">{items.length}</span></h2>
 				<ul>
 					{#each items as row (row.id)}
-						<li class:pending={row.pending}>
-							<button class="check" onclick={() => markDone(row)} aria-label={`Marquer « ${row.title} » comme faite`}></button>
+						<li class:pending={row.state !== 'saved'}>
+							<button
+								class="check"
+								onclick={() => markDone(row)}
+								aria-label={row.state === 'rejected' ? `Retirer « ${row.title} »` : `Marquer « ${row.title} » comme faite`}
+							></button>
 							<div class="body">
 								<span class="title">{row.title}</span>
-								{#if row.pending || row.mail}
+								{#if row.state !== 'saved' || row.mail}
 									<span class="meta">
-										{#if row.pending}<span class="waiting">En attente d’envoi</span>{/if}
+										{#if row.state === 'pending'}<span class="waiting">En attente d’envoi</span>{/if}
+										{#if row.state === 'rejected'}<span class="waiting">Refusée par le serveur : {row.reason}</span>{/if}
 										{#if row.mail}
 											{#if bridge}
 												<button class="link" onclick={() => openMail(row.mail!)}>Ouvrir le mail</button>
@@ -407,7 +463,8 @@
 
 	.meta {
 		display: flex;
-		gap: 12px;
+		flex-wrap: wrap;
+		gap: 4px 12px;
 		font-size: var(--step--1);
 		color: var(--muted);
 	}

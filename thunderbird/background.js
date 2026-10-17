@@ -21,8 +21,16 @@ function originOf(url) {
   }
 }
 
-function newId() {
+function randomId() {
   return crypto.randomUUID().replaceAll('-', '');
+}
+
+// Same email, same task id: the server ignores a repeated creation, so clicking
+// the menu twice on one email never creates two tasks.
+async function idForMessage(headerMessageId) {
+  if (!headerMessageId) return randomId();
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(headerMessageId));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32);
 }
 
 // ------------------------------------------------------------------ space
@@ -35,10 +43,11 @@ async function ensureSpace() {
     if (existing) await browser.spaces.remove(existing.id);
     return;
   }
+  // A plain URL string is accepted by every Thunderbird version with spaces.
   if (existing) {
-    await browser.spaces.update(existing.id, { url: `${serverUrl}/` }, button);
+    await browser.spaces.update(existing.id, `${serverUrl}/`, button);
   } else {
-    await browser.spaces.create(SPACE_NAME, { url: `${serverUrl}/` }, button);
+    await browser.spaces.create(SPACE_NAME, `${serverUrl}/`, button);
   }
 }
 
@@ -65,8 +74,13 @@ async function registerBridge() {
   ]);
 }
 
-browser.runtime.onMessage.addListener(async (message, sender) => {
-  if (message?.type !== 'open-mail') return;
+browser.runtime.onMessage.addListener((message, sender) => {
+  // Answer only our own message type; return nothing for anything else.
+  if (message?.type !== 'open-mail') return undefined;
+  return openMail(message, sender);
+});
+
+async function openMail(message, sender) {
   // Only the P.IGE page itself may ask to open an email.
   const { serverUrl } = await settings();
   if (!sender.url || originOf(sender.url) !== originOf(serverUrl)) return;
@@ -77,7 +91,7 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
   } catch {
     notify('Mail introuvable', 'Ce mail n’est plus dans tes comptes Thunderbird, ou a été supprimé.');
   }
-});
+}
 
 // ------------------------------------------------------------------ menu
 
@@ -101,7 +115,7 @@ async function createTask(serverUrl, token, header) {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({
-      id: newId(),
+      id: await idForMessage(header.headerMessageId),
       title: (header.subject || '(sans objet)').slice(0, 500),
       mail_message_id: header.headerMessageId ? `<${header.headerMessageId}>` : undefined
     })

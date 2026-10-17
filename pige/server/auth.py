@@ -66,23 +66,31 @@ def hash_api_token(token: str) -> str:
 
 
 def verify_api_token(token: str, allowed_hashes: frozenset[str]) -> bool:
-    candidate = hash_api_token(token)
+    candidate = hash_api_token(token).encode("ascii")
     # Compare against every hash so timing does not reveal which one matched.
     matched = False
     for allowed in allowed_hashes:
-        if hmac.compare_digest(candidate, allowed):
+        if hmac.compare_digest(candidate, allowed.encode("ascii", "replace")):
             matched = True
     return matched
 
 
 class SessionSigner:
-    """Signed, expiring session cookie values (HMAC-SHA256)."""
+    """Signed, expiring session cookie values (HMAC-SHA256).
 
-    def __init__(self, secret: str, max_age_seconds: int) -> None:
+    ``bound_to`` (the password hash) is mixed into the key, so changing the
+    password invalidates every session. ``not_before`` (a Unix time) rejects
+    sessions issued earlier: raise it to log out every device at once.
+    """
+
+    def __init__(
+        self, secret: str, max_age_seconds: int, *, bound_to: str = "", not_before: int = 0
+    ) -> None:
         if len(secret) < 32:
             raise ValueError("Session secret must be at least 32 characters")
-        self._key = secret.encode("utf-8")
+        self._key = hashlib.sha256(secret.encode("utf-8") + b"\0" + bound_to.encode("utf-8")).digest()
         self.max_age_seconds = max_age_seconds
+        self.not_before = not_before
 
     def _sign(self, payload: str) -> str:
         return _b64e(hmac.new(self._key, payload.encode("ascii"), hashlib.sha256).digest())
@@ -96,25 +104,56 @@ class SessionSigner:
         if not value or value.count(".") != 1:
             return False
         body, signature = value.split(".")
-        if not hmac.compare_digest(signature, self._sign(body)):
-            return False
         try:
+            if not hmac.compare_digest(signature.encode("ascii"), self._sign(body).encode("ascii")):
+                return False
             payload = json.loads(_b64d(body))
             issued = int(payload["iat"])
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError, UnicodeError):
             return False
         current = now if now is not None else time.time()
-        return 0 <= current - issued <= self.max_age_seconds
+        return issued >= self.not_before and 0 <= current - issued <= self.max_age_seconds
 
 
 @dataclass
 class LoginThrottle:
-    """Allows ``max_failures`` failed logins per client within ``window_seconds``."""
+    """Limits failed logins: ``max_failures`` per client and ``max_global_failures``
+    overall within ``window_seconds`` (the global cap resists address rotation).
+
+    Use :meth:`acquire` before checking a password: it atomically refuses when the
+    limit is reached and otherwise counts the attempt as a failure, which
+    :meth:`succeeded` cancels. Concurrent attempts therefore cannot exceed the limit.
+    """
 
     max_failures: int = 5
+    max_global_failures: int = 50
     window_seconds: int = 15 * 60
+    max_clients: int = 10_000
     _failures: dict[str, list[float]] = field(default_factory=dict)
+    _global: list[float] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def acquire(self, client: str, now: float | None = None) -> bool:
+        current = now if now is not None else time.time()
+        with self._lock:
+            self._global = [t for t in self._global if current - t < self.window_seconds]
+            if len(self._global) >= self.max_global_failures:
+                return False
+            if len(self._recent(client, current)) >= self.max_failures:
+                return False
+            if len(self._failures) >= self.max_clients:
+                self._prune(current)
+            self._failures.setdefault(client, []).append(current)
+            self._global.append(current)
+            return True
+
+    def succeeded(self, client: str) -> None:
+        with self._lock:
+            self._failures.pop(client, None)
+
+    def _prune(self, now: float) -> None:
+        for key in list(self._failures):
+            self._recent(key, now)
 
     def _recent(self, client: str, now: float) -> list[float]:
         kept = [t for t in self._failures.get(client, []) if now - t < self.window_seconds]
@@ -123,17 +162,3 @@ class LoginThrottle:
         else:
             self._failures.pop(client, None)
         return kept
-
-    def is_blocked(self, client: str, now: float | None = None) -> bool:
-        with self._lock:
-            return len(self._recent(client, now or time.time())) >= self.max_failures
-
-    def record_failure(self, client: str, now: float | None = None) -> None:
-        current = now or time.time()
-        with self._lock:
-            self._recent(client, current)
-            self._failures.setdefault(client, []).append(current)
-
-    def reset(self, client: str) -> None:
-        with self._lock:
-            self._failures.pop(client, None)
