@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -130,6 +131,19 @@ def create_app(
     @app.exception_handler(ConflictError)
     async def _conflict(_request: Request, exc: Exception) -> JSONResponse:
         return JSONResponse({"detail": str(exc).splitlines()[0]}, status_code=409)
+
+    @app.exception_handler(UnicodeError)
+    async def _bad_text(_request: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse({"detail": "Invalid characters in the request"}, status_code=400)
+
+    @app.exception_handler(sqlite3.OperationalError)
+    async def _busy(_request: Request, exc: Exception) -> JSONResponse:
+        # Typically "database is locked" after the busy timeout: safe to retry.
+        return JSONResponse({"detail": "Busy, please try again"}, status_code=503)
+
+    @app.exception_handler(OverflowError)
+    async def _out_of_range(_request: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse({"detail": "Value out of range"}, status_code=400)
 
     @app.exception_handler(ValueError)
     async def _bad_request(_request: Request, exc: ValueError) -> JSONResponse:

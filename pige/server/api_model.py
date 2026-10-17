@@ -7,14 +7,19 @@ for the current web app and the Thunderbird extension until they move here.
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime
-from typing import Any, Callable, Literal
+from datetime import date, datetime, timezone
+from typing import Annotated, Any, Callable, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from pige.model.store import ModelStore
+from pige.model.store import Entry, ModelStore
+
+HEX = r"^[0-9a-f]{32}$"
+IdPath = Annotated[str, Path(pattern=HEX)]
+ShortText = Annotated[str, Field(min_length=1, max_length=300)]
+StepText = Annotated[str, Field(min_length=1, max_length=500)]
 
 HexId = Field(pattern=r"^[0-9a-f]{32}$")
 OptHexId = Field(default=None, pattern=r"^[0-9a-f]{32}$")
@@ -79,10 +84,10 @@ class TaskIn(_In):
     note: str | None = Field(default=None, max_length=50_000)
     due_date: str | None = OptDate
     origin_entry_id: str | None = OptHexId
-    people: list[str] = Field(default_factory=list, max_length=50)
-    person_ids: list[str] = Field(default_factory=list, max_length=50)
-    tags: list[str] = Field(default_factory=list, max_length=50)
-    steps: list[str] = Field(default_factory=list, max_length=200)
+    people: list[ShortText] = Field(default_factory=list, max_length=50)
+    person_ids: list[Annotated[str, Field(pattern=HEX)]] = Field(default_factory=list, max_length=50)
+    tags: list[ShortText] = Field(default_factory=list, max_length=50)
+    steps: list[StepText] = Field(default_factory=list, max_length=200)
 
 
 class TaskPatch(_In):
@@ -91,9 +96,9 @@ class TaskPatch(_In):
     due_date: str | None = Field(default=None, pattern=r"^(\d{4}-\d{2}-\d{2})?$")  # "" clears it
     status: Literal["open", "in_progress", "waiting", "done"] | None = None
     waiting_on: str | None = OptHexId
-    people: list[str] | None = Field(default=None, max_length=50)
-    person_ids: list[str] | None = Field(default=None, max_length=50)
-    tags: list[str] | None = Field(default=None, max_length=50)
+    people: list[ShortText] | None = Field(default=None, max_length=50)
+    person_ids: list[Annotated[str, Field(pattern=HEX)]] | None = Field(default=None, max_length=50)
+    tags: list[ShortText] | None = Field(default=None, max_length=50)
 
 
 class TaskMove(_In):
@@ -116,28 +121,28 @@ class EntryIn(_In):
     task_id: str | None = OptHexId
     kind: Literal["note", "meeting", "decision", "activity"] = "note"
     title: str = Field(default="", max_length=500)
-    body: str = Field(default="", max_length=500_000)
+    body: str = Field(default="", max_length=200_000)
     start_time: str | None = OptTime
     end_time: str | None = OptTime
     source: Literal["journal", "writing", "capture", "mail", "import"] = "capture"
     mail_message_id: str | None = Field(default=None, max_length=998)
-    people: list[str] = Field(default_factory=list, max_length=50)
-    person_ids: list[str] = Field(default_factory=list, max_length=50)
-    tags: list[str] = Field(default_factory=list, max_length=50)
+    people: list[ShortText] = Field(default_factory=list, max_length=50)
+    person_ids: list[Annotated[str, Field(pattern=HEX)]] = Field(default_factory=list, max_length=50)
+    tags: list[ShortText] = Field(default_factory=list, max_length=50)
 
 
 class EntryPatch(_In):
     expected_revision: int = Field(ge=1)  # required: protects edits made on another device
     title: str | None = Field(default=None, max_length=500)
-    body: str | None = Field(default=None, max_length=500_000)
+    body: str | None = Field(default=None, max_length=200_000)
     kind: Literal["note", "meeting", "decision", "activity"] | None = None
     entry_date: str | None = OptDate
     start_time: str | None = OptTime  # "" clears it
     end_time: str | None = OptTime
     decision_applied: bool | None = None
-    people: list[str] | None = Field(default=None, max_length=50)
-    person_ids: list[str] | None = Field(default=None, max_length=50)
-    tags: list[str] | None = Field(default=None, max_length=50)
+    people: list[ShortText] | None = Field(default=None, max_length=50)
+    person_ids: list[Annotated[str, Field(pattern=HEX)]] | None = Field(default=None, max_length=50)
+    tags: list[ShortText] | None = Field(default=None, max_length=50)
 
 
 class EntryMove(_In):
@@ -156,7 +161,7 @@ class PersonPatch(_In):
     organisation: str | None = Field(default=None, max_length=300)
     role: str | None = Field(default=None, max_length=300)
     note: str | None = Field(default=None, max_length=20_000)
-    tags: list[str] | None = Field(default=None, max_length=50)
+    tags: list[ShortText] | None = Field(default=None, max_length=50)
 
 
 class TagPatch(_In):
@@ -209,8 +214,19 @@ def _out(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: _out(v) for k, v in value.items()}
     if isinstance(value, datetime):
-        return value.isoformat()
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return value
+
+
+def _cleared(body: BaseModel, fields: tuple[str, ...]) -> dict[str, str]:
+    """Fields sent explicitly as null: "" for the store, which treats it as « clear »."""
+    return {f: "" for f in fields if f in body.model_fields_set and getattr(body, f) is None}
+
+
+def _not_null(body: BaseModel, fields: tuple[str, ...]) -> None:
+    for f in fields:
+        if f in body.model_fields_set and getattr(body, f) is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{f} cannot be cleared")
 
 
 def _place(body: PlaceIn) -> dict[str, str | None]:
@@ -227,17 +243,27 @@ def _zone(name: str) -> ZoneInfo:
 
 
 def build_router(store: ModelStore, require_auth: Callable[..., str], default_timezone: str) -> APIRouter:
-    router = APIRouter(prefix="/api/v2", dependencies=[Depends(require_auth)])
+    def require_v2(request: Request, auth: str = Depends(require_auth)) -> str:
+        # API tokens (Thunderbird extension, scripts) capture and read; only the
+        # signed-in web app may delete, so a leaked token cannot wipe anything.
+        if auth == "token" and request.method == "DELETE":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Deleting needs the signed-in web app")
+        return auth
+
+    router = APIRouter(prefix="/api/v2", dependencies=[Depends(require_v2)])
 
     # ------------------------------------------------------------ overview
 
     @router.get("/tree")
-    def tree() -> dict[str, Any]:
-        """Everything the side column needs: spaces with their projects, pinned tags."""
+    def tree(include_archived: bool = False) -> dict[str, Any]:
+        """Everything the side column needs: spaces with their projects, pinned tags.
+
+        ``include_archived`` adds archived spaces and closed projects (to reopen them)."""
         counts = store.open_task_counts()
-        projects = store.list_projects()
+        states = ("active", "dormant", "closed") if include_archived else ("active", "dormant")
+        projects = store.list_projects(states=states)
         spaces = []
-        for space in store.list_spaces():
+        for space in store.list_spaces(include_archived=include_archived):
             items = [
                 {**_out(p), "open_tasks": counts.get(p.id, 0)} for p in projects if p.space_id == space.id
             ]
@@ -261,7 +287,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         return _out(store.create_space(body.name))
 
     @router.patch("/spaces/{space_id}")
-    def update_space(space_id: str, body: SpacePatch) -> dict[str, Any]:
+    def update_space(space_id: IdPath, body: SpacePatch) -> dict[str, Any]:
         with store.transaction():
             if body.name is not None:
                 store.rename_space(space_id, body.name)
@@ -270,12 +296,12 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             return _out(store.get_space(space_id))
 
     @router.post("/spaces/{space_id}/place", status_code=status.HTTP_204_NO_CONTENT)
-    def place_space(space_id: str, body: PlaceIn) -> Response:
+    def place_space(space_id: IdPath, body: PlaceIn) -> Response:
         store.move_space(space_id, **_place(body))
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.delete("/spaces/{space_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete_space(space_id: str) -> Response:
+    def delete_space(space_id: IdPath) -> Response:
         store.delete_space(space_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -287,7 +313,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             **_out(project),
             "links": [{"url": u, "label": label} for u, label in store.project_links(project_id)],
             "last_activity": store.last_activity(project_id),
-            "open_tasks": store.open_task_counts().get(project_id, 0),
+            "open_tasks": store.open_task_count(project_id),
         }
 
     @router.post("/projects", status_code=status.HTTP_201_CREATED)
@@ -298,38 +324,49 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         return _project_view(project.id)
 
     @router.get("/projects/{project_id}")
-    def get_project(project_id: str) -> dict[str, Any]:
+    def get_project(project_id: IdPath) -> dict[str, Any]:
         return _project_view(project_id)
 
     @router.patch("/projects/{project_id}")
-    def update_project(project_id: str, body: ProjectPatch) -> dict[str, Any]:
-        store.update_project(project_id, **body.model_dump(exclude_unset=True))
+    def update_project(project_id: IdPath, body: ProjectPatch) -> dict[str, Any]:
+        _not_null(body, ("name", "state"))
+        fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+        fields.update(_cleared(body, ("description", "team")))
+        store.update_project(project_id, **fields)
         return _project_view(project_id)
 
     @router.post("/projects/{project_id}/move")
-    def move_project(project_id: str, body: ProjectMove) -> dict[str, Any]:
+    def move_project(project_id: IdPath, body: ProjectMove) -> dict[str, Any]:
         store.move_project(project_id, space_id=body.space_id, parent_id=body.parent_id)
         return _project_view(project_id)
 
     @router.post("/projects/{project_id}/place", status_code=status.HTTP_204_NO_CONTENT)
-    def place_project(project_id: str, body: PlaceIn) -> Response:
+    def place_project(project_id: IdPath, body: PlaceIn) -> Response:
         store.reorder_project(project_id, **_place(body))
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.put("/projects/{project_id}/links")
-    def set_links(project_id: str, body: list[LinkIn]) -> dict[str, Any]:
-        store.set_project_links(project_id, [(link.url, link.label) for link in body[:50]])
+    def set_links(project_id: IdPath, body: Annotated[list[LinkIn], Field(max_length=50)]) -> dict[str, Any]:
+        store.set_project_links(project_id, [(link.url, link.label) for link in body])
         return _project_view(project_id)
 
     @router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete_project(project_id: str) -> Response:
+    def delete_project(project_id: IdPath) -> Response:
         store.delete_project(project_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.get("/projects/{project_id}/tasks")
-    def project_tasks(project_id: str, include_done: bool = False) -> list[dict[str, Any]]:
+    def project_tasks(
+        project_id: str, include_done: bool = False, done_limit: int = Query(default=50, ge=1, le=500)
+    ) -> list[dict[str, Any]]:
         store.get_project(project_id)
-        return _out(store.tasks_for_project(project_id, include_done=include_done))
+        return _out(store.tasks_for_project(project_id, include_done=include_done, done_limit=done_limit))
+
+    @router.get("/spaces/{space_id}/tasks")
+    def space_tasks(space_id: IdPath) -> list[dict[str, Any]]:
+        """Open tasks attached to the space itself (no project)."""
+        store.get_space(space_id)
+        return _out(store.tasks_for_space(space_id))
 
     @router.get("/stale-projects")
     def stale_projects(days: int = Query(default=30, ge=1, le=3650)) -> list[dict[str, Any]]:
@@ -338,7 +375,12 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
     # ------------------------------------------------------------ tasks
 
     def _task_view(task_id: str) -> dict[str, Any]:
-        return {**_out(store.get_task(task_id)), "steps": _out(store.steps(task_id))}
+        return {
+            **_out(store.get_task(task_id)),
+            "steps": _out(store.steps(task_id)),
+            "people": _out(store.task_people(task_id)),
+            "tags": _out(store.task_tags(task_id)),
+        }
 
     @router.post("/tasks", status_code=status.HTTP_201_CREATED)
     def create_task(body: TaskIn) -> dict[str, Any]:
@@ -361,20 +403,21 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         return _out(store.in_progress_tasks())
 
     @router.get("/tasks/{task_id}")
-    def get_task(task_id: str) -> dict[str, Any]:
+    def get_task(task_id: IdPath) -> dict[str, Any]:
         return _task_view(task_id)
 
     @router.patch("/tasks/{task_id}")
-    def update_task(task_id: str, body: TaskPatch) -> dict[str, Any]:
+    def update_task(task_id: IdPath, body: TaskPatch) -> dict[str, Any]:
         fields = body.model_dump(exclude_unset=True)
+        _not_null(body, ("title", "status", "people", "person_ids", "tags"))
         with store.transaction():
             if {"title", "note", "due_date"} & fields.keys():
                 store.update_task(
                     task_id,
                     title=body.title,
-                    note=body.note,
+                    note="" if "note" in fields and body.note is None else body.note,
                     due_date=body.due_date or None,
-                    clear_due_date=body.due_date == "",
+                    clear_due_date="due_date" in fields and not body.due_date,
                 )
             if body.status is not None:
                 store.set_task_status(task_id, body.status, waiting_on=body.waiting_on)
@@ -387,46 +430,48 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             return _task_view(task_id)
 
     @router.post("/tasks/{task_id}/move")
-    def move_task(task_id: str, body: TaskMove) -> dict[str, Any]:
+    def move_task(task_id: IdPath, body: TaskMove) -> dict[str, Any]:
         store.move_task(task_id, project_id=body.project_id, space_id=body.space_id)
         return _task_view(task_id)
 
     @router.post("/tasks/{task_id}/place", status_code=status.HTTP_204_NO_CONTENT)
-    def place_task(task_id: str, body: PlaceIn) -> Response:
+    def place_task(task_id: IdPath, body: PlaceIn) -> Response:
         store.reorder_task(task_id, **_place(body))
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.delete("/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete_task(task_id: str) -> Response:
+    def delete_task(task_id: IdPath) -> Response:
         store.delete_task(task_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.post("/tasks/{task_id}/steps", status_code=status.HTTP_201_CREATED)
-    def add_step(task_id: str, body: StepIn) -> dict[str, Any]:
+    def add_step(task_id: IdPath, body: StepIn) -> dict[str, Any]:
         return _out(store.add_step(task_id, body.label))
 
     @router.patch("/steps/{step_id}")
-    def update_step(step_id: str, body: StepPatch) -> dict[str, Any]:
+    def update_step(step_id: IdPath, body: StepPatch) -> dict[str, Any]:
         return _out(store.set_step_done(step_id, body.done))
 
     @router.post("/steps/{step_id}/place", status_code=status.HTTP_204_NO_CONTENT)
-    def place_step(step_id: str, body: PlaceIn) -> Response:
+    def place_step(step_id: IdPath, body: PlaceIn) -> Response:
         store.reorder_step(step_id, **_place(body))
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.delete("/steps/{step_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete_step(step_id: str) -> Response:
+    def delete_step(step_id: IdPath) -> Response:
         store.delete_step(step_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     # ------------------------------------------------------------ entries
 
+    def _entry_views(entries: list[Entry]) -> list[dict[str, Any]]:
+        ids = [e.id for e in entries]
+        people = store.people_for_entries(ids)
+        tags = store.tags_for_entries(ids)
+        return [{**_out(e), "people": _out(people[e.id]), "tags": _out(tags[e.id])} for e in entries]
+
     def _entry_view(entry_id: str) -> dict[str, Any]:
-        return {
-            **_out(store.get_entry(entry_id)),
-            "people": _out(store.entry_people(entry_id)),
-            "tags": _out(store.entry_tags(entry_id)),
-        }
+        return _entry_views([store.get_entry(entry_id)])[0]
 
     @router.get("/timeline")
     def timeline(
@@ -443,57 +488,65 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             space_id=space_id, project_id=project_id, task_id=task_id, person_id=person_id,
             tag_id=tag_id, day=day, limit=limit, offset=offset,
         )
-        return [_entry_view(e.id) for e in entries]
+        return _entry_views(entries)
 
     @router.post("/entries", status_code=status.HTTP_201_CREATED)
-    def create_entry(body: EntryIn) -> dict[str, Any]:
+    def create_entry(body: EntryIn, response: Response) -> dict[str, Any]:
         if body.mail_message_id:
-            existing = store.entry_by_mail(body.mail_message_id)
-            if existing is not None:  # the extension may resend after a lost reply
-                return _entry_view(existing.id)
+            # The extension may resend after a lost reply: the same mail gives the same entry.
+            # Checked inside the write transaction, so two simultaneous resends cannot both insert.
+            with store.transaction():
+                existing = store.entry_by_mail(body.mail_message_id)
+                if existing is not None:
+                    response.status_code = status.HTTP_200_OK
+                    return _entry_view(existing.id)
+                return _entry_view(_create_entry(body).id)
+        return _entry_view(_create_entry(body).id)
+
+    def _create_entry(body: EntryIn) -> Entry:
         data = body.model_dump()
         data["start_time"] = data["start_time"] or None
         data["end_time"] = data["end_time"] or None
-        entry = store.create_entry(**data)
-        return _entry_view(entry.id)
+        return store.create_entry(**data)
 
     @router.get("/entries/{entry_id}")
-    def get_entry(entry_id: str) -> dict[str, Any]:
+    def get_entry(entry_id: IdPath) -> dict[str, Any]:
         return _entry_view(entry_id)
 
     @router.patch("/entries/{entry_id}")
-    def update_entry(entry_id: str, body: EntryPatch) -> dict[str, Any]:
-        fields = body.model_dump(exclude_unset=True)
+    def update_entry(entry_id: IdPath, body: EntryPatch) -> dict[str, Any]:
+        _not_null(body, ("kind", "entry_date", "decision_applied", "people", "person_ids", "tags"))
+        cleared = _cleared(body, ("title", "body", "start_time", "end_time"))
         with store.transaction():
             store.update_entry(
                 entry_id,
                 expected_revision=body.expected_revision,
-                title=body.title,
-                body=body.body,
+                title=cleared.get("title", body.title),
+                body=cleared.get("body", body.body),
                 kind=body.kind,
                 entry_date=body.entry_date,
-                start_time=body.start_time,
-                end_time=body.end_time,
+                start_time=cleared.get("start_time", body.start_time),
+                end_time=cleared.get("end_time", body.end_time),
                 decision_applied=body.decision_applied,
             )
             if body.people is not None or body.person_ids is not None:
                 store.set_entry_people(entry_id, names=body.people or [], person_ids=body.person_ids or [])
-            if "tags" in fields and body.tags is not None:
+            if body.tags is not None:
                 store.set_entry_tags(entry_id, body.tags)
             return _entry_view(entry_id)
 
     @router.post("/entries/{entry_id}/move")
-    def move_entry(entry_id: str, body: EntryMove) -> dict[str, Any]:
+    def move_entry(entry_id: IdPath, body: EntryMove) -> dict[str, Any]:
         store.move_entry(entry_id, project_id=body.project_id, space_id=body.space_id, task_id=body.task_id)
         return _entry_view(entry_id)
 
     @router.get("/entries/{entry_id}/versions")
-    def entry_versions(entry_id: str) -> list[dict[str, Any]]:
+    def entry_versions(entry_id: IdPath, limit: int = Query(default=20, ge=1, le=100)) -> list[dict[str, Any]]:
         store.get_entry(entry_id)
-        return _out(store.entry_versions(entry_id))
+        return _out(store.entry_versions(entry_id, limit=limit))
 
     @router.delete("/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete_entry(entry_id: str) -> Response:
+    def delete_entry(entry_id: IdPath) -> Response:
         store.delete_entry(entry_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -501,16 +554,14 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
 
     @router.get("/people")
     def people(tag_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{32}$")) -> list[dict[str, Any]]:
-        return [
-            {**_out(p), "last_exchange": store.last_exchange(p.id)} for p in store.list_people(tag_id)
-        ]
+        last = store.last_exchanges()
+        return [{**_out(p), "last_exchange": last.get(p.id)} for p in store.list_people(tag_id)]
 
     @router.post("/people")
     def find_or_create_person(body: PersonIn, response: Response) -> dict[str, Any]:
-        existing = store.find_people(body.name)
-        person = existing[0] if existing else store.get_or_create_person(body.name)
-        response.status_code = status.HTTP_200_OK if existing else status.HTTP_201_CREATED
-        return _out(person)
+        person, created = store.find_or_create_person(body.name)
+        response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return _person_view(person.id)
 
     def _person_view(person_id: str) -> dict[str, Any]:
         return {
@@ -522,13 +573,15 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         }
 
     @router.get("/people/{person_id}")
-    def get_person(person_id: str) -> dict[str, Any]:
+    def get_person(person_id: IdPath) -> dict[str, Any]:
         return _person_view(person_id)
 
     @router.patch("/people/{person_id}")
-    def update_person(person_id: str, body: PersonPatch) -> dict[str, Any]:
-        fields = body.model_dump(exclude_unset=True)
+    def update_person(person_id: IdPath, body: PersonPatch) -> dict[str, Any]:
+        _not_null(body, ("display_name", "tags"))
+        fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
         tags = fields.pop("tags", None)
+        fields.update(_cleared(body, ("email", "organisation", "role", "note")))
         with store.transaction():
             store.update_person(person_id, **fields)
             if tags is not None:
@@ -538,12 +591,12 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             return _person_view(person_id)
 
     @router.delete("/people/{person_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete_person(person_id: str) -> Response:
+    def delete_person(person_id: IdPath) -> Response:
         store.delete_person(person_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.patch("/tags/{tag_id}")
-    def update_tag(tag_id: str, body: TagPatch) -> dict[str, Any]:
+    def update_tag(tag_id: IdPath, body: TagPatch) -> dict[str, Any]:
         return _out(store.set_tag_pinned(tag_id, body.pinned))
 
     # ------------------------------------------------------------ time
@@ -560,7 +613,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         return _out(block)
 
     @router.post("/timers/{block_id}/stop")
-    def stop_timer(block_id: str, body: TimerStop) -> dict[str, Any]:
+    def stop_timer(block_id: IdPath, body: TimerStop) -> dict[str, Any]:
         return _out(store.stop_timer(block_id, at=body.at))
 
     @router.post("/blocks", status_code=status.HTTP_201_CREATED)
@@ -568,17 +621,29 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         return _out(store.add_block(**body.model_dump()))
 
     @router.patch("/blocks/{block_id}")
-    def update_block(block_id: str, body: BlockPatch) -> dict[str, Any]:
+    def update_block(block_id: IdPath, body: BlockPatch) -> dict[str, Any]:
         fields = body.model_dump(exclude_unset=True)
+        _not_null(body, ("start", "overlap_mode"))
         with store.transaction():
+            current = store.get_block(block_id)
             if {"project_id", "space_id", "task_id"} & fields.keys():
-                store.reassign_block(block_id, project_id=body.project_id, space_id=body.space_id, task_id=body.task_id)
+                # Only the fields sent change; the others keep their current value.
+                project = fields["project_id"] if "project_id" in fields else current.project_id
+                task = fields["task_id"] if "task_id" in fields else current.task_id
+                space = fields["space_id"] if "space_id" in fields else (None if project else current.space_id)
+                store.reassign_block(block_id, project_id=project, space_id=space, task_id=task)
             if {"start", "end", "overlap_mode", "note"} & fields.keys():
-                store.update_block(block_id, start=body.start, end=body.end, overlap_mode=body.overlap_mode, note=body.note)
+                store.update_block(
+                    block_id,
+                    start=body.start,
+                    end=body.end,
+                    overlap_mode=body.overlap_mode,
+                    note="" if "note" in fields and body.note is None else body.note,
+                )
             return _out(store.get_block(block_id))
 
     @router.delete("/blocks/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
-    def delete_block(block_id: str) -> Response:
+    def delete_block(block_id: IdPath) -> Response:
         store.delete_block(block_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 

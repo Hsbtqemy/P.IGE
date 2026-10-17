@@ -112,7 +112,7 @@ def test_mail_entries_are_idempotent(client, tree):
     body = {"entry_date": "2026-01-16", "project_id": tree["porfavor"]["id"], "source": "mail",
             "mail_message_id": "<abc@univ>", "title": "Re: chantiers"}
     first = ok(client.post("/api/v2/entries", json=body), 201)
-    second = ok(client.post("/api/v2/entries", json=body), 201)
+    second = ok(client.post("/api/v2/entries", json=body), 200)
     assert first["id"] == second["id"]
 
 
@@ -153,7 +153,10 @@ def test_errors_map_to_http_codes(client, tree):
     assert client.get("/api/v2/tasks/" + "0" * 32).status_code == 404
     assert client.post("/api/v2/projects", json={
         "space_id": tree["mimmoc"]["id"], "name": "Trop profond", "parent_id": tree["porfavor"]["id"]}).status_code == 400
-    assert client.delete(f"/api/v2/projects/{tree['portail']['id']}").status_code == 400  # has a sub-project
+    web = TestClient(client.app, headers={CSRF_HEADER: "web"})
+    ok(web.post("/api/login", json={"password": PASSWORD}))
+    assert web.delete(f"/api/v2/projects/{tree['portail']['id']}").status_code == 409  # has a sub-project
+    assert web.delete(f"/api/v2/projects/{tree['porfavor']['id']}").status_code == 204
     assert client.post("/api/v2/spaces", json={"name": "x", "extra": 1}).status_code == 422
     assert client.post("/api/v2/projects/" + tree["dico"]["id"] + "/place", json={}).status_code == 400
 
@@ -185,3 +188,91 @@ def test_timezone_setting_is_validated():
     assert Settings.from_env(base).timezone == "Europe/Paris"
     with pytest.raises(ConfigError):
         Settings.from_env({**base, "PIGE_TIMEZONE": "Nowhere/Land"})
+
+
+
+# ---------------------------------------------------------------- review follow-ups
+
+
+def test_tokens_cannot_delete_but_the_web_app_can(client, tree):
+    pid = tree["dico"]["id"]
+    task = ok(client.post("/api/v2/tasks", json={"title": "x", "project_id": pid}), 201)
+    assert client.delete(f"/api/v2/tasks/{task['id']}").status_code == 403
+    web = TestClient(client.app)
+    ok(web.post("/api/login", json={"password": PASSWORD}))
+    assert web.delete(f"/api/v2/tasks/{task['id']}").status_code == 403  # cookie without the client header
+    assert web.patch(f"/api/v2/tasks/{task['id']}", json={"title": "y"}).status_code == 403
+    assert web.delete(f"/api/v2/tasks/{task['id']}", headers={CSRF_HEADER: "web"}).status_code == 204
+
+
+def test_task_view_includes_people_and_tags_and_space_tasks(client, tree):
+    t = ok(client.post("/api/v2/tasks", json={"title": "Zotero", "space_id": tree["forellis"]["id"],
+                                               "people": ["Brunet Maréva"], "tags": ["doctorant·es"]}), 201)
+    assert [p["display_name"] for p in t["people"]] == ["Brunet Maréva"]
+    assert [x["name"] for x in t["tags"]] == ["doctorant·es"]
+    assert [x["id"] for x in ok(client.get(f"/api/v2/spaces/{tree['forellis']['id']}/tasks"))] == [t["id"]]
+
+
+def test_archived_spaces_and_closed_projects_can_be_found_again(client, tree):
+    ok(client.patch(f"/api/v2/spaces/{tree['mimmoc']['id']}", json={"archived": True}))
+    ok(client.patch(f"/api/v2/projects/{tree['dico']['id']}", json={"state": "closed"}))
+    plain = ok(client.get("/api/v2/tree"))
+    assert [s["name"] for s in plain["spaces"]] == ["FoReLLIS"] and plain["spaces"][0]["projects"] == []
+    full = ok(client.get("/api/v2/tree?include_archived=true"))
+    assert [s["name"] for s in full["spaces"]] == ["FoReLLIS", "MIMMOC"]
+    assert full["spaces"][0]["projects"][0]["state"] == "closed"
+
+
+def test_people_or_tags_change_bumps_the_revision(client, tree):
+    e = ok(client.post("/api/v2/entries", json={"entry_date": "2026-10-15", "project_id": tree["dico"]["id"]}), 201)
+    first = ok(client.patch(f"/api/v2/entries/{e['id']}", json={"expected_revision": 1, "tags": ["PPrim"]}))
+    assert first["revision"] == 2
+    assert client.patch(f"/api/v2/entries/{e['id']}", json={"expected_revision": 1, "tags": ["HCERES"]}).status_code == 409
+
+
+def test_null_clears_optional_fields_and_is_refused_for_required_ones(client, tree):
+    pid = tree["dico"]["id"]
+    t = ok(client.post("/api/v2/tasks", json={"title": "x", "project_id": pid, "note": "n", "due_date": "2026-11-03"}), 201)
+    t = ok(client.patch(f"/api/v2/tasks/{t['id']}", json={"note": None, "due_date": None}))
+    assert t["note"] is None and t["due_date"] is None
+    assert client.patch(f"/api/v2/tasks/{t['id']}", json={"title": None}).status_code == 400
+    proj = ok(client.patch(f"/api/v2/projects/{pid}", json={"team": None}))
+    assert proj["team"] is None
+    e = ok(client.post("/api/v2/entries", json={"entry_date": "2026-10-15", "project_id": pid, "start_time": "10:00"}), 201)
+    e = ok(client.patch(f"/api/v2/entries/{e['id']}", json={"expected_revision": 1, "start_time": None}))
+    assert e["start_time"] is None
+
+
+def test_block_patch_keeps_unsent_attachments(client, tree):
+    pid = tree["dico"]["id"]
+    task = ok(client.post("/api/v2/tasks", json={"title": "t", "project_id": pid}), 201)
+    b = ok(client.post("/api/v2/blocks", json={"start": "2026-10-15T09:00:00+02:00", "end": "2026-10-15T10:00:00+02:00",
+                                                "task_id": task["id"]}), 201)
+    b = ok(client.patch(f"/api/v2/blocks/{b['id']}", json={"note": "relu"}))
+    assert b["task_id"] == task["id"]
+    b = ok(client.patch(f"/api/v2/blocks/{b['id']}", json={"project_id": pid}))
+    assert b["task_id"] == task["id"] and b["project_id"] == pid
+    assert b["start_at"].endswith("Z")
+
+
+def test_bad_inputs_are_4xx_not_500(client, tree):
+    pid = tree["dico"]["id"]
+    assert client.get("/api/v2/days/9999-12-31").status_code == 400
+    assert client.post("/api/v2/days/0001-01-01/validate").status_code == 400
+    assert client.post("/api/v2/timers", json={"project_id": pid, "at": "0001-01-01T00:00:00+05:00"}).status_code == 400
+    assert client.post("/api/v2/tasks", json={"title": "x", "project_id": pid,
+                                               "origin_entry_id": "0" * 32}).status_code == 404
+    assert client.post("/api/v2/tasks", json={"title": "x", "project_id": pid, "tags": ["t" * 1000]}).status_code == 422
+    links = [{"url": f"https://x/{i}"} for i in range(51)]
+    assert client.put(f"/api/v2/projects/{pid}/links", json=links).status_code == 422
+    assert client.get("/api/v2/tasks/not-an-id").status_code == 422
+    detail = client.get("/api/v2/tasks/" + "0" * 32).json()["detail"]
+    assert "0000" not in detail
+
+
+def test_find_or_create_person_status_and_view(client):
+    created = client.post("/api/v2/people", json={"name": "Bob Martin"})
+    assert created.status_code == 201
+    again = client.post("/api/v2/people", json={"name": "@martin bob"})
+    assert again.status_code == 200 and again.json()["id"] == created.json()["id"]
+    assert "waiting_on" in again.json()
