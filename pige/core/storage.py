@@ -49,6 +49,7 @@ TASK_KEYS = frozenset(
         "tags",
         "linked_entry_id",
         "note",
+        "mail_message_id",
     )
 )
 TASK_REQUIRED_KEYS = ("id", "project_id", "title")
@@ -247,6 +248,7 @@ class Storage:
             payload["tags"] = list(tags) if isinstance(tags, list) else []
             payload.setdefault("linked_entry_id", None)
             payload.setdefault("note", None)
+            payload.setdefault("mail_message_id", None)
             tasks.append(Task(**payload))
         return tasks
 

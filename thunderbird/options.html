@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <title>P.IGE</title>
+    <style>
+      body { font: 15px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 24px; }
+      label { display: block; font-weight: 600; margin-top: 16px; }
+      input { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; font: inherit; }
+      p.help { color: GrayText; margin: 4px 0 0; }
+      button { margin-top: 20px; padding: 8px 16px; font: inherit; }
+      #result { margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <form id="form">
+      <label for="serverUrl">Adresse du serveur P.IGE</label>
+      <input id="serverUrl" type="url" placeholder="https://pige.exemple.fr" required />
+      <label for="token">Jeton d’accès</label>
+      <input id="token" type="password" autocomplete="off" required />
+      <p class="help">Créé sur le serveur avec <code>python -m pige.server new-token</code>.</p>
+      <button type="submit">Enregistrer et tester</button>
+    </form>
+    <p id="result" role="status"></p>
+    <script src="options.js"></script>
+  </body>
+</html>

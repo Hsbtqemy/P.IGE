@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "P.IGE",
+  "version": "0.1.1",
+  "description": "Ouvre P.IGE dans la barre des espaces et transforme un mail en tâche.",
+  "author": "Hsbtqemy",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "pige@hsbtqemy.github",
+      "strict_min_version": "153.0"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "64": "icons/icon-64.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "permissions": ["menus", "messagesRead", "notifications", "scripting", "storage"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "options_ui": {
+    "page": "options.html"
+  }
+}

@@ -80,6 +80,9 @@ class Task:
     tags: list[str] = field(default_factory=list)
     linked_entry_id: Optional[str] = None
     note: Optional[str] = None
+    # Message-ID header of the email this task came from (stable across
+    # restarts and folder moves, unlike Thunderbird's internal message id).
+    mail_message_id: Optional[str] = None
 
 
 @dataclass
