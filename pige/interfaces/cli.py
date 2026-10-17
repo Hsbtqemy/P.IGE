@@ -219,6 +219,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "init":
             service.init_storage()
+            print(f"Data directory: {service.storage.data_dir}")
+            legacy = Path.cwd() / "data"
+            if legacy.is_dir() and legacy.resolve() != service.storage.data_dir.resolve():
+                _print_warning(
+                    f"{legacy} exists but is not a P.IGE data folder, so it was not used. "
+                    "Set PIGE_DATA_DIR to choose a folder explicitly."
+                )
             return 0
 
         if args.command == "compact":

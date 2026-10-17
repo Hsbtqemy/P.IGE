@@ -56,6 +56,10 @@ class CalendarSyncManager:
         return subscriptions
     
     def save_subscriptions(self, subscriptions: list[CalendarSubscription]) -> None:
+        with self.service.storage.lock.hold():
+            self._save_subscriptions(subscriptions)
+
+    def _save_subscriptions(self, subscriptions: list[CalendarSubscription]) -> None:
         """Save subscriptions to disk."""
         from pige.utils.io import safe_write_json
         
@@ -357,7 +361,8 @@ class CalendarSyncManager:
             
             # An empty feed while events exist locally is far more likely a server
             # glitch than a calendar emptied on purpose: keep everything.
-            if not current_events and subscription_events:
+            raw_event_count = sum(1 for c in cal.walk() if c.name == "VEVENT")
+            if raw_event_count == 0 and subscription_events:
                 logger.warning(
                     "Calendar '%s' returned no events; keeping the %d local ones",
                     subscription.name, len(subscription_events),
@@ -506,7 +511,12 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         if has_auth and new.scheme != "https":
             raise urllib.error.HTTPError(newurl, code, "Redirect from HTTPS to HTTP refused", headers, fp)
         new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if new_req is not None and (new.hostname or "").lower() != (old.hostname or "").lower():
+        same_origin = (
+            (new.hostname or "").lower() == (old.hostname or "").lower()
+            and new.scheme == old.scheme
+            and (new.port or 0) == (old.port or 0)
+        )
+        if new_req is not None and not same_origin:
             new_req.headers.pop("Authorization", None)
             new_req.unredirected_hdrs.pop("Authorization", None)
         return new_req

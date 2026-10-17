@@ -124,7 +124,7 @@ class Storage:
             self._index_checked = True
             if index_content_version(self.index_path) != INDEX_CONTENT_VERSION:
                 try:
-                    self.rebuild_search_index()
+                    self.rebuild_search_index()  # takes the data lock
                 except Exception:
                     logger.warning("Could not rebuild the search index", exc_info=True)
         return SearchIndex(self.index_path)
@@ -323,6 +323,8 @@ class Storage:
                     continue
                 if path.suffix == ".tmp" or path.name == LOCK_FILE_NAME:
                     continue
+                if path.name.startswith(self.index_path.name):
+                    continue  # rebuilt from the data; a live SQLite copy may be inconsistent
                 rel_path = path.relative_to(self.data_dir).as_posix()
                 if rel_path == "calendar_subscriptions.json":
                     # Never copy calendar passwords into a backup that may travel.
@@ -332,6 +334,16 @@ class Storage:
         return zip_path
 
     def restore_backup(self, zip_path: Path) -> None:
+        with self.lock.hold():
+            self._restore_backup(zip_path)
+        self.invalidate_entry_cache()
+        # The search index is never taken from a backup: rebuild it from the data.
+        self._index_checked = False
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            Path(str(self.index_path) + suffix).unlink(missing_ok=True)
+
+    def _restore_backup(self, zip_path: Path) -> None:
+        saved_credentials = _read_credentials(self.data_dir / "calendar_subscriptions.json")
         zip_path = Path(zip_path)
         if not zip_path.exists():
             raise ValueError(f"Backup file not found: {zip_path}")
@@ -377,7 +389,7 @@ class Storage:
 
             for path in sorted(source_dir.rglob("*")):
                 rel_path = path.relative_to(source_dir)
-                if rel_path.name == LOCK_FILE_NAME:
+                if rel_path.name == LOCK_FILE_NAME or rel_path.name.startswith(self.index_path.name):
                     continue
                 dest = self.data_dir / rel_path
                 if path.is_dir():
@@ -385,6 +397,8 @@ class Storage:
                     continue
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, dest)
+
+        _merge_credentials(self.data_dir / "calendar_subscriptions.json", saved_credentials)
 
     def write_tasks(self, tasks: Iterable[Task]) -> None:
         tasks = list(tasks)
@@ -454,6 +468,10 @@ class Storage:
         }
 
     def migrate_projects_hierarchy(self) -> dict[str, int]:
+        with self.lock.hold():
+            return self._migrate_projects_hierarchy()
+
+    def _migrate_projects_hierarchy(self) -> dict[str, int]:
         """
         Migrate existing projects to include hierarchy fields (parent_id, display_order).
         This is idempotent and safe to run multiple times.
@@ -626,8 +644,12 @@ class Storage:
         Returns:
             Statistics dict with counts of indexed items
         """
+        with self.lock.hold():
+            return self._rebuild_search_index()
+
+    def _rebuild_search_index(self) -> dict[str, int]:
         logger.info("Rebuilding search index from all data...")
-        
+
         # Load all data
         entries = self.read_entries_meta()
         projects = self.read_projects()
@@ -902,6 +924,11 @@ def write_calendar_events(storage: Storage, events: list[CalendarEvent]) -> None
 
 def upsert_calendar_event(storage: Storage, event: CalendarEvent) -> None:
     """Insert or update a calendar event."""
+    with storage.lock.hold():
+        _upsert_calendar_event(storage, event)
+
+
+def _upsert_calendar_event(storage: Storage, event: CalendarEvent) -> None:
     events = read_calendar_events(storage)
     
     # Find existing event
@@ -921,6 +948,11 @@ def upsert_calendar_event(storage: Storage, event: CalendarEvent) -> None:
 
 def delete_calendar_event(storage: Storage, event_id: str) -> None:
     """Delete a calendar event by ID."""
+    with storage.lock.hold():
+        _delete_calendar_event(storage, event_id)
+
+
+def _delete_calendar_event(storage: Storage, event_id: str) -> None:
     events = read_calendar_events(storage)
     events = [e for e in events if e.id != event_id]
     write_calendar_events(storage, events)
@@ -928,6 +960,11 @@ def delete_calendar_event(storage: Storage, event_id: str) -> None:
 
 def delete_calendar_events_by_subscription(storage: Storage, subscription_id: str) -> None:
     """Delete all events from a specific subscription."""
+    with storage.lock.hold():
+        _delete_calendar_events_by_subscription(storage, subscription_id)
+
+
+def _delete_calendar_events_by_subscription(storage: Storage, subscription_id: str) -> None:
     events = read_calendar_events(storage)
     events = [e for e in events if e.subscription_id != subscription_id]
     write_calendar_events(storage, events)
@@ -946,3 +983,34 @@ def _without_credentials(path: Path) -> str:
                 item.pop("password", None)
                 item.pop("username", None)
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
+def _read_credentials(path: Path) -> dict[str, dict[str, str]]:
+    """{subscription id: {"username", "password"}} from the current subscriptions file."""
+    try:
+        data = io_utils.read_json(path, default=[])
+    except (OSError, ValueError):
+        return {}
+    found: dict[str, dict[str, str]] = {}
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and item.get("id") and (item.get("username") or item.get("password")):
+                found[str(item["id"])] = {k: item[k] for k in ("username", "password") if item.get(k)}
+    return found
+
+
+def _merge_credentials(path: Path, credentials: dict[str, dict[str, str]]) -> None:
+    """Put back the calendar credentials a restored backup does not contain."""
+    if not credentials or not path.exists():
+        return
+    try:
+        data = io_utils.read_json(path, default=[])
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, list):
+        return
+    for item in data:
+        if isinstance(item, dict) and str(item.get("id")) in credentials:
+            for key, value in credentials[str(item["id"])].items():
+                item.setdefault(key, value)
+    io_utils.safe_write_json(path, data)

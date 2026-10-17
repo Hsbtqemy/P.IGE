@@ -50,7 +50,7 @@ class AtomicWriteTests(unittest.TestCase):
             self.assertEqual(json.loads(target.read_text(encoding="utf-8")), ["old"])
             self.assertEqual([p.name for p in Path(tmp).iterdir()], ["tasks.json"])
 
-    def test_torn_last_line_is_skipped_and_next_append_starts_clean(self) -> None:
+    def test_torn_last_line_survives_later_appends(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "entries.jsonl"
             io_utils.append_jsonl(log, {"n": 1})
@@ -58,11 +58,41 @@ class AtomicWriteTests(unittest.TestCase):
                 handle.write('{"n": 2, "tit')  # crash in the middle of a write
             self.assertEqual(io_utils.read_jsonl(log), [{"n": 1}])
             io_utils.append_jsonl(log, {"n": 3})
-            # The torn record is now in the middle: that is real corruption.
-            with self.assertRaises(ValueError):
-                io_utils.read_jsonl(log)
-            lines = log.read_text(encoding="utf-8").splitlines()
-            self.assertEqual(lines[-1], '{"n": 3}')
+            io_utils.append_jsonl(log, {"n": 4})
+            self.assertEqual(io_utils.read_jsonl(log), [{"n": 1}, {"n": 3}, {"n": 4}])
+            self.assertIn('"tit', (Path(tmp) / "entries.jsonl.torn").read_text(encoding="utf-8"))
+
+    def test_line_cut_inside_a_multibyte_character(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "entries.jsonl"
+            io_utils.append_jsonl(log, {"titre": "réunion"})
+            full = (json.dumps({"titre": "décision"}, ensure_ascii=False) + "\n").encode("utf-8")
+            cut = full[: full.index("é".encode()) + 1]  # half of the "é"
+            with open(log, "ab") as handle:
+                handle.write(cut)
+            self.assertEqual(io_utils.read_jsonl(log), [{"titre": "réunion"}])
+            io_utils.append_jsonl(log, {"titre": "après"})
+            self.assertEqual(io_utils.read_jsonl(log), [{"titre": "réunion"}, {"titre": "après"}])
+
+
+class LockSharingTests(unittest.TestCase):
+    def test_two_storages_on_one_folder_do_not_deadlock(self) -> None:
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            first = _service(Path(tmp))
+            second = PigeService(Storage(Path(tmp)))
+            done = threading.Event()
+
+            def nested() -> None:
+                with first.storage.lock.hold():
+                    second.list_projects()
+                done.set()
+
+            worker = threading.Thread(target=nested, daemon=True)
+            worker.start()
+            worker.join(5)
+            self.assertTrue(done.is_set(), "nested locks on the same folder deadlocked")
 
 
 @unittest.skipIf(sys.platform.startswith("win"), "uses fork and SIGKILL")
@@ -157,6 +187,25 @@ class PathSafetyTests(unittest.TestCase):
 
 
 class BackupTests(unittest.TestCase):
+    def test_restore_keeps_passwords_and_rebuilds_index(self) -> None:
+        from pige.core.indexing import SearchIndex
+
+        with tempfile.TemporaryDirectory() as tmp:
+            service = _service(Path(tmp) / "data")
+            project = service.create_project("P", None, [])
+            service.add_entry(project.id, "note", "t", [], "texte retrouvable")
+            subs = service.storage.data_dir / "calendar_subscriptions.json"
+            subs.write_text(json.dumps([{"id": "s", "name": "n", "source_url": "https://x", "password": "pw"}]), encoding="utf-8")
+            backup = service.storage.create_backup(Path(tmp) / "b.zip")
+            service.storage.restore_backup(backup)
+            restored = json.loads(subs.read_text(encoding="utf-8"))
+            self.assertEqual(restored[0]["password"], "pw")
+            # The index was not in the backup; it is rebuilt on next use.
+            service.create_task(project.id, "écriture", [], None, None)
+            with SearchIndex(service.storage.index_path) as idx:
+                self.assertEqual(len(idx.search_entries("retrouvable")), 1)
+
+
     def test_backup_excludes_lock_and_calendar_passwords(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = _service(Path(tmp) / "data")

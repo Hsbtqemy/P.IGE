@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -12,6 +11,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from pige.core import paths
+from pige.utils import io as io_utils
 from pige.core.storage import Storage
 from pige.utils import dates, strings
 
@@ -107,13 +107,7 @@ def _load_global_config() -> dict:
 
 
 def _save_global_config(cfg: dict) -> None:
-    path = _global_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = Path(str(path) + ".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-        json.dump(cfg, handle, indent=2)
-        handle.write("\n")
-    os.replace(tmp_path, path)
+    io_utils.safe_write_json(paths.global_config_path(), cfg)
 
 
 def _resolve_data_dir() -> Path:

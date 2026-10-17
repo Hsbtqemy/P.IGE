@@ -113,8 +113,8 @@ class SearchIndex:
         if self._conn is None:
             self._conn = sqlite3.connect(str(self.db_path), timeout=10)
             self._conn.row_factory = sqlite3.Row
-            # Readers (GUI search) and the writer (server) can work at the same time.
-            self._conn.execute("PRAGMA journal_mode=WAL")
+            # Default rollback journal, not WAL: the data folder may be on a network
+            # share or a synced folder (OneDrive, Dropbox), where WAL is unsafe.
             self._conn.execute("PRAGMA busy_timeout=10000")
         return self._conn
     
@@ -459,6 +459,10 @@ class SearchIndex:
             Statistics dict with counts
         """
         logger.info("Rebuilding search index...")
+        # Marked current again only at the very end: an interrupted rebuild is redone.
+        conn = self._get_connection()
+        conn.execute("DELETE FROM index_metadata WHERE key = 'content_version'")
+        conn.commit()
         
         self.index_entries_bulk(entries, bodies, {p.id: p.name for p in projects})
         self.index_projects_bulk(projects)

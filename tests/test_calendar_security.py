@@ -121,6 +121,21 @@ class EmptyFeedTests(unittest.TestCase):
             third = manager.sync_subscription(sub.id)
             self.assertEqual(third["deleted"], 1)
 
+    def test_feed_with_only_past_events_is_a_real_change(self) -> None:
+        past = EVENT.replace("20991010", "20000101").replace("20991011", "20000102")
+        with tempfile.TemporaryDirectory() as tmp:
+            service = PigeService(Storage(Path(tmp) / "data"))
+            service.init_storage()
+            manager = CalendarSyncManager(service)
+            feed = Path(tmp) / "agenda.ics"
+            feed.write_text(ICS.format(events=EVENT.format(uid="a")), encoding="utf-8")
+            sub = manager.create_subscription("Agenda", str(feed))
+            manager.sync_subscription(sub.id)
+            feed.write_text(ICS.format(events=past.format(uid="old")), encoding="utf-8")
+            result = manager.sync_subscription(sub.id)
+            self.assertEqual(result["deleted"], 1, result)
+            self.assertEqual(result["errors"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

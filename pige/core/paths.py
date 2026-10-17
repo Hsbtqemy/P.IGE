@@ -5,8 +5,8 @@ Data directory, in order of priority:
 2. ``data_dir`` in the global config file (written by the GUI's folder chooser);
 3. ``./data`` in the current directory, if it already exists (older installs);
 4. the per-user data folder of the operating system (platformdirs):
-   Linux ``~/.local/share/PIGE``, macOS ``~/Library/Application Support/PIGE``,
-   Windows ``%LOCALAPPDATA%\\PIGE``.
+   ``data`` inside it: Linux ``~/.local/share/PIGE/data``, macOS
+   ``~/Library/Application Support/PIGE/data``, Windows ``%LOCALAPPDATA%\\PIGE\\data``.
 
 Step 3 keeps existing setups working unchanged; step 4 replaces the former
 fallback, which created ``./data`` wherever the program happened to start
@@ -50,7 +50,9 @@ def load_global_config() -> dict:
 
 
 def default_data_dir() -> Path:
-    return Path(platformdirs.user_data_dir(APP_NAME, appauthor=False))
+    # A "data" subfolder: on Windows the per-user folder also holds the
+    # launcher's venv and logs, which must never end up in backups or restores.
+    return Path(platformdirs.user_data_dir(APP_NAME, appauthor=False)) / "data"
 
 
 def resolve_data_dir(cwd: Path | None = None) -> Path:

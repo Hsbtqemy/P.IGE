@@ -58,5 +58,24 @@ class SearchBodiesTests(unittest.TestCase):
         self.assertEqual(self.search("entries", "introuvable"), [entry.id])
 
 
+class InterruptedRebuildTests(unittest.TestCase):
+    def test_rebuild_interrupted_midway_is_redone(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            service = PigeService(Storage(Path(tmp)))
+            service.init_storage()
+            project = service.create_project("P", None, [])
+            service.add_entry(project.id, "note", "t", [], "phrase témoin")
+            with mock.patch.object(SearchIndex, "index_projects_bulk", side_effect=RuntimeError("crash")):
+                with self.assertRaises(RuntimeError):
+                    service.storage.rebuild_search_index()
+            self.assertIsNone(index_content_version(service.storage.index_path))
+            fresh = PigeService(Storage(Path(tmp)))
+            fresh.create_task(project.id, "x", [], None, None)
+            with SearchIndex(fresh.storage.index_path) as idx:
+                self.assertEqual(len(idx.search_entries("témoin")), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -15,13 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Extension Thunderbird (`thunderbird/`).
   - Fichiers de déploiement (`deploy/`, voir `deploy/README.md`).
 
-### Étape 2 – socle sûr (en cours)
+### Étape 2 – socle sûr
 
-- [ ] Chemins de données et de logs via `platformdirs`.
-- [ ] Écritures sûres avec verrou.
-- [ ] Indexation plein texte automatique du corps des entrées, des projets et des tâches.
-- [ ] Corrections de sécurité (synchronisation calendrier, logs).
-- [ ] Durcissement de la CI.
+- **Emplacement des données** : `PIGE_DATA_DIR`, puis le dossier choisi dans la GUI, puis `./data` s'il contient déjà des données, sinon le dossier utilisateur du système (`~/.local/share/PIGE/data`, `~/Library/Application Support/PIGE/data`, `%LOCALAPPDATA%\PIGE\data`). **Changement** : `python -m pige init` lancé hors d'un dossier `./data` existant ne crée plus `./data` ; il affiche le dossier utilisé. Journaux dans le dossier de logs utilisateur, avec rotation.
+- **Écritures sûres** : écriture atomique avec fsync, verrou partagé par le serveur, la CLI et la GUI, ligne tronquée par un crash mise de côté dans `entries.jsonl.torn` au lieu de bloquer le journal, corps d'une entrée écrit avant sa ligne de journal, chemins de contenu vérifiés.
+- **Recherche** : texte des entrées, projets et tâches indexés automatiquement ; un ancien index (titres seuls) est reconstruit une fois.
+- **Sauvegardes** : sans l'index de recherche (reconstruit) ni les mots de passe d'agenda (conservés à la restauration).
+- **Agenda** : identifiants envoyés seulement en HTTPS, redirections sûres, taille limitée à 10 Mo, adresses masquées dans les journaux et l'interface, un flux vide ne supprime plus les événements locaux.
+- **Export masqué** : masque aussi les notes de temps ; libellé précisant ce qui reste visible.
+- **CI** : actions épinglées, publication isolée avec `SHA256SUMS`, ruff et mypy.
 
 ### Tests
 
