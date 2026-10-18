@@ -6,6 +6,7 @@ per operation, so a failed operation leaves nothing half-written.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import threading
@@ -271,6 +272,41 @@ class DayReport:
     by_space: dict[str, int]
     by_project: dict[str | None, int]
     stale_timers: list[TimeBlock]  # running for more than STALE_TIMER: counted up to that cap only
+
+
+@dataclass(frozen=True)
+class Calendar:
+    id: str
+    name: str
+    color: str
+    source_enc: str
+    source_host: str
+    has_password: bool
+    project_id: str | None
+    active: bool
+    last_sync: str | None
+    last_error: str | None
+    last_attempt: str | None
+    failures: int
+    created_at: str
+
+
+@dataclass(frozen=True)
+class CalendarEvent:
+    id: str
+    calendar_id: str
+    uid: str
+    start_at: str  # UTC "…Z" for timed events, "AAAA-MM-JJ" for all-day ones
+    end_at: str
+    all_day: bool
+    title: str
+    location: str | None
+    description: str | None
+    organizer: str | None
+    attendees: list[dict[str, str]]
+    status: str | None
+    entry_id: str | None
+    block_id: str | None
 
 
 @dataclass(frozen=True)
@@ -1382,6 +1418,153 @@ class ModelStore:
             "t.status <> 'done' AND EXISTS (SELECT 1 FROM task_people tp WHERE tp.task_id = t.id AND tp.person_id = ?)",
             (person_id,),
         )
+
+    # ------------------------------------------------------------ calendars
+
+    def _calendar(self, row: sqlite3.Row) -> Calendar:
+        return _row_to(Calendar, row, has_password=bool(row["has_password"]), active=bool(row["active"]))
+
+    def create_calendar(
+        self, name: str, *, source_enc: str, source_host: str, has_password: bool,
+        color: str = "#3b5168", project_id: str | None = None,
+    ) -> Calendar:
+        with self._tx():
+            if project_id is not None:
+                self._require("projects", project_id)
+            calendar_id = _new_id()
+            self.conn.execute(
+                "INSERT INTO calendars(id, name, color, source_enc, source_host, has_password, project_id, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (calendar_id, _required(name, "calendar name"), color, source_enc, source_host, int(has_password),
+                 project_id, _utc(_now())),
+            )
+            return self.get_calendar(calendar_id)
+
+    def get_calendar(self, calendar_id: str) -> Calendar:
+        return self._calendar(self._require("calendars", calendar_id))
+
+    def list_calendars(self) -> list[Calendar]:
+        rows = self.conn.execute("SELECT * FROM calendars ORDER BY created_at").fetchall()
+        return [self._calendar(r) for r in rows]
+
+    def update_calendar(self, calendar_id: str, **fields: Any) -> Calendar:
+        """Change name, color, active, project_id, or the (encrypted) source."""
+        allowed = {"name", "color", "active", "project_id", "source_enc", "source_host", "has_password"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise InvalidOperationError(f"unknown calendar fields: {sorted(unknown)}")
+        with self._tx():
+            self._require("calendars", calendar_id)
+            if fields.get("project_id"):
+                self._require("projects", fields["project_id"])
+            if "name" in fields:
+                fields["name"] = _required(fields["name"], "calendar name")
+            for key in ("active", "has_password"):
+                if key in fields:
+                    fields[key] = int(bool(fields[key]))
+            if fields:
+                sets = ", ".join(f"{k} = ?" for k in fields)
+                self.conn.execute(f"UPDATE calendars SET {sets} WHERE id = ?", (*fields.values(), calendar_id))
+            return self.get_calendar(calendar_id)
+
+    def delete_calendar(self, calendar_id: str) -> None:
+        """Remove a calendar and its events (notes and time taken from them stay)."""
+        self._delete("calendars", calendar_id, "calendar cannot be deleted")
+
+    def calendar_synced(self, calendar_id: str, *, error: str | None = None) -> None:
+        """Record a sync attempt: success resets the failure count, an error increments it."""
+        now = _utc(_now())
+        with self._tx():
+            if error is None:
+                self.conn.execute(
+                    "UPDATE calendars SET last_sync = ?, last_attempt = ?, last_error = NULL, failures = 0 WHERE id = ?",
+                    (now, now, calendar_id),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE calendars SET last_attempt = ?, last_error = ?, failures = failures + 1 WHERE id = ?",
+                    (now, error[:500], calendar_id),
+                )
+
+    def _event(self, row: sqlite3.Row) -> CalendarEvent:
+        return _row_to(CalendarEvent, row, all_day=bool(row["all_day"]), attendees=json.loads(row["attendees"] or "[]"))
+
+    def replace_calendar_events(
+        self, calendar_id: str, events: Iterable[dict[str, Any]], *, window_start: str, window_end: str
+    ) -> dict[str, int]:
+        """Make the calendar's events in [window_start, window_end) (UTC « …Z » bounds) match ``events``.
+
+        Each event dict has the CalendarEvent fields except entry_id / block_id. Events that
+        disappeared are deleted, unless a note or time was taken from them: those stay,
+        marked ``status = 'removed'``.
+        """
+        with self._tx():
+            self._require("calendars", calendar_id)
+            seen: set[str] = set()
+            added = updated = 0
+            for e in events:
+                seen.add(e["id"])
+                exists = self._one("SELECT 1 FROM calendar_events WHERE id = ?", (e["id"],)) is not None
+                values = (
+                    e["uid"], e["start_at"], e["end_at"], int(e["all_day"]), e.get("title") or "", e.get("location"),
+                    e.get("description"), e.get("organizer"), json.dumps(e.get("attendees") or []), e.get("status"),
+                )
+                if exists:
+                    self.conn.execute(
+                        "UPDATE calendar_events SET uid = ?, start_at = ?, end_at = ?, all_day = ?, title = ?,"
+                        " location = ?, description = ?, organizer = ?, attendees = ?, status = ? WHERE id = ?",
+                        (*values, e["id"]),
+                    )
+                    updated += 1
+                else:
+                    self.conn.execute(
+                        "INSERT INTO calendar_events(uid, start_at, end_at, all_day, title, location, description,"
+                        " organizer, attendees, status, id, calendar_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (*values, e["id"], calendar_id),
+                    )
+                    added += 1
+            day_start, day_end = window_start[:10], window_end[:10]
+            # Everything overlapping the window that the feed no longer has (already-removed ones aside).
+            stale = [
+                r["id"]
+                for r in self.conn.execute(
+                    "SELECT id FROM calendar_events WHERE calendar_id = ? AND status IS NOT 'removed'"
+                    " AND ((all_day = 0 AND start_at < ? AND end_at > ?) OR (all_day = 1 AND start_at < ? AND end_at > ?))",
+                    (calendar_id, window_end, window_start, day_end, day_start),
+                ).fetchall()
+                if r["id"] not in seen
+            ]
+            removed = 0
+            for event_id in stale:
+                cur = self.conn.execute(
+                    "DELETE FROM calendar_events WHERE id = ? AND entry_id IS NULL AND block_id IS NULL", (event_id,)
+                )
+                if cur.rowcount == 0:
+                    self.conn.execute("UPDATE calendar_events SET status = 'removed' WHERE id = ?", (event_id,))
+                removed += 1
+            return {"added": added, "updated": updated, "removed": removed}
+
+    def events_between(self, start_utc: str, end_utc: str, first_day: str, last_day_excl: str) -> list[CalendarEvent]:
+        """Timed events overlapping [start_utc, end_utc) and all-day ones overlapping the days, by start."""
+        rows = self.conn.execute(
+            "SELECT e.* FROM calendar_events e JOIN calendars c ON c.id = e.calendar_id WHERE c.active = 1 AND ("
+            " (e.all_day = 0 AND e.start_at < ? AND e.end_at > ?)"
+            " OR (e.all_day = 1 AND e.start_at < ? AND e.end_at > ?)) ORDER BY e.all_day DESC, e.start_at",
+            (end_utc, start_utc, last_day_excl, first_day),
+        ).fetchall()
+        return [self._event(r) for r in rows]
+
+    def get_event(self, event_id: str) -> CalendarEvent:
+        return self._event(self._require("calendar_events", event_id))
+
+    def link_event(self, event_id: str, *, entry_id: str | None = None, block_id: str | None = None) -> CalendarEvent:
+        with self._tx():
+            self._require("calendar_events", event_id)
+            if entry_id is not None:
+                self.conn.execute("UPDATE calendar_events SET entry_id = ? WHERE id = ?", (entry_id, event_id))
+            if block_id is not None:
+                self.conn.execute("UPDATE calendar_events SET block_id = ? WHERE id = ?", (block_id, event_id))
+            return self.get_event(event_id)
 
     # ------------------------------------------------------------ search
 

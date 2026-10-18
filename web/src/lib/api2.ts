@@ -190,6 +190,50 @@ export interface SearchHit {
 	status: TaskStatus | null;
 }
 
+export interface CalendarInfo {
+	id: string;
+	name: string;
+	color: string;
+	host: string;
+	has_password: boolean;
+	project_id: string | null;
+	active: boolean;
+	last_sync: string | null;
+	last_error: string | null;
+}
+
+export type SyncResult = { ok: true; added: number; updated: number; removed: number } | { ok: false; error: string };
+
+export interface CalendarInput {
+	name?: string;
+	url?: string;
+	username?: string | null;
+	password?: string | null;
+	color?: string;
+	project_id?: string | null;
+	active?: boolean;
+}
+
+export interface AgendaEvent {
+	id: string;
+	calendar_id: string;
+	calendar: string;
+	color: string;
+	/** UTC « …Z » for timed events, « AAAA-MM-JJ » for all-day ones. */
+	start: string;
+	end: string;
+	all_day: boolean;
+	title: string;
+	location: string | null;
+	description: string | null;
+	organizer: string | null;
+	attendees: { name: string; email: string }[];
+	status: string | null;
+	entry_id: string | null;
+	block_id: string | null;
+	project_id: string | null;
+}
+
 export interface Tree {
 	spaces: (Space & { projects: Project[] })[];
 	pinned_tags: Tag[];
@@ -265,6 +309,19 @@ export const v2 = {
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),
 	search: (text: string, limit = 20) => request<SearchHit[]>('GET', `/api/v2/search?${q({ q: text, limit })}`),
 	openTasks: () => request<Task[]>('GET', '/api/v2/tasks'),
+	calendars: () => request<CalendarInfo[]>('GET', '/api/v2/calendars'),
+	addCalendar: (input: CalendarInput & { name: string; url: string }) =>
+		request<{ calendar: CalendarInfo; sync: SyncResult }>('POST', '/api/v2/calendars', input),
+	updateCalendar: (id: string, input: CalendarInput) =>
+		request<{ calendar: CalendarInfo; sync: SyncResult | null }>('PATCH', `/api/v2/calendars/${id}`, input),
+	deleteCalendar: (id: string) => request<void>('DELETE', `/api/v2/calendars/${id}`),
+	syncCalendar: (id: string) => request<SyncResult>('POST', `/api/v2/calendars/${id}/sync`),
+	agenda: (start: string, days: number, tz: string) =>
+		request<AgendaEvent[]>('GET', `/api/v2/agenda?${q({ start, days, tz })}`),
+	noteEvent: (id: string, target: Target, tz: string) =>
+		request<{ entry_id: string; created: boolean }>('POST', `/api/v2/agenda/${id}/note?${q({ tz })}`, target),
+	countEvent: (id: string, target: Target) =>
+		request<{ block_id: string; created: boolean }>('POST', `/api/v2/agenda/${id}/count`, target),
 	tasksInProgress: () => request<Task[]>('GET', '/api/v2/tasks/in-progress'),
 	personView: (id: string) => request<PersonView>('GET', `/api/v2/people/${encodeURIComponent(id)}`),
 	updatePerson: (id: string, patch: PersonPatch) => request<PersonView>('PATCH', `/api/v2/people/${id}`, patch),

@@ -24,7 +24,7 @@ def client(tmp_path):
         password_hash=_HASH,
         session_secret="s" * 48,
         api_token_hashes=frozenset({_TOKEN_HASH}),
-        cookie_secure=False,
+        cookie_secure=False, background_jobs=False,
     )
     with TestClient(create_app(settings)) as c:
         c.headers.update({"Authorization": f"Bearer {_TOKEN}"})
@@ -315,7 +315,7 @@ def test_interface_routes_fall_back_to_the_app_shell(tmp_path):
     (web / "200.html").write_text("<p>appli</p>")
     (web / "app.js").write_text("ok")
     settings = Settings(data_dir=tmp_path, password_hash=_HASH, session_secret="s" * 48,
-                        api_token_hashes=frozenset(), cookie_secure=False, web_dir=web)
+                        api_token_hashes=frozenset(), cookie_secure=False, web_dir=web, background_jobs=False)
     with TestClient(create_app(settings)) as c:
         assert c.get("/").text == "<p>accueil</p>"
         page = c.get("/journal/2026-10-15")

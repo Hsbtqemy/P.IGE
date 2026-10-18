@@ -296,6 +296,46 @@ MIGRATIONS: tuple[str, ...] = (
         INSERT INTO tasks_fts(rowid, title, note) VALUES (NEW.rid, NEW.title, coalesce(NEW.note, ''));
     END;
     """,
+    # ------------------------------------------------------------------ 2
+    # Calendars followed read-only (ICS feeds) and their events over a sliding window.
+    # The feed address and credentials are stored encrypted by the server (source_enc):
+    # this file alone never reveals them.
+    """
+    CREATE TABLE calendars (
+        id            TEXT PRIMARY KEY,
+        name          TEXT NOT NULL CHECK (length(trim(name)) > 0),
+        color         TEXT NOT NULL DEFAULT '#3b5168',
+        source_enc    TEXT NOT NULL,
+        source_host   TEXT NOT NULL,
+        has_password  INTEGER NOT NULL DEFAULT 0 CHECK (has_password IN (0, 1)),
+        project_id    TEXT REFERENCES projects(id) ON DELETE SET NULL,
+        active        INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+        last_sync     TEXT,
+        last_error    TEXT,
+        last_attempt  TEXT,
+        failures      INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT NOT NULL
+    );
+
+    CREATE TABLE calendar_events (
+        id            TEXT PRIMARY KEY,
+        calendar_id   TEXT NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+        uid           TEXT NOT NULL,
+        start_at      TEXT NOT NULL,
+        end_at        TEXT NOT NULL,
+        all_day       INTEGER NOT NULL DEFAULT 0 CHECK (all_day IN (0, 1)),
+        title         TEXT NOT NULL DEFAULT '',
+        location      TEXT,
+        description   TEXT,
+        organizer     TEXT,
+        attendees     TEXT NOT NULL DEFAULT '[]',
+        status        TEXT,
+        entry_id      TEXT REFERENCES entries(id) ON DELETE SET NULL,
+        block_id      TEXT REFERENCES time_blocks(id) ON DELETE SET NULL
+    );
+    CREATE INDEX calendar_events_start ON calendar_events(start_at);
+    CREATE INDEX calendar_events_calendar ON calendar_events(calendar_id);
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

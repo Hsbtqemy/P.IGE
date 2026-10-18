@@ -166,6 +166,20 @@ Ensuite, dans l'interface : **Réglages › Ajouter une clé d'accès sur cet ap
 chaque appareil (une clé créée sur l'iPhone sert aussi sur l'iPad et le Mac si le
 trousseau iCloud est actif). Le mot de passe reste possible.
 
+## Agenda (calendriers ICS)
+
+Rien à configurer sur le serveur : dans l'interface, **Réglages › Calendriers › Suivre un
+calendrier**, avec l'adresse ICS (« iCal », « webcal ») de l'agenda et, s'il en demande, un
+identifiant et un mot de passe. Le serveur relit chaque calendrier toutes les quinze minutes.
+
+- L'adresse (qui contient souvent un jeton privé) et le mot de passe sont chiffrés dans
+  `pige.sqlite3` avec une clé dérivée de `PIGE_SESSION_SECRET`, jamais renvoyés au
+  navigateur ni écrits dans les journaux (seul `https://hôte/…` y apparaît).
+- Changer `PIGE_SESSION_SECRET` rend ces adresses illisibles : il faut alors les saisir à
+  nouveau (le message s'affiche dans Réglages).
+- HTTPS seulement ; un mot de passe n'est jamais envoyé en clair, ni à un autre hôte en cas
+  de redirection.
+
 ## Limites connues de la preuve de concept
 
 - Les sessions sont enregistrées côté serveur (`auth.sqlite3`) : « Se déconnecter » et
