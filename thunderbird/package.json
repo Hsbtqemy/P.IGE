@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Only for running the tests with node (not packaged in the .xpi)."
+}

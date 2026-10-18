@@ -119,8 +119,10 @@ Fabrique le fichier de l'extension sur ton ordinateur :
 
 ```sh
 cd thunderbird
-zip -r ../pige-thunderbird.xpi . -x '*.DS_Store'
+zip -r ../pige-thunderbird.xpi . -x '*.DS_Store' -x 'test/*' -x package.json
 ```
+
+(Le fichier est aussi joint à chaque version publiée sur GitHub, sous le même nom.)
 
 Dans Thunderbird : Outils, Modules complémentaires et thèmes, roue dentée,
 « Installer un module depuis un fichier », choisis `pige-thunderbird.xpi`. Dans les options
@@ -132,8 +134,8 @@ Le bouton P.IGE apparaît dans la barre des espaces, à gauche.
 1. Sur le téléphone en mode avion, crée une tâche : elle s'affiche « En attente d'envoi ».
 2. Coupe le mode avion : elle part seule, sans doublon.
 3. Elle apparaît dans l'onglet P.IGE de Thunderbird.
-4. Clic droit sur un mail, « Créer une tâche P.IGE » : la tâche apparaît, et
-   « Ouvrir le mail » la ramène au mail.
+4. Clic droit sur un mail, « P.IGE › Créer une tâche › DICODIACHRO » : la tâche apparaît
+   dans le projet, et « Ouvrir le mail » (journal ou détail de la tâche) ramène au mail.
 5. Dans une fenêtre privée, `https://pige.example.org/api/tasks` répond 401.
 
 Note ce qui échoue, en particulier le point 4 : c'est là que se trouvent les inconnues

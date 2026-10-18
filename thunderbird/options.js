@@ -31,7 +31,7 @@ form.addEventListener('submit', async (event) => {
   }
   const token = tokenInput.value.trim();
   try {
-    const response = await fetch(`${url.origin}/api/tasks`, { headers: { Authorization: `Bearer ${token}` } });
+    const response = await fetch(`${url.origin}/api/v2/tree`, { headers: { Authorization: `Bearer ${token}` } });
     if (response.status === 401) {
       result.textContent = 'Le serveur refuse ce jeton.';
       return;
@@ -42,5 +42,5 @@ form.addEventListener('submit', async (event) => {
     return;
   }
   await browser.storage.local.set({ serverUrl: url.origin, token });
-  result.textContent = 'Enregistré. Le bouton P.IGE est dans la barre des espaces, à gauche.';
+  result.textContent = 'Enregistré. Le bouton P.IGE est dans la barre des espaces, à gauche ; clic droit sur un mail › P.IGE.';
 });
