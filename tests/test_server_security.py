@@ -45,7 +45,7 @@ def unb64u(text: str) -> bytes:
 def settings(tmp_path, origin: str | None = ORIGIN) -> Settings:
     return Settings(
         data_dir=tmp_path, password_hash=_HASH, session_secret="s" * 48,
-        api_token_hashes=frozenset({_TOKEN_HASH}), cookie_secure=False, public_origin=origin,
+        api_token_hashes=frozenset({_TOKEN_HASH}), cookie_secure=False, public_origin=origin, background_jobs=False,
     )
 
 

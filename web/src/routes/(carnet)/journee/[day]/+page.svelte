@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { page } from '$app/state';
-	import { v2, type CountedBlock, type DayReport, type OverlapMode, type Target, type Task, type TimeBlock } from '#lib/api2.js';
+	import EventRow from '#lib/carnet/EventRow.svelte';
+	import { v2, type AgendaEvent, type CountedBlock, type DayReport, type OverlapMode, type Target, type Task, type TimeBlock } from '#lib/api2.js';
 	import {
 		carnet,
 		duration,
@@ -16,6 +17,7 @@
 
 	let day = $derived(isDay(page.params.day ?? '') ? (page.params.day as string) : '');
 	let report = $state<DayReport | null>(null);
+	let meetings = $state<AgendaEvent[]>([]);
 	let inProgress = $state<Task[]>([]);
 	let message = $state('');
 	let info = $state('');
@@ -59,9 +61,15 @@
 
 	async function load(current = day) {
 		try {
-			const [r, timers, doing] = await Promise.all([v2.day(current, timeZone()), v2.timers(), v2.tasksInProgress()]);
+			const [r, timers, doing, agenda] = await Promise.all([
+				v2.day(current, timeZone()),
+				v2.timers(),
+				v2.tasksInProgress(),
+				v2.agenda(current, 1, timeZone()).catch(() => [] as AgendaEvent[])
+			]);
 			if (current !== day) return;
 			report = r;
+			meetings = agenda.filter((m) => !m.all_day);
 			carnet.timers = timers;
 			inProgress = doing;
 			for (const t of doing) taskTitles[t.id] = t.title;
@@ -353,6 +361,21 @@
 						</div>
 					{/if}
 				</section>
+
+				{#if meetings.length}
+					<section aria-labelledby="meet-title">
+						<h2 id="meet-title">Réunions de l’agenda <small>comptées seules sur leur créneau</small></h2>
+						{#each meetings as m (m.id)}
+							<EventRow
+								event={m}
+								onchanged={(u) => {
+									meetings = meetings.map((x) => (x.id === u.id ? u : x));
+									if (u.block_id && !m.block_id) void load();
+								}}
+							/>
+						{/each}
+					</section>
+				{/if}
 
 				<section aria-labelledby="blocks-title">
 					<h2 id="blocks-title">Créneaux <small>{report ? report.blocks.length : ''}</small></h2>

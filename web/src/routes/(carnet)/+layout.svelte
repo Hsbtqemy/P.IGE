@@ -108,7 +108,10 @@
 						<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16" /></svg>
 						Étiquettes
 					</a>
-					<span class="soon" title="Bientôt">Agenda</span>
+					<a href="/agenda/{todayIso()}" aria-current={path.startsWith('/agenda') ? 'page' : undefined}>
+						<svg aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M4 10h16M9 3v4M15 3v4" /></svg>
+						Agenda
+					</a>
 				</nav>
 				{#if carnet.tree?.pinned_tags.length}
 					<div class="group">
@@ -224,8 +227,7 @@
 		flex-direction: column;
 		gap: 1px;
 	}
-	nav a,
-	nav .soon {
+	nav a {
 		display: flex;
 		align-items: center;
 		gap: 10px;
@@ -244,11 +246,6 @@
 		font-size: 0.75rem;
 		font-weight: 700;
 		color: var(--accent);
-	}
-	nav .soon {
-		color: var(--muted);
-		padding-left: 36px;
-		font-size: 0.875rem;
 	}
 	svg {
 		width: 18px;
@@ -385,9 +382,6 @@
 			height: auto;
 			border-right: 0;
 			border-bottom: 1px solid var(--line);
-		}
-		nav .soon {
-			display: none;
 		}
 	}
 </style>

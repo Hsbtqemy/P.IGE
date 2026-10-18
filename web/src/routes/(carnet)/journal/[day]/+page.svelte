@@ -2,7 +2,8 @@
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
 	import { ApiError } from '#lib/api.js';
-	import { v2, type Entry, type EntryPatch } from '#lib/api2.js';
+	import { v2, type AgendaEvent, type Entry, type EntryPatch } from '#lib/api2.js';
+	import EventRow from '#lib/carnet/EventRow.svelte';
 	import { newId, prepare } from '#lib/carnet/capture.js';
 	import { outbox, queue } from '#lib/carnet/outbox.svelte.js';
 	import { onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
@@ -18,6 +19,7 @@
 		reload,
 		shiftDay,
 		spaceOf,
+		timeZone,
 		todayIso
 	} from '#lib/carnet/state.svelte.js';
 
@@ -28,6 +30,7 @@
 	let message = $state('');
 
 	let draft = $state('');
+	let meetings = $state<AgendaEvent[]>([]);
 	let draftId: string | null = null;
 	let placeChoice = $state(''); // '' = automatic, 'p:<id>' project, 's:<id>' space
 	let saving = $state(false);
@@ -85,10 +88,15 @@
 	async function load(target: string): Promise<void> {
 		loading = true;
 		try {
-			const [list, days] = await Promise.all([v2.timeline({ day: target }), v2.journalDays(target.slice(0, 7))]);
+			const [list, days, agenda] = await Promise.all([
+				v2.timeline({ day: target }),
+				v2.journalDays(target.slice(0, 7)),
+				v2.agenda(target, 1, timeZone()).catch(() => [] as AgendaEvent[])
+			]);
 			if (target !== day) return; // navigated meanwhile
 			entries = sortDay(list);
 			writtenDays = days;
+			meetings = agenda;
 		} catch (err) {
 			if (target === day) message = failure(err, 'Feuillet non chargé : ');
 		} finally {
@@ -387,6 +395,20 @@
 				{/if}
 			</div>
 
+			{#if meetings.length}
+				<section class="meetings" aria-label="Agenda du jour">
+					{#each meetings as m (m.id)}
+						<EventRow
+							event={m}
+							onchanged={(u) => {
+								meetings = meetings.map((x) => (x.id === u.id ? u : x));
+								if (u.entry_id && !m.entry_id) void refresh();
+							}}
+						/>
+					{/each}
+				</section>
+			{/if}
+
 			<article class="sheet" aria-busy={loading}>
 				{#each entries as entry (entry.id)}
 					<div class="para">
@@ -567,6 +589,13 @@
 		flex-direction: column;
 		gap: 14px;
 		min-width: 0;
+	}
+	.meetings {
+		margin: 0 0 12px;
+		padding: 6px 12px;
+		background: var(--surface);
+		border: 1px solid var(--line);
+		border-radius: 10px;
 	}
 	.long {
 		text-decoration: none;

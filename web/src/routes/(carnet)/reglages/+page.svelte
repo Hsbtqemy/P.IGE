@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api } from '#lib/api.js';
+	import CalendarSettings from '#lib/carnet/CalendarSettings.svelte';
 	import { cache } from '#lib/carnet/capture.js';
 	import { addPasskey, passkeysSupported, security, suggestedName, type Devices } from '#lib/carnet/passkeys.js';
 	import { failure } from '#lib/carnet/state.svelte.js';
@@ -153,6 +154,8 @@
 				{/if}
 			{/if}
 		</section>
+
+		<CalendarSettings />
 
 		<section aria-labelledby="dev-title">
 			<h2 id="dev-title">Appareils connectés</h2>

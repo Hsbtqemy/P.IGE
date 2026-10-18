@@ -62,6 +62,8 @@ class Settings:
     # Address the browser shows (https://pige.example.org): needed for passkeys, which are
     # bound to the site name. Without it, sign-in stays password only.
     public_origin: str | None = None
+    # Background jobs (calendar sync every 15 min). Off in tests.
+    background_jobs: bool = True
 
     @property
     def passkey_rp_id(self) -> str | None:
