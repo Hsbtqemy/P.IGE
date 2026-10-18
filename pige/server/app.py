@@ -9,10 +9,12 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import Scope
 
 from pige.core.exceptions import ProjectNotFoundError, TaskNotFoundError
 from pige.core.models import Task
@@ -65,6 +67,26 @@ def _task_out(task: Task, project_names: dict[str, str]) -> dict[str, object]:
     return data
 
 
+class _AppStaticFiles(StaticFiles):
+    """Static web build; unknown page paths (/journal/2026-10-15…) get the app shell.
+
+    The interface routes are resolved in the browser, so any GET for a path without
+    a file extension that is not a real file answers with ``200.html`` (the SvelteKit
+    fallback page). Missing assets (with an extension) stay 404.
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            fallback = Path(str(self.directory)) / "200.html"
+            last = path.rsplit("/", 1)[-1]
+            is_page = "." not in last and not path.startswith(("_app/", "api"))
+            if exc.status_code == 404 and is_page and fallback.is_file():
+                return FileResponse(fallback, media_type="text/html")
+            raise
+
+
 class _SecurityHeaders(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
@@ -74,7 +96,9 @@ class _SecurityHeaders(BaseHTTPMiddleware):
         path = request.url.path
         if path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
-        elif path in ("/", "/index.html", "/service-worker.js", "/manifest.webmanifest"):
+        elif path in ("/", "/index.html", "/200.html", "/service-worker.js", "/manifest.webmanifest") or (
+            "." not in path.rsplit("/", 1)[-1]
+        ):
             # Always revalidate the entry points so a new version is picked up.
             response.headers["Cache-Control"] = "no-cache"
         return response
@@ -235,14 +259,15 @@ def create_app(
 
     app.include_router(build_router(model_store, require_auth, settings.timezone))
 
-    @app.api_route("/api/{path:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
-    def api_not_found(path: str) -> None:
+    @app.api_route("/api", methods=["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"], include_in_schema=False)
+    @app.api_route("/api/{path:path}", methods=["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"])
+    def api_not_found(path: str = "") -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown API route")
 
     if settings.web_dir is not None:
         web_dir = Path(settings.web_dir)
         if not (web_dir / "index.html").is_file():
             raise RuntimeError(f"Web interface not built: {web_dir / 'index.html'} missing")
-        app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
+        app.mount("/", _AppStaticFiles(directory=web_dir, html=True), name="web")
 
     return app

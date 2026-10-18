@@ -29,7 +29,7 @@ export class ApiError extends Error {
 	}
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
 	let response: Response;
 	try {
 		response = await fetch(path, {
@@ -55,6 +55,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 		}
 		throw new ApiError(response.status, detail);
 	}
+	if (response.status === 204) return undefined as T;
 	return (await response.json()) as T;
 }
 

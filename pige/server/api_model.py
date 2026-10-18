@@ -490,6 +490,11 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         )
         return _entry_views(entries)
 
+    @router.get("/journal/days")
+    def journal_days(month: str = Query(pattern=r"^\d{4}-\d{2}$")) -> list[str]:
+        """Days of the month that have a page in the journal (for the little calendar)."""
+        return store.entry_days(month)
+
     @router.post("/entries", status_code=status.HTTP_201_CREATED)
     def create_entry(body: EntryIn, response: Response) -> dict[str, Any]:
         if body.mail_message_id:
