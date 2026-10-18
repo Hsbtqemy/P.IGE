@@ -55,7 +55,7 @@
 		</header>
 		<div class="cols">
 			<section>
-				<h2>Tâches <small>{tasks.length} ouvertes</small></h2>
+				<h2>Tâches <small>{tasks.length} {tasks.length > 1 ? 'ouvertes' : 'ouverte'}</small></h2>
 				{#each tasks as task, i (task.id)}
 					<div class="task">
 						<span class="n">{i + 1}</span>
@@ -68,7 +68,7 @@
 				{/each}
 			</section>
 			<section>
-				<h2>Journal <small>{entries.length} entrées</small></h2>
+				<h2>Journal <small>{entries.length} {entries.length > 1 ? 'entrées' : 'entrée'}</small></h2>
 				{#each entries as entry (entry.id)}
 					{@const d = shortDate(entry.entry_date)}
 					<a class="entry" href="/journal/{entry.entry_date}">
