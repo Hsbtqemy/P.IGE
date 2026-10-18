@@ -78,6 +78,7 @@ class LinkIn(_In):
 
 
 class TaskIn(_In):
+    id: str | None = OptHexId  # chosen by the device: sending again returns the same task
     title: str = Field(min_length=1, max_length=500)
     project_id: str | None = OptHexId
     space_id: str | None = OptHexId
@@ -115,6 +116,7 @@ class StepPatch(_In):
 
 
 class EntryIn(_In):
+    id: str | None = OptHexId  # chosen by the device: sending again returns the same entry
     entry_date: str = Date
     project_id: str | None = OptHexId
     space_id: str | None = OptHexId
@@ -384,7 +386,14 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         }
 
     @router.post("/tasks", status_code=status.HTTP_201_CREATED)
-    def create_task(body: TaskIn) -> dict[str, Any]:
+    def create_task(body: TaskIn, response: Response) -> dict[str, Any]:
+        with store.transaction():
+            if body.id is not None and store.task_exists(body.id):
+                response.status_code = status.HTTP_200_OK  # a resend after a lost reply
+                return _task_view(body.id)
+            return _new_task(body)
+
+    def _new_task(body: TaskIn) -> dict[str, Any]:
         task = store.create_task(
             body.title,
             project_id=body.project_id,
@@ -396,6 +405,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             person_ids=body.person_ids,
             tags=body.tags,
             steps=body.steps,
+            new_id=body.id,
         )
         return _task_view(task.id)
 
@@ -499,6 +509,13 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
 
     @router.post("/entries", status_code=status.HTTP_201_CREATED)
     def create_entry(body: EntryIn, response: Response) -> dict[str, Any]:
+        if body.id is not None:
+            with store.transaction():
+                if store.entry_exists(body.id):
+                    response.status_code = status.HTTP_200_OK  # a resend after a lost reply
+                    return _entry_view(body.id)
+                if not body.mail_message_id:
+                    return _entry_view(_create_entry(body).id)
         if body.mail_message_id:
             # The extension may resend after a lost reply: the same mail gives the same entry.
             # Checked inside the write transaction, so two simultaneous resends cannot both insert.
@@ -512,6 +529,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
 
     def _create_entry(body: EntryIn) -> Entry:
         data = body.model_dump()
+        data["new_id"] = data.pop("id")
         data["start_time"] = data["start_time"] or None
         data["end_time"] = data["end_time"] or None
         return store.create_entry(**data)

@@ -194,6 +194,8 @@ export interface Tree {
 }
 
 export interface NewEntry {
+	/** Chosen on the device (32 hex): sending again after a lost reply returns the same entry. */
+	id?: string;
 	entry_date: string;
 	project_id?: string | null;
 	space_id?: string | null;
@@ -288,6 +290,12 @@ export const v2 = {
 	entry: (id: string) => request<Entry>('GET', `/api/v2/entries/${encodeURIComponent(id)}`),
 	entryVersions: (id: string) => request<EntryVersion[]>('GET', `/api/v2/entries/${id}/versions?limit=50`),
 	deleteEntry: (id: string) => request<void>('DELETE', `/api/v2/entries/${id}`),
-	createTask: (task: { title: string; project_id?: string | null; space_id?: string | null; origin_entry_id?: string }) =>
+	createTask: (task: {
+		id?: string;
+		title: string;
+		project_id?: string | null;
+		space_id?: string | null;
+		origin_entry_id?: string;
+	}) =>
 		request<Task>('POST', '/api/v2/tasks', task)
 };

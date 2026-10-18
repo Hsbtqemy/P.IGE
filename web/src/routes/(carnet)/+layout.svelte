@@ -8,6 +8,7 @@
 	import { api, ApiError } from '#lib/api.js';
 	import Login from '#lib/carnet/Login.svelte';
 	import Palette from '#lib/carnet/Palette.svelte';
+	import { autoSync, outbox } from '#lib/carnet/outbox.svelte.js';
 	import { carnet, reload, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let { children } = $props();
@@ -39,6 +40,7 @@
 	}
 
 	onMount(start);
+	onMount(autoSync);
 
 	const path = $derived(page.url.pathname);
 	// The project list is open on large screens, folded on phones.
@@ -61,7 +63,9 @@
 		<Login onlogin={start} />
 	{:else if phase === 'offline'}
 		<div class="center">
-			<p>Serveur injoignable. Le feuillet a besoin du réseau pour l’instant.</p>
+			<p>Serveur injoignable. Le feuillet a besoin du réseau.</p>
+			<p><a class="btn primary" href="/capture">Noter quand même</a></p>
+			<p class="small">La note reste sur cet appareil et part au retour du réseau.</p>
 			<button class="btn" onclick={start}>Réessayer</button>
 		</div>
 	{:else}
@@ -77,6 +81,11 @@
 					<a href="/journal/{todayIso()}" aria-current={path.startsWith('/journal') ? 'page' : undefined}>
 						<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z" /><path d="M8 9h8M8 13h8M8 17h5" /></svg>
 						Journal
+					</a>
+					<a href="/capture">
+						<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+						Noter
+						{#if outbox.pending.length}<span class="running" title="Notes en attente d’envoi">{outbox.pending.length} en attente</span>{/if}
 					</a>
 					<a href="/ecrire" aria-current={path.startsWith('/ecrire') ? 'page' : undefined}>
 						<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="m13.5 6.5 4 4" /></svg>
@@ -143,6 +152,10 @@
 </div>
 
 <style>
+	.small {
+		font-size: 0.875rem;
+		color: var(--muted);
+	}
 	.center {
 		padding: 20vh 24px 0;
 		text-align: center;

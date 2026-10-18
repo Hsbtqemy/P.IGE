@@ -328,3 +328,17 @@ def test_interface_routes_fall_back_to_the_app_shell(tmp_path):
         assert c.head("/api/v2/tree").status_code == 404  # never the HTML shell, never data
         assert c.head("/api/nope").status_code == 404
         assert c.get("/_app/immutable/missing").status_code == 404
+
+
+def test_device_chosen_ids_make_resends_harmless(client, tree):
+    eid, tid = "a" * 32, "b" * 32
+    body = {"id": eid, "entry_date": "2026-10-18", "project_id": tree["dico"]["id"], "body": "Noté hors ligne"}
+    first = ok(client.post("/api/v2/entries", json=body), 201)
+    again = ok(client.post("/api/v2/entries", json=body), 200)  # the reply was lost: same entry
+    assert first["id"] == again["id"] == eid
+    assert len(ok(client.get(f"/api/v2/timeline?project_id={tree['dico']['id']}"))) == 1
+    task = {"id": tid, "title": "Rappeler", "project_id": tree["dico"]["id"], "origin_entry_id": eid}
+    assert ok(client.post("/api/v2/tasks", json=task), 201)["id"] == tid
+    assert ok(client.post("/api/v2/tasks", json=task), 200)["id"] == tid
+    assert len(ok(client.get(f"/api/v2/projects/{tree['dico']['id']}/tasks"))) == 1
+    assert client.post("/api/v2/entries", json={**body, "id": "XYZ"}).status_code == 422
