@@ -721,19 +721,37 @@ class ModelStore:
             row = self._require("tags", tag_id)
             return _row_to(Tag, row, pinned=bool(row["pinned"]))
 
+    _TAG_USES = """
+        SELECT t.*,
+               (SELECT count(*) FROM person_tags WHERE tag_id = t.id)
+             + (SELECT count(*) FROM entry_tags WHERE tag_id = t.id)
+             + (SELECT count(*) FROM task_tags t2 JOIN tasks k ON k.id = t2.task_id
+                WHERE t2.tag_id = t.id AND k.status <> 'done') AS uses
+        FROM tags t
+    """
+
     def pinned_tags(self) -> list[tuple[Tag, int]]:
-        """Pinned tags in order, with how many people, entries and tasks carry them."""
-        rows = self.conn.execute(
-            """
-            SELECT t.*,
-                   (SELECT count(*) FROM person_tags WHERE tag_id = t.id)
-                 + (SELECT count(*) FROM entry_tags WHERE tag_id = t.id)
-                 + (SELECT count(*) FROM task_tags t2 JOIN tasks k ON k.id = t2.task_id
-                    WHERE t2.tag_id = t.id AND k.status <> 'done') AS uses
-            FROM tags t WHERE t.pinned = 1 ORDER BY t.position, t.name
-            """
-        ).fetchall()
+        """Pinned tags in order, with how many people, entries and open tasks carry them."""
+        rows = self.conn.execute(self._TAG_USES + " WHERE t.pinned = 1 ORDER BY t.position, t.name").fetchall()
         return [(_row_to(Tag, r, pinned=True), int(r["uses"])) for r in rows]
+
+    def list_tags(self) -> list[tuple[Tag, int]]:
+        """Every tag, pinned first, with how many people, entries and open tasks carry it."""
+        rows = self.conn.execute(
+            self._TAG_USES + " ORDER BY t.pinned DESC, t.position, t.name COLLATE NOCASE"
+        ).fetchall()
+        return [(_row_to(Tag, r, pinned=bool(r["pinned"])), int(r["uses"])) for r in rows]
+
+    def get_tag(self, tag_id: str) -> Tag:
+        row = self._require("tags", tag_id)
+        return _row_to(Tag, row, pinned=bool(row["pinned"]))
+
+    def tasks_for_tag(self, tag_id: str) -> list[Task]:
+        """Open tasks carrying this tag."""
+        return self._tasks(
+            "t.status <> 'done' AND EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag_id = ?)",
+            (tag_id,),
+        )
 
     def _resolve_tags(self, tags: Iterable[str]) -> list[str]:
         ids: list[str] = []

@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import { ApiError } from '#lib/api.js';
 	import { v2, type Entry, type EntryPatch } from '#lib/api2.js';
-	import { fold, read, segments, type Reading } from '#lib/feuillet.js';
+	import { fold, read, resolvePerson, segments, type Reading } from '#lib/feuillet.js';
 	import {
 		allProjects,
 		carnet,
@@ -310,6 +310,18 @@
 	let monthName = $derived(
 		day ? new Date(`${day}T12:00:00`).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }) : ''
 	);
+
+	/** Link of an « @Nom » written in a paragraph: the person linked to the entry under that name. */
+	function personHref(entry: Entry, text: string): string | undefined {
+		const { name } = resolvePerson(text.slice(1).replace(/['’-]+$/, ''), entry.people);
+		const person = entry.people.find((p) => p.display_name === name);
+		return person ? `/personnes/${person.id}` : undefined;
+	}
+
+	function tagHref(entry: Entry, text: string): string | undefined {
+		const tag = entry.tags.find((t) => t.name.toLowerCase() === text.slice(1).toLowerCase());
+		return tag ? `/etiquettes/${tag.id}` : undefined;
+	}
 </script>
 
 <svelte:head><title>{day ? longDate(day) : 'Journal'} · P.IGE</title></svelte:head>
@@ -383,8 +395,9 @@
 									{#if line.trim()}
 										<p>
 											{#each segments(line) as seg, j (j)}
-												{#if seg.type === 'person'}<span class="chip-person">{seg.text}</span
-													>{:else if seg.type === 'tag'}<span class="chip-tag">{seg.text}</span
+												{#if seg.type === 'person'}{@const href = personHref(entry, seg.text)}{#if href}<a class="chip-person" {href}>{seg.text}</a
+														>{:else}<span class="chip-person">{seg.text}</span>{/if}{:else if seg.type === 'tag'}{@const href = tagHref(entry, seg.text)}{#if href}<a class="chip-tag" {href}>{seg.text}</a
+														>{:else}<span class="chip-tag">{seg.text}</span>{/if}
 													>{:else if seg.type === 'decision'}<span class="kind decision">DÉCISION</span
 													>{:else if seg.type === 'task'}<span class="task"
 														><span class="box" aria-hidden="true"></span>{seg.text}<small>tâche</small></span

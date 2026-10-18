@@ -127,3 +127,13 @@
 	clip-path: inset(50%);
 	white-space: nowrap;
 }
+
+.carnet a.chip-person,
+.carnet a.chip-tag {
+	text-decoration: none;
+}
+
+.carnet a.chip-person:hover,
+.carnet a.chip-tag:hover {
+	text-decoration: underline;
+}
