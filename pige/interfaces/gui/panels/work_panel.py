@@ -16,6 +16,7 @@ from pige.interfaces.gui.dialogs import (
     show_export_project_raw_dialog,
     show_export_weekly_summary_dialog,
     show_followup_tasks_dialog,
+    show_new_entry_dialog,
     show_new_project_dialog,
     show_new_task_dialog,
 )
@@ -792,7 +793,7 @@ class WorkPanel(ttk.Frame):
             # Project context menu
             project_id = item.replace("project:", "")
             project = self._projects_by_id.get(project_id)
-            menu.add_command(label="➕ Nouvelle Entry", command=self._on_new_entry_from_explorer)
+            menu.add_command(label="➕ Nouvelle Entry", command=lambda: self._on_new_entry_dialog(project_id))
             menu.add_command(label="➕ Nouvelle Task", command=self._on_add_task)
             menu.add_separator()
             menu.add_command(label="📂 Nouveau Sous-Projet", command=lambda: self._on_new_subproject(item))
@@ -1236,6 +1237,21 @@ class WorkPanel(ttk.Frame):
             self.explorer_tree.selection_set(new_item)
         messagebox.showinfo("Succès", f"Sous-projet '{project.name}' créé sous '{parent_project.name}'!")
     
+    def _on_new_entry_dialog(self, project_id: str) -> None:
+        """Open the new-entry dialog for a project (right-click menu)."""
+        self.current_project_id = project_id
+        top = self.winfo_toplevel()
+        result = show_new_entry_dialog(top, self.service, project_id)
+        if not result:
+            return
+        entry, _path = result
+        refresh_all = getattr(top, "_refresh_panels_after_entry_mutation", None)
+        if callable(refresh_all):
+            refresh_all()
+        else:
+            self._refresh_explorer()
+        self._load_entry_in_editor(entry.id)
+
     def _on_new_entry_from_explorer(self) -> None:
         """Create new entry from explorer."""
         # Get selected project or ask user
