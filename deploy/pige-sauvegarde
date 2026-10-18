@@ -9,7 +9,8 @@ chmod 700 "$DEST"
 # SQLite's own backup: a consistent copy even while the service writes.
 # pige.sqlite3: the data; auth.sqlite3: signed-in devices and passkeys (public keys only).
 for NAME in pige auth; do
-  [ -f "/var/lib/pige/data/$NAME.sqlite3" ] || continue
+  # auth.sqlite3 appears with the first sign-in; pige.sqlite3 must be there (else: fail loudly).
+  [ "$NAME" = auth ] && [ ! -f "/var/lib/pige/data/auth.sqlite3" ] && continue
   /opt/pige/venv/bin/python - "/var/lib/pige/data/$NAME.sqlite3" "$DEST/$NAME-$DAY.sqlite3" <<'PY'
 import sqlite3, sys
 src = sqlite3.connect(sys.argv[1])
@@ -19,5 +20,5 @@ dst.close(); src.close()
 PY
 done
 # Legacy JSON data (current web app, Thunderbird extension).
-tar czf "$DEST/json-$DAY.tgz" -C /var/lib/pige/data --exclude='*.sqlite3*' --exclude='.pige.lock' --exclude='avant-import' .
+tar czf "$DEST/json-$DAY.tgz" -C /var/lib/pige/data --exclude='*.sqlite3*' --exclude='.pige.lock' .
 find "$DEST" -type f -mtime +14 -delete

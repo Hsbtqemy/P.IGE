@@ -251,7 +251,14 @@ def test_public_origin_setting():
     assert s.public_origin == "https://pige.example.org" and s.passkey_rp_id == "pige.example.org"
     assert Settings.from_env({**base, "PIGE_PUBLIC_ORIGIN": "http://localhost:8765"}).passkey_rp_id == "localhost"
     assert Settings.from_env(base).passkey_rp_id is None
-    for bad in ("http://pige.example.org", "pige.example.org", "https://pige.example.org/path"):
+    assert Settings.from_env({**base, "PIGE_PUBLIC_ORIGIN": "https://pige.example.org:443"}).public_origin == (
+        "https://pige.example.org"
+    )
+    assert Settings.from_env({**base, "PIGE_PUBLIC_ORIGIN": "https://pige.example.org:8443"}).public_origin == (
+        "https://pige.example.org:8443"
+    )
+    for bad in ("http://pige.example.org", "pige.example.org", "https://pige.example.org/path", "https://-.",
+                "https://a..b", "https://localhost", "https://user@pige.example.org"):
         with pytest.raises(ConfigError):
             Settings.from_env({**base, "PIGE_PUBLIC_ORIGIN": bad})
 
@@ -266,9 +273,43 @@ def test_device_labels():
     assert device_label("") == "Navigateur"
 
 
+def test_flooding_sign_in_challenges_does_not_block_the_owner(app):
+    mac = signed_in(app)
+    device = Authenticator()
+    options = mac.post("/api/passkeys/register/options", headers=WEB).json()
+    flood = browser(app)
+    for _ in range(1200):
+        flood.post("/api/passkeys/login/options")
+    answer = device.create(options)
+    response = mac.post("/api/passkeys/register/verify", json={"credential": answer, "name": "Mac"}, headers=WEB)
+    assert response.status_code == 201  # registration challenges are kept apart
+
+
+def test_odd_registration_input_is_refused_cleanly(app):
+    mac = signed_in(app)
+    device = Authenticator()
+    options = mac.post("/api/passkeys/register/options", headers=WEB).json()
+    credential = device.create(options)
+    credential["response"]["transports"] = 5
+    assert mac.post("/api/passkeys/register/verify", json={"credential": credential}, headers=WEB).status_code == 201
+    assert mac.post("/api/passkeys/register/verify", json={"credential": "x"}, headers=WEB).status_code == 422
+
+
+def test_signing_in_again_replaces_the_session(app):
+    mac = signed_in(app)
+    for _ in range(3):
+        assert mac.post("/api/login", json={"password": PASSWORD}).status_code == 200
+    assert len(mac.get("/api/devices").json()["sessions"]) == 1
+
+
 def test_challenges_are_single_use_and_expire():
     c = Challenges()
     c.put("a", b"x", now=0)
     assert c.take("a", now=10) == b"x" and c.take("a", now=10) is None
     c.put("b", b"y", now=0)
     assert c.take("b", now=301) is None
+    small = Challenges(per_owner=2)
+    for i in range(5):
+        small.put(f"k{i}", b"z", owner="flood", now=0)
+    small.put("mine", b"m", owner="me", now=0)
+    assert small.take("k0", now=1) is None and small.take("k4", now=1) == b"z" and small.take("mine", now=1) == b"m"

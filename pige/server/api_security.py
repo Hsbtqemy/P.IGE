@@ -62,7 +62,8 @@ def build_security_router(
     sign_in: Callable[[Request, Response, str, str | None], None],
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
-    pending = Challenges()
+    registering = Challenges(max_items=100, per_owner=1)  # one per signed-in session
+    signing_in = Challenges(max_items=1000, per_owner=5)  # per client address
     rp_id = settings.passkey_rp_id
     origin = settings.public_origin
 
@@ -93,13 +94,14 @@ def build_security_router(
                 PublicKeyCredentialDescriptor(id=base64url_to_bytes(p.id)) for p in store.passkeys()
             ],
         )
-        pending.put(f"reg:{store.hash_of(sid)}", options.challenge)
+        owner = store.hash_of(sid)
+        registering.put(owner, options.challenge, owner)
         return Response(options_to_json(options), media_type="application/json")
 
     @router.post("/passkeys/register/verify", status_code=status.HTTP_201_CREATED)
     def register_verify(body: RegisterIn, request: Request, sid: str = Depends(require_session)) -> dict[str, Any]:
         rp, expected_origin = configured()
-        challenge = pending.take(f"reg:{store.hash_of(sid)}")
+        challenge = registering.take(store.hash_of(sid))
         if challenge is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Challenge expired, start again")
         try:
@@ -115,13 +117,15 @@ def build_security_router(
         credential_id = bytes_to_base64url(verified.credential_id)
         if store.passkey(credential_id) is not None:
             raise HTTPException(status.HTTP_409_CONFLICT, "This passkey is already registered")
-        raw = body.credential.get("response", {}).get("transports") or []
-        transports = [t for t in raw if isinstance(t, str) and t in _TRANSPORTS]
+        response_part = body.credential.get("response")
+        raw = response_part.get("transports") if isinstance(response_part, dict) else None
+        transports = [t for t in raw if isinstance(t, str) and t in _TRANSPORTS] if isinstance(raw, list) else []
         name = body.name.strip() or "Clé d'accès"
-        store.add_passkey(
+        if not store.add_passkey(
             credential_id, verified.credential_public_key, verified.sign_count, name, transports,
             bool(verified.credential_backed_up),
-        )
+        ):
+            raise HTTPException(status.HTTP_409_CONFLICT, "This passkey is already registered")
         return {"id": credential_id, "name": name}
 
     # ------------------------------------------------------------ sign in with a passkey
@@ -132,11 +136,11 @@ def build_security_router(
         return {"configured": bool(rp_id and origin), "registered": bool(rp_id and origin and store.passkeys())}
 
     @router.post("/passkeys/login/options")
-    def login_options(request: Request, response: Response) -> Response:
+    def login_options(request: Request) -> Response:
         rp, _ = configured()
         options = generate_authentication_options(rp_id=rp, user_verification=UserVerificationRequirement.REQUIRED)
         key = secrets.token_urlsafe(24)
-        pending.put(f"auth:{key}", options.challenge)
+        signing_in.put(key, options.challenge, client(request))
         out = Response(options_to_json(options), media_type="application/json")
         out.set_cookie(
             CHALLENGE_COOKIE, key, max_age=300, httponly=True, secure=settings.cookie_secure,
@@ -151,7 +155,7 @@ def build_security_router(
         if not throttle.acquire(who):
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many attempts, try later")
         key = request.cookies.get(CHALLENGE_COOKIE, "")
-        challenge = pending.take(f"auth:{key}") if key else None
+        challenge = signing_in.take(key) if key else None
         response.delete_cookie(CHALLENGE_COOKIE, path="/api/passkeys/")
         if challenge is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Challenge expired, start again")

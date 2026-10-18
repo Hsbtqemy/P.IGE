@@ -19,6 +19,9 @@ import secrets
 import sqlite3
 import threading
 import time
+from collections import OrderedDict
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -89,10 +92,13 @@ class AuthStore:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.path), timeout=10.0)
-        conn.row_factory = sqlite3.Row
-        return conn
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        """A short connection: committed (or rolled back) and always closed."""
+        with closing(sqlite3.connect(str(self.path), timeout=10.0)) as conn:
+            conn.row_factory = sqlite3.Row
+            with conn:
+                yield conn
 
     def _write(self, sql: str, params: tuple[object, ...] = ()) -> int:
         with self._lock, self._connect() as conn:
@@ -177,18 +183,26 @@ class AuthStore:
     def add_passkey(
         self, credential_id: str, public_key: bytes, sign_count: int, name: str, transports: list[str],
         backed_up: bool, *, now: int | None = None,
-    ) -> None:
+    ) -> bool:
+        """Store a passkey; False if this credential is already registered."""
         current = int(now if now is not None else time.time())
-        self._write(
-            "INSERT INTO passkeys(id, public_key, sign_count, name, transports, backed_up, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (credential_id, public_key, sign_count, name[:80], json.dumps(transports[:10]), int(backed_up), current),
-        )
+        try:
+            self._write(
+                "INSERT INTO passkeys(id, public_key, sign_count, name, transports, backed_up, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (credential_id, public_key, sign_count, name[:80], json.dumps(transports[:10]), int(backed_up),
+                 current),
+            )
+        except sqlite3.IntegrityError:
+            return False
+        return True
 
     def passkey_used(self, credential_id: str, sign_count: int, *, now: int | None = None) -> None:
         current = int(now if now is not None else time.time())
         self._write(
-            "UPDATE passkeys SET sign_count = ?, last_used = ? WHERE id = ?", (sign_count, current, credential_id)
+            # max(): two sign-ins at once must not move the counter backwards.
+            "UPDATE passkeys SET sign_count = max(sign_count, ?), last_used = ? WHERE id = ?",
+            (sign_count, current, credential_id),
         )
 
     def rename_passkey(self, credential_id: str, name: str) -> bool:
@@ -202,20 +216,32 @@ class AuthStore:
 
 
 class Challenges:
-    """WebAuthn challenges waiting for their answer: single use, short-lived, in memory."""
+    """WebAuthn challenges waiting for their answer: single use, short-lived, in memory.
 
-    def __init__(self, max_items: int = 1000) -> None:
-        self._items: dict[str, tuple[bytes, float]] = {}
+    Each owner (a session, or a client address for sign-in) holds at most ``per_owner``
+    pending challenges: someone asking for many only pushes out their own.
+    """
+
+    def __init__(self, max_items: int = 1000, per_owner: int = 5) -> None:
+        self._items: OrderedDict[str, tuple[bytes, float, str]] = OrderedDict()
         self._lock = threading.Lock()
         self._max = max_items
+        self._per_owner = per_owner
 
-    def put(self, key: str, challenge: bytes, now: float | None = None) -> None:
+    def put(self, key: str, challenge: bytes, owner: str = "", now: float | None = None) -> None:
         current = now if now is not None else time.time()
         with self._lock:
-            self._items = {k: v for k, v in self._items.items() if v[1] > current}
+            while self._items:  # oldest first: drop the expired ones at the front
+                first = next(iter(self._items.values()))
+                if first[1] > current:
+                    break
+                self._items.popitem(last=False)
+            mine = [k for k, v in self._items.items() if v[2] == owner]
+            for old in mine[: max(0, len(mine) - self._per_owner + 1)]:
+                del self._items[old]
             if len(self._items) >= self._max:
-                self._items.pop(next(iter(self._items)))
-            self._items[key] = (challenge, current + CHALLENGE_SECONDS)
+                self._items.popitem(last=False)
+            self._items[key] = (challenge, current + CHALLENGE_SECONDS, owner)
 
     def take(self, key: str, now: float | None = None) -> bytes | None:
         current = now if now is not None else time.time()

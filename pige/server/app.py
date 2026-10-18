@@ -166,7 +166,11 @@ def create_app(
         return sid
 
     def sign_in(request: Request, response: Response, method: str, passkey_id: str | None = None) -> None:
-        """Open a session for this device and set its cookie."""
+        """Open a session for this device and set its cookie (ending the one it replaces)."""
+        previous = signer.read(request.cookies.get(SESSION_COOKIE))
+        old_sid = previous.get("sid") if previous else None
+        if isinstance(old_sid, str) and old_sid:
+            auth_store.end_session_by_id(old_sid)
         sid = auth_store.open_session(
             method, device_label(request.headers.get("user-agent", "")), signer.max_age_seconds,
             passkey_id=passkey_id,
