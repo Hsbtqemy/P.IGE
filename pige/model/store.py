@@ -879,6 +879,10 @@ class ModelStore:
         """Open tasks attached to the space itself (no project)."""
         return self._tasks("t.space_id = ? AND t.project_id IS NULL AND t.status <> 'done'", (space_id,))
 
+    def open_tasks(self) -> list[Task]:
+        """Every task not done, in manual order within each project or space."""
+        return self._tasks("t.status <> 'done'", ())
+
     def in_progress_tasks(self) -> list[Task]:
         """Tasks in progress, the longest-running first."""
         return self._tasks("t.status = 'in_progress'", (), order="t.status_since")
