@@ -52,13 +52,21 @@ export interface Entry {
 	start_time: string | null;
 	end_time: string | null;
 	decision_applied: boolean | null;
-	source: string;
+	source: 'journal' | 'writing' | 'capture' | 'mail' | 'import';
 	created_at: string;
 	updated_at: string;
 	version: number;
 	revision: number;
 	people: Person[];
 	tags: Tag[];
+}
+
+export interface EntryVersion {
+	entry_id: string;
+	version: number;
+	title: string;
+	body: string;
+	saved_at: string;
 }
 
 export interface Task {
@@ -202,6 +210,8 @@ export interface NewEntry {
 
 export interface EntryPatch {
 	expected_revision: number;
+	autosave?: boolean;
+	entry_date?: string;
 	title?: string | null;
 	body?: string | null;
 	kind?: EntryKind;
@@ -261,13 +271,22 @@ export const v2 = {
 	person: (name: string) => request<Person>('POST', '/api/v2/people', { name }),
 	tree: () => request<Tree>('GET', '/api/v2/tree'),
 	people: () => request<Person[]>('GET', '/api/v2/people'),
-	timeline: (params: { day?: string; project_id?: string; person_id?: string; tag_id?: string; limit?: number }) =>
+	timeline: (params: {
+		day?: string;
+		project_id?: string;
+		person_id?: string;
+		tag_id?: string;
+		source?: Entry['source'];
+		limit?: number;
+	}) =>
 		request<Entry[]>('GET', `/api/v2/timeline?${q({ limit: 200, ...params })}`),
 	journalDays: (month: string) => request<string[]>('GET', `/api/v2/journal/days?month=${month}`),
 	createEntry: (entry: NewEntry) => request<Entry>('POST', '/api/v2/entries', entry),
 	updateEntry: (id: string, patch: EntryPatch) => request<Entry>('PATCH', `/api/v2/entries/${id}`, patch),
 	moveEntry: (id: string, to: { project_id?: string | null; space_id?: string | null }) =>
 		request<Entry>('POST', `/api/v2/entries/${id}/move`, to),
+	entry: (id: string) => request<Entry>('GET', `/api/v2/entries/${encodeURIComponent(id)}`),
+	entryVersions: (id: string) => request<EntryVersion[]>('GET', `/api/v2/entries/${id}/versions?limit=50`),
 	deleteEntry: (id: string) => request<void>('DELETE', `/api/v2/entries/${id}`),
 	createTask: (task: { title: string; project_id?: string | null; space_id?: string | null; origin_entry_id?: string }) =>
 		request<Task>('POST', '/api/v2/tasks', task)
