@@ -96,7 +96,10 @@
 						Ma journée
 						{#if carnet.timers.length}<span class="running" title="Minuteurs en cours">● {carnet.timers.length}</span>{/if}
 					</a>
-					<span class="soon" title="Bientôt">Tâches</span>
+					<a href="/taches" aria-current={path.startsWith('/taches') ? 'page' : undefined}>
+						<svg aria-hidden="true" viewBox="0 0 24 24"><path d="m4 7 2 2 4-4M4 17l2 2 4-4M13 7h7M13 17h7" /></svg>
+						Tâches
+					</a>
 					<a href="/personnes" aria-current={path.startsWith('/personnes') ? 'page' : undefined}>
 						<svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5M16 4.8a3.5 3.5 0 0 1 0 6.4M18.5 14.8c1.7.8 2.7 2.5 3 5.2" /></svg>
 						Personnes

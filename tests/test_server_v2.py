@@ -363,3 +363,11 @@ def test_thunderbird_files_a_mail_as_entry_and_task(client, tree):
     assert ok(client.post("/api/v2/tasks", json=task), 200)["id"] == created["id"]
     waiting = ok(client.get(f"/api/v2/people/{person['id']}"))
     assert [t["id"] for t in waiting["involved_in"]] == [created["id"]]
+
+
+def test_all_open_tasks(client, tree):
+    a = ok(client.post("/api/v2/tasks", json={"title": "A", "project_id": tree["dico"]["id"]}), 201)
+    b = ok(client.post("/api/v2/tasks", json={"title": "B", "space_id": tree["mimmoc"]["id"]}), 201)
+    c = ok(client.post("/api/v2/tasks", json={"title": "C", "project_id": tree["porfavor"]["id"]}), 201)
+    ok(client.patch(f"/api/v2/tasks/{c['id']}", json={"status": "done"}))
+    assert {t["id"] for t in ok(client.get("/api/v2/tasks"))} == {a["id"], b["id"]}

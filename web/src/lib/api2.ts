@@ -264,6 +264,7 @@ export const v2 = {
 	validateDay: (day: string, tz: string) =>
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),
 	search: (text: string, limit = 20) => request<SearchHit[]>('GET', `/api/v2/search?${q({ q: text, limit })}`),
+	openTasks: () => request<Task[]>('GET', '/api/v2/tasks'),
 	tasksInProgress: () => request<Task[]>('GET', '/api/v2/tasks/in-progress'),
 	personView: (id: string) => request<PersonView>('GET', `/api/v2/people/${encodeURIComponent(id)}`),
 	updatePerson: (id: string, patch: PersonPatch) => request<PersonView>('PATCH', `/api/v2/people/${id}`, patch),
