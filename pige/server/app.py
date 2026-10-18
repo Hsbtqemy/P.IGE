@@ -22,8 +22,10 @@ from pige.core.service import INBOX_TAG, PigeService
 from pige.core.storage import Storage
 from pige.model import DB_FILE_NAME, ConflictError, ModelStore, NotFoundError
 from pige.server.api_model import build_router
+from pige.server.api_security import build_security_router
 from pige.server.auth import LoginThrottle, SessionSigner, verify_api_token, verify_password
 from pige.server.config import Settings
+from pige.server.security import AUTH_FILE_NAME, AuthStore, device_label
 
 SESSION_COOKIE = "pige_session"
 # Browsers cannot set custom headers on cross-site form posts, so requiring this
@@ -120,6 +122,7 @@ def create_app(
         not_before=settings.sessions_not_before,
     )
     throttle = LoginThrottle()
+    auth_store = AuthStore(settings.data_dir / AUTH_FILE_NAME)
     # scrypt uses ~32 MiB per check: cap concurrent password checks.
     password_checks = threading.BoundedSemaphore(2)
     # The service writes whole JSON files; one writer at a time.
@@ -130,6 +133,14 @@ def create_app(
 
     # ------------------------------------------------------------ auth
 
+    def current_session(request: Request) -> str | None:
+        """The id of this device's live session, from the signed cookie."""
+        payload = signer.read(request.cookies.get(SESSION_COOKIE))
+        sid = payload.get("sid") if payload else None
+        if not isinstance(sid, str) or not sid:
+            return None
+        return sid if auth_store.check_session(sid) is not None else None
+
     def require_auth(request: Request) -> str:
         """Return the auth method ('token' or 'session') or reject the request."""
         header = request.headers.get("authorization", "")
@@ -137,11 +148,42 @@ def create_app(
             if verify_api_token(header[7:].strip(), settings.api_token_hashes):
                 return "token"
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
-        if signer.is_valid(request.cookies.get(SESSION_COOKIE)):
+        if current_session(request) is not None:
             if request.method not in ("GET", "HEAD") and request.headers.get(CSRF_HEADER) != "web":
                 raise HTTPException(status.HTTP_403_FORBIDDEN, "Missing client header")
             return "session"
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+
+    def require_session(request: Request) -> str:
+        """Signed in from the web app (not an API token); returns the session id."""
+        if request.headers.get("authorization", "").lower().startswith("bearer "):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Security settings need the web app")
+        sid = current_session(request)
+        if sid is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
+        if request.method not in ("GET", "HEAD") and request.headers.get(CSRF_HEADER) != "web":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Missing client header")
+        return sid
+
+    def sign_in(request: Request, response: Response, method: str, passkey_id: str | None = None) -> None:
+        """Open a session for this device and set its cookie (ending the one it replaces)."""
+        previous = signer.read(request.cookies.get(SESSION_COOKIE))
+        old_sid = previous.get("sid") if previous else None
+        if isinstance(old_sid, str) and old_sid:
+            auth_store.end_session_by_id(old_sid)
+        sid = auth_store.open_session(
+            method, device_label(request.headers.get("user-agent", "")), signer.max_age_seconds,
+            passkey_id=passkey_id,
+        )
+        response.set_cookie(
+            SESSION_COOKIE,
+            signer.issue(sid),
+            max_age=signer.max_age_seconds,
+            httponly=True,
+            secure=settings.cookie_secure,
+            samesite="strict",
+            path="/",
+        )
 
     @app.exception_handler(TaskNotFoundError)
     @app.exception_handler(ProjectNotFoundError)
@@ -189,27 +231,23 @@ def create_app(
         if not ok:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong password")
         throttle.succeeded(client)
-        response.set_cookie(
-            SESSION_COOKIE,
-            signer.issue(),
-            max_age=signer.max_age_seconds,
-            httponly=True,
-            secure=settings.cookie_secure,
-            samesite="strict",
-            path="/",
-        )
+        sign_in(request, response, "password")
         return {"authenticated": True}
 
     @app.post("/api/logout")
     def logout(request: Request, response: Response) -> dict[str, bool]:
         if request.headers.get(CSRF_HEADER) != "web":
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Missing client header")
+        payload = signer.read(request.cookies.get(SESSION_COOKIE))
+        sid = payload.get("sid") if payload else None
+        if isinstance(sid, str) and sid:
+            auth_store.end_session_by_id(sid)
         response.delete_cookie(SESSION_COOKIE, path="/")
         return {"authenticated": False}
 
     @app.get("/api/session")
     def session(request: Request) -> dict[str, bool]:
-        return {"authenticated": signer.is_valid(request.cookies.get(SESSION_COOKIE))}
+        return {"authenticated": current_session(request) is not None}
 
     @app.get("/api/projects")
     def projects(_auth: str = Depends(require_auth)) -> list[dict[str, object]]:
@@ -258,6 +296,7 @@ def create_app(
         return _task_out(task, names)
 
     app.include_router(build_router(model_store, require_auth, settings.timezone))
+    app.include_router(build_security_router(settings, auth_store, throttle, require_session, sign_in))
 
     @app.api_route("/api", methods=["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"], include_in_schema=False)
     @app.api_route("/api/{path:path}", methods=["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"])

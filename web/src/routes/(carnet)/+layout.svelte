@@ -133,7 +133,10 @@
 						{/each}
 					{/each}
 				</details>
-				<a class="old" href="/">Écran de saisie actuel</a>
+				<div class="foot">
+					<a class="old" href="/reglages" aria-current={path.startsWith('/reglages') ? 'page' : undefined}>Réglages</a>
+					<a class="old" href="/">Écran de saisie actuel</a>
+				</div>
 			</aside>
 			<main>{@render children()}</main>
 		</div>
@@ -349,8 +352,12 @@
 		border-radius: 4px;
 		padding: 0 4px;
 	}
-	.old {
+	.foot {
 		margin-top: auto;
+		display: flex;
+		flex-direction: column;
+	}
+	.old {
 		padding: 8px;
 		font-size: 0.8125rem;
 		color: var(--muted);

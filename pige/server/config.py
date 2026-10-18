@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -17,6 +18,34 @@ from pige.server.auth import is_password_hash
 
 class ConfigError(RuntimeError):
     pass
+
+
+_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+
+
+def _public_origin(value: str) -> str:
+    """« https://Pige.Example.org/ » -> « https://pige.example.org » (as browsers send it), or ""."""
+    text = value.strip().rstrip("/").lower()
+    if not text:
+        return ""
+    problem = ConfigError(
+        "PIGE_PUBLIC_ORIGIN: expected the site address, e.g. https://pige.example.org (http only for localhost)"
+    )
+    parts = urlsplit(text)
+    if parts.path or parts.query or parts.fragment or parts.username or parts.password or not parts.hostname:
+        raise problem
+    host = parts.hostname
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise problem from exc
+    if parts.scheme == "https":
+        if not all(_LABEL.fullmatch(label) for label in host.split(".")) or "." not in host:
+            raise problem
+    elif not (parts.scheme == "http" and host == "localhost"):
+        raise problem
+    default = 443 if parts.scheme == "https" else 80
+    return f"{parts.scheme}://{host}" + (f":{port}" if port and port != default else "")
 
 
 @dataclass(frozen=True)
@@ -30,6 +59,15 @@ class Settings:
     session_days: int = 30
     sessions_not_before: int = 0
     timezone: str = "Europe/Paris"
+    # Address the browser shows (https://pige.example.org): needed for passkeys, which are
+    # bound to the site name. Without it, sign-in stays password only.
+    public_origin: str | None = None
+
+    @property
+    def passkey_rp_id(self) -> str | None:
+        if not self.public_origin:
+            return None
+        return self.public_origin.split("://", 1)[1].split(":", 1)[0]
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -61,6 +99,7 @@ class Settings:
             ZoneInfo(timezone)
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ConfigError(f"PIGE_TIMEZONE: unknown time zone {timezone!r}") from exc
+        origin = _public_origin(env.get("PIGE_PUBLIC_ORIGIN", ""))
         return cls(
             data_dir=Path(required("PIGE_DATA_DIR")).expanduser(),
             password_hash=password_hash,
@@ -71,4 +110,5 @@ class Settings:
             session_days=int(env.get("PIGE_SESSION_DAYS", "30")),
             sessions_not_before=int(env.get("PIGE_SESSIONS_NOT_BEFORE", "0")),
             timezone=timezone,
+            public_origin=origin or None,
         )
