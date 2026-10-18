@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
 	import { ApiError } from '#lib/api.js';
 	import { v2, type Entry, type EntryPatch } from '#lib/api2.js';
 	import { newId, prepare } from '#lib/carnet/capture.js';
 	import { outbox, queue } from '#lib/carnet/outbox.svelte.js';
+	import { onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
 	import { fold, read, resolvePerson, segments, type Reading } from '#lib/feuillet.js';
 	import {
 		allProjects,
@@ -356,6 +357,9 @@
 		if (n < waiting) void refresh();
 		waiting = n;
 	});
+
+	// A mail filed from Thunderbird's message list shows up at once.
+	onMount(() => onMailFiled(() => void refresh()));
 </script>
 
 <svelte:head><title>{day ? longDate(day) : 'Journal'} · P.IGE</title></svelte:head>
@@ -389,6 +393,13 @@
 						<div class="margin">
 							<span class="time">{entry.start_time ?? ''}</span>
 							<span class="where">{placeLabel(entry)}</span>
+							{#if entry.mail_message_id}
+								{#if thunderbird.available}
+									<button class="mail" onclick={() => entry.mail_message_id && openMail(entry.mail_message_id)} title="Ouvrir le mail dans Thunderbird">✉ Ouvrir le mail</button>
+								{:else}
+									<span class="mail-tag" title="Ouvre P.IGE dans Thunderbird pour retrouver le mail">✉ mail</span>
+								{/if}
+							{/if}
 							{#if editingId !== entry.id && entry.source !== 'writing'}
 								<button class="edit" id="modify-{entry.id}" onclick={() => startEdit(entry)}>Modifier</button>
 							{/if}
@@ -664,6 +675,21 @@
 		font-family: var(--sans);
 		font-size: 0.75rem;
 		color: var(--accent);
+	}
+	.mail {
+		align-self: flex-end;
+		padding: 2px 6px;
+		font-family: var(--sans);
+		font-size: 0.75rem;
+		color: var(--accent);
+		background: var(--surface);
+		border: 1px solid var(--line);
+		border-radius: 6px;
+	}
+	.mail-tag {
+		font-family: var(--sans);
+		font-size: 0.75rem;
+		color: var(--muted);
 	}
 	.edit {
 		align-self: flex-end;

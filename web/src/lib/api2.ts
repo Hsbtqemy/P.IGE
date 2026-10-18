@@ -53,6 +53,7 @@ export interface Entry {
 	end_time: string | null;
 	decision_applied: boolean | null;
 	source: 'journal' | 'writing' | 'capture' | 'mail' | 'import';
+	mail_message_id?: string | null;
 	created_at: string;
 	updated_at: string;
 	version: number;
@@ -80,6 +81,7 @@ export interface Task {
 	due_date: string | null;
 	done_at?: string | null;
 	status_since?: string;
+	origin_entry_id?: string | null;
 	steps_done: number;
 	steps_total: number;
 }

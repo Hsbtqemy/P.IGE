@@ -57,7 +57,14 @@ jobs:
             tests/test_pagination.py \
             tests/test_tree_diff.py \
             tests/test_service_tasks_sync.py \
-            tests/test_server.py
+            tests/test_server.py \
+            tests/test_server_v2.py \
+            tests/test_server_security.py \
+            tests/test_model.py \
+            tests/test_import_legacy.py
+
+      - name: Thunderbird extension (helpers)
+        run: node --test thunderbird/test/lib.test.mjs
 
   web:
     runs-on: ubuntu-latest

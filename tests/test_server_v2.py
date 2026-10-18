@@ -342,3 +342,24 @@ def test_device_chosen_ids_make_resends_harmless(client, tree):
     assert ok(client.post("/api/v2/tasks", json=task), 200)["id"] == tid
     assert len(ok(client.get(f"/api/v2/projects/{tree['dico']['id']}/tasks"))) == 1
     assert client.post("/api/v2/entries", json={**body, "id": "XYZ"}).status_code == 422
+
+
+def test_thunderbird_files_a_mail_as_entry_and_task(client, tree):
+    """What the extension sends (token auth): idempotent by ids and by Message-ID."""
+    person = ok(client.post("/api/v2/people", json={"name": "Martin Anne"}), 201)
+    ok(client.patch(f"/api/v2/people/{person['id']}", json={"email": "anne@univ.fr"}))
+    entry = {"id": "c" * 32, "entry_date": "2026-03-12", "project_id": tree["dico"]["id"], "kind": "note",
+             "title": "Devis", "body": "Mail de Anne", "source": "mail", "mail_message_id": "<abc@mail>",
+             "person_ids": [person["id"]]}
+    first = ok(client.post("/api/v2/entries", json=entry), 201)
+    assert first["mail_message_id"] == "<abc@mail>" and [p["id"] for p in first["people"]] == [person["id"]]
+    assert ok(client.post("/api/v2/entries", json=entry), 200)["id"] == first["id"]
+    # same mail filed again from another computer (other id): still the same entry
+    assert ok(client.post("/api/v2/entries", json={**entry, "id": "d" * 32}), 200)["id"] == first["id"]
+    task = {"id": "e" * 32, "title": "Devis", "project_id": tree["dico"]["id"], "origin_entry_id": first["id"],
+            "person_ids": [person["id"]]}
+    created = ok(client.post("/api/v2/tasks", json=task), 201)
+    assert created["origin_entry_id"] == first["id"]
+    assert ok(client.post("/api/v2/tasks", json=task), 200)["id"] == created["id"]
+    waiting = ok(client.get(f"/api/v2/people/{person['id']}"))
+    assert [t["id"] for t in waiting["involved_in"]] == [created["id"]]

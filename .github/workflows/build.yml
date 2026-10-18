@@ -107,11 +107,30 @@ jobs:
           path: dist/PIGE-macos.app.zip
           if-no-files-found: error
 
+  # Thunderbird extension: a plain zip of the thunderbird/ folder (tests left out).
+  build-thunderbird:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Package the extension
+        working-directory: thunderbird
+        run: zip -r ../pige-thunderbird.xpi . -x '*.DS_Store' -x 'test/*' -x package.json
+
+      - name: Upload extension
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pige-thunderbird-xpi
+          path: pige-thunderbird.xpi
+          if-no-files-found: error
+
   # Only job allowed to write to the repository. It runs no build code: it
   # downloads the artifacts produced above, checksums them and attaches them
   # to the release with the GitHub CLI (no third-party action gets the token).
   release:
-    needs: [build-windows, build-macos]
+    needs: [build-windows, build-macos, build-thunderbird]
     if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.tag_name != ''
     runs-on: ubuntu-latest
     permissions:
@@ -129,10 +148,16 @@ jobs:
           name: pige-macos-release-zip
           path: release
 
+      - name: Download Thunderbird extension
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pige-thunderbird-xpi
+          path: release
+
       - name: Write SHA256SUMS
         working-directory: release
         run: |
-          sha256sum pige.exe PIGE-macos.app.zip > SHA256SUMS
+          sha256sum pige.exe PIGE-macos.app.zip pige-thunderbird.xpi > SHA256SUMS
           cat SHA256SUMS
 
       - name: Upload files to Release
@@ -146,4 +171,4 @@ jobs:
           if ! gh release view "$TAG_NAME" > /dev/null 2>&1; then
             gh release create "$TAG_NAME" --title "$TAG_NAME" --target "$GITHUB_SHA" --notes ""
           fi
-          gh release upload "$TAG_NAME" pige.exe PIGE-macos.app.zip SHA256SUMS --clobber
+          gh release upload "$TAG_NAME" pige.exe PIGE-macos.app.zip pige-thunderbird.xpi SHA256SUMS --clobber
