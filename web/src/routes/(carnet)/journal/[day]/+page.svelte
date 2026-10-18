@@ -355,7 +355,7 @@
 						<div class="margin">
 							<span class="time">{entry.start_time ?? ''}</span>
 							<span class="where">{placeLabel(entry)}</span>
-							{#if editingId !== entry.id}
+							{#if editingId !== entry.id && entry.source !== 'writing'}
 								<button class="edit" id="modify-{entry.id}" onclick={() => startEdit(entry)}>Modifier</button>
 							{/if}
 						</div>
@@ -387,6 +387,11 @@
 									<button class="btn" onclick={() => closeEdit(entry, true)}>Annuler</button>
 									<button class="btn primary" disabled={saving} onclick={() => saveEdit(entry)}>Enregistrer</button>
 								</div>
+							</div>
+						{:else if entry.source === 'writing'}
+							<div class="body">
+								<p><a class="long" href="/ecrire/{entry.id}"><b>{entry.title || 'Texte'}</b> · texte long, {entry.body.split(/\s+/).filter(Boolean).length} mots · ouvrir dans l’éditeur →</a></p>
+								<span class="where-inline">{placeLabel(entry)}</span>
 							</div>
 						{:else}
 							<div class="body">
@@ -517,6 +522,12 @@
 		flex-direction: column;
 		gap: 14px;
 		min-width: 0;
+	}
+	.long {
+		text-decoration: none;
+	}
+	.long:hover {
+		text-decoration: underline;
 	}
 	.days {
 		display: flex;

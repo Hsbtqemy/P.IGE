@@ -638,3 +638,39 @@ def test_counts_and_timeline_paging(store, tree):
     for d in ("2026-01-01", "2026-01-02", "2026-01-03"):
         store.create_entry(entry_date=d, project_id=pid, title=d)
     assert [e.title for e in store.timeline(project_id=pid, limit=2, offset=1)] == ["2026-01-02", "2026-01-01"]
+
+
+def test_autosave_keeps_versions_only_after_a_pause_or_every_quarter_hour(store, tree, monkeypatch):
+    import pige.model.store as model_store
+    from datetime import datetime, timedelta, timezone
+
+    clock = [datetime(2026, 10, 18, 9, 0, tzinfo=timezone.utc)]
+    monkeypatch.setattr(model_store, "_now", lambda: clock[0])
+
+    def at(minutes: float) -> None:
+        clock[0] = datetime(2026, 10, 18, 9, 0, tzinfo=timezone.utc) + timedelta(minutes=minutes)
+
+    e = store.create_entry(entry_date="2026-10-18", project_id=tree["dico"].id, body="v1", source="writing")
+    for i, minute in enumerate([0.5, 1, 1.5, 2], start=2):  # typing on: replaced, no version
+        at(minute)
+        e = store.update_entry(e.id, body=f"v{i}", autosave=True, expected_revision=e.revision)
+    assert store.entry_versions(e.id) == [] and e.body == "v5"
+    at(8)  # after a pause of more than 5 minutes: the text before the pause is kept
+    e = store.update_entry(e.id, body="v6", autosave=True, expected_revision=e.revision)
+    assert [v.body for v in store.entry_versions(e.id)] == ["v5"]
+    for minute in range(9, 17):  # typing on: still one version (kept text dates from 9:02)
+        at(minute)
+        e = store.update_entry(e.id, body=f"w{minute}", autosave=True, expected_revision=e.revision)
+    assert len(store.entry_versions(e.id)) == 1
+    at(17.5)  # 15 minutes after the kept text: one more, even without a pause
+    e = store.update_entry(e.id, body="x", autosave=True, expected_revision=e.revision)
+    assert [v.body for v in store.entry_versions(e.id)] == ["w16", "v5"]
+    at(24)  # an explicit save always keeps a version
+    e = store.update_entry(e.id, body="y", expected_revision=e.revision)
+    assert store.entry_versions(e.id)[0].body == "x"
+
+
+def test_timeline_filters_by_source(store, tree):
+    store.create_entry(entry_date="2026-10-18", project_id=tree["dico"].id, body="note", source="journal")
+    long = store.create_entry(entry_date="2026-10-18", project_id=tree["dico"].id, title="CR", source="writing")
+    assert [e.id for e in store.timeline(source="writing")] == [long.id]

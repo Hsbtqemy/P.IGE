@@ -29,6 +29,9 @@ BlockSource = Literal["timer", "agenda", "manual"]
 _POSITION_EPSILON = 1e-9
 MAX_BLOCK = timedelta(hours=24)  # longer blocks are refused
 STALE_TIMER = timedelta(hours=16)  # a timer running longer is probably forgotten
+# Autosaved writing keeps a version after a pause, or every so often while typing on.
+VERSION_PAUSE = timedelta(minutes=5)
+VERSION_EVERY = timedelta(minutes=15)
 
 
 class NotFoundError(LookupError):
@@ -1046,11 +1049,16 @@ class ModelStore:
         end_time: str | None = None,
         decision_applied: bool | None = None,
         expected_revision: int | None = None,
+        autosave: bool = False,
     ) -> Entry:
         """Update an entry; a title/body change keeps the previous text as a version.
 
         ``expected_revision`` rejects the update if anything was saved in between
         (two devices editing the same entry). Clients should always send it.
+
+        ``autosave`` (saving while typing): the previous text becomes a version only
+        after a pause of VERSION_PAUSE, or VERSION_EVERY after the last kept version;
+        otherwise it is simply replaced.
         """
         with self._tx():
             current = self.get_entry(entry_id)
@@ -1085,6 +1093,8 @@ class ModelStore:
             if not changes:
                 return current
             now = _utc(_now())
+            if text_changed and autosave:
+                text_changed = self._version_due(current)
             if text_changed:
                 self.conn.execute(
                     "INSERT INTO entry_versions(entry_id, version, title, body, saved_at) VALUES (?, ?, ?, ?, ?)",
@@ -1099,6 +1109,17 @@ class ModelStore:
             except sqlite3.IntegrityError as exc:
                 raise InvalidOperationError(_integrity_message(exc)) from exc
             return self.get_entry(entry_id)
+
+    def _version_due(self, current: Entry) -> bool:
+        """Autosave: is it time to keep the current text as a version?"""
+        moment = _now()
+        if moment - _parse_utc(current.updated_at) >= VERSION_PAUSE:
+            return True
+        row = self.conn.execute(
+            "SELECT max(saved_at) FROM entry_versions WHERE entry_id = ?", (current.id,)
+        ).fetchone()
+        began = _parse_utc(row[0]) if row and row[0] else _parse_utc(current.created_at)
+        return moment - began >= VERSION_EVERY
 
     def entry_versions(self, entry_id: str, *, limit: int = 20) -> list[EntryVersion]:
         """Previous versions, newest first (the current text is in the entry itself)."""
@@ -1159,6 +1180,7 @@ class ModelStore:
         person_id: str | None = None,
         tag_id: str | None = None,
         day: str | None = None,
+        source: str | None = None,
         limit: int = 200,
         offset: int = 0,
     ) -> list[Entry]:
@@ -1195,6 +1217,9 @@ class ModelStore:
         if day is not None:
             where.append("e.entry_date = ?")
             params.append(_check_date(day, "day"))
+        if source is not None:
+            where.append("e.source = ?")
+            params.append(source)
         sql = "SELECT e.* FROM entries e"
         if where:
             sql += " WHERE " + " AND ".join(where)

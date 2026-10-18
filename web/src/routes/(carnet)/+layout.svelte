@@ -78,6 +78,10 @@
 						<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z" /><path d="M8 9h8M8 13h8M8 17h5" /></svg>
 						Journal
 					</a>
+					<a href="/ecrire" aria-current={path.startsWith('/ecrire') ? 'page' : undefined}>
+						<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="m13.5 6.5 4 4" /></svg>
+						Écrire
+					</a>
 					<a href="/journee/{todayIso()}" aria-current={path.startsWith('/journee') ? 'page' : undefined}>
 						<svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5M9 2h6" /></svg>
 						Ma journée
