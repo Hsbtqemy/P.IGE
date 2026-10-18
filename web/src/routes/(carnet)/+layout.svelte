@@ -7,9 +7,20 @@
 	import { page } from '$app/state';
 	import { api, ApiError } from '#lib/api.js';
 	import Login from '#lib/carnet/Login.svelte';
+	import Palette from '#lib/carnet/Palette.svelte';
 	import { carnet, reload, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let { children } = $props();
+	let searchOpen = $state(false);
+	const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
+	function onGlobalKey(event: KeyboardEvent) {
+		if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'k') {
+			if (phase !== 'ready' || carnet.needsLogin) return;
+			event.preventDefault();
+			searchOpen = !searchOpen;
+		}
+	}
 	let phase = $state<'loading' | 'login' | 'ready' | 'offline'>('loading');
 
 	async function start(): Promise<void> {
@@ -41,6 +52,8 @@
 	});
 </script>
 
+<svelte:window onkeydown={onGlobalKey} />
+
 <div class="carnet">
 	{#if phase === 'loading'}
 		<p class="center">Chargement…</p>
@@ -55,6 +68,11 @@
 		<div class="shell">
 			<aside aria-label="Navigation">
 				<a class="brand" href="/journal/{todayIso()}">P.IGE</a>
+				<button class="search" onclick={() => (searchOpen = true)}>
+					<svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></svg>
+					<span>Rechercher</span>
+					<kbd>{mac ? '⌘' : 'Ctrl'} K</kbd>
+				</button>
 				<nav aria-label="Vues">
 					<a href="/journal/{todayIso()}" aria-current={path.startsWith('/journal') ? 'page' : undefined}>
 						<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z" /><path d="M8 9h8M8 13h8M8 17h5" /></svg>
@@ -106,6 +124,7 @@
 			</aside>
 			<main>{@render children()}</main>
 		</div>
+		<Palette bind:open={searchOpen} />
 		{#if carnet.needsLogin}
 			<div class="overlay" role="dialog" aria-modal="true" aria-label="Reconnexion">
 				<Login
@@ -141,6 +160,34 @@
 		gap: 14px;
 		background: var(--surface);
 		border-right: 1px solid var(--line);
+	}
+	.search {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-height: 34px;
+		padding: 0 8px;
+		font: inherit;
+		font-size: 0.875rem;
+		color: var(--muted);
+		text-align: left;
+		background: var(--bg);
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		cursor: pointer;
+	}
+	.search:hover {
+		color: var(--ink);
+	}
+	.search span {
+		flex: 1;
+	}
+	kbd {
+		font: inherit;
+		font-size: 0.6875rem;
+		padding: 1px 5px;
+		border: 1px solid var(--line);
+		border-radius: 4px;
 	}
 	.brand {
 		padding: 0 8px;

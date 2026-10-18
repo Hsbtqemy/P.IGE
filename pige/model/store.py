@@ -271,6 +271,10 @@ class SearchHit:
     id: str
     title: str
     snippet: str
+    space_id: str = ""
+    project_id: str | None = None
+    entry_date: str | None = None  # entries only
+    status: str | None = None  # tasks only
 
 
 def _row_to(cls: Any, row: sqlite3.Row, **overrides: Any) -> Any:
@@ -1358,20 +1362,24 @@ class ModelStore:
         scored: list[tuple[float, SearchHit]] = []
         space_sql = " AND e.space_id = ?" if space_id else ""
         for r in self.conn.execute(
-            "SELECT e.id, e.title, snippet(entries_fts, -1, '[', ']', '…', 12) AS snip, bm25(entries_fts) AS score"
+            "SELECT e.id, e.title, e.space_id, e.project_id, e.entry_date,"
+            " snippet(entries_fts, -1, '[', ']', '…', 12) AS snip, bm25(entries_fts) AS score"
             f" FROM entries_fts JOIN entries e ON e.rid = entries_fts.rowid WHERE entries_fts MATCH ?{space_sql}"
             " ORDER BY score LIMIT ?",
             (query, *([space_id] if space_id else []), limit),
         ):
-            scored.append((r["score"], SearchHit("entry", r["id"], r["title"], r["snip"])))
+            scored.append((r["score"], SearchHit("entry", r["id"], r["title"], r["snip"], r["space_id"],
+                                                 r["project_id"], entry_date=r["entry_date"])))
         task_sql = space_sql.replace("e.", "t.") + ("" if include_done_tasks else " AND t.status <> 'done'")
         for r in self.conn.execute(
-            "SELECT t.id, t.title, snippet(tasks_fts, -1, '[', ']', '…', 12) AS snip, bm25(tasks_fts) AS score"
+            "SELECT t.id, t.title, t.space_id, t.project_id, t.status,"
+            " snippet(tasks_fts, -1, '[', ']', '…', 12) AS snip, bm25(tasks_fts) AS score"
             f" FROM tasks_fts JOIN tasks t ON t.rid = tasks_fts.rowid WHERE tasks_fts MATCH ?{task_sql}"
             " ORDER BY score LIMIT ?",
             (query, *([space_id] if space_id else []), limit),
         ):
-            scored.append((r["score"], SearchHit("task", r["id"], r["title"], r["snip"])))
+            scored.append((r["score"], SearchHit("task", r["id"], r["title"], r["snip"], r["space_id"],
+                                                 r["project_id"], status=r["status"])))
         scored.sort(key=lambda item: item[0])
         return [hit for _, hit in scored[:limit]]
 

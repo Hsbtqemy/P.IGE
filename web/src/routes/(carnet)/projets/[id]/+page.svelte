@@ -423,7 +423,7 @@
 		<p>{loadError}</p>
 	{:else if project}
 		<header>
-			<span class="crumbs">{spaceOf(project.space_id)?.name}{#if project.parent_id} › {projectOf(project.parent_id)?.name}{/if}</span>
+			<span class="crumbs">{spaceOf(project.space_id)?.name}{#if project.parent_id}{' › '}{projectOf(project.parent_id)?.name}{/if}</span>
 			{#if editingName}
 				<input
 					id="project-name"
