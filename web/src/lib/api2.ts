@@ -169,6 +169,17 @@ export interface Target {
 	task_id?: string | null;
 }
 
+export interface SearchHit {
+	kind: 'entry' | 'task';
+	id: string;
+	title: string;
+	snippet: string;
+	space_id: string;
+	project_id: string | null;
+	entry_date: string | null;
+	status: TaskStatus | null;
+}
+
 export interface Tree {
 	spaces: (Space & { projects: Project[] })[];
 	pinned_tags: Tag[];
@@ -238,6 +249,7 @@ export const v2 = {
 	day: (day: string, tz: string) => request<DayReport>('GET', `/api/v2/days/${day}?tz=${encodeURIComponent(tz)}`),
 	validateDay: (day: string, tz: string) =>
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),
+	search: (text: string, limit = 20) => request<SearchHit[]>('GET', `/api/v2/search?${q({ q: text, limit })}`),
 	tasksInProgress: () => request<Task[]>('GET', '/api/v2/tasks/in-progress'),
 	personView: (id: string) => request<PersonView>('GET', `/api/v2/people/${encodeURIComponent(id)}`),
 	updatePerson: (id: string, patch: PersonPatch) => request<PersonView>('PATCH', `/api/v2/people/${id}`, patch),

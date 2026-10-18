@@ -193,6 +193,11 @@ def test_search_endpoint(client, tree):
     ok(client.post("/api/v2/tasks", json={"title": "Définir les métadonnées", "project_id": tree["dico"]["id"]}), 201)
     hits = ok(client.get("/api/v2/search?q=metadonnees"))
     assert hits[0]["kind"] == "task"
+    assert hits[0]["project_id"] == tree["dico"]["id"] and hits[0]["status"] == "open"
+    ok(client.post("/api/v2/entries", json={
+        "entry_date": "2026-03-12", "project_id": tree["dico"]["id"], "body": "Réunion sur les métadonnées"}), 201)
+    entry = next(h for h in ok(client.get("/api/v2/search?q=metadonnees")) if h["kind"] == "entry")
+    assert entry["entry_date"] == "2026-03-12"
     assert client.get("/api/v2/search?q=").status_code == 422
 
 
