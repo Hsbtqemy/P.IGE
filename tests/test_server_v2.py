@@ -171,6 +171,24 @@ def test_people_tags_and_pinning(client, tree):
     assert [x["id"] for x in ok(client.get(f"/api/v2/people?tag_id={tag_id}"))] == [p["id"]]
 
 
+def test_tag_list_and_tag_page(client, tree):
+    p = ok(client.post("/api/v2/people", json={"name": "Brunet Maréva"}), 201)
+    ok(client.patch(f"/api/v2/people/{p['id']}", json={"tags": ["doctorant·es"]}))
+    task = ok(client.post("/api/v2/tasks", json={
+        "title": "Relire", "project_id": tree["dico"]["id"], "tags": ["doctorant·es", "Urgent"]}), 201)
+    done = ok(client.post("/api/v2/tasks", json={"title": "Fait", "project_id": tree["dico"]["id"], "tags": ["Urgent"]}), 201)
+    ok(client.patch(f"/api/v2/tasks/{done['id']}", json={"status": "done"}))
+    tags = ok(client.get("/api/v2/tags"))
+    by_name = {t["name"]: t for t in tags}
+    assert by_name["doctorant·es"]["uses"] == 2 and by_name["Urgent"]["uses"] == 1  # done tasks are not counted
+    ok(client.patch(f"/api/v2/tags/{by_name['Urgent']['id']}", json={"pinned": True}))
+    assert ok(client.get("/api/v2/tags"))[0]["name"] == "Urgent"  # pinned first
+    page = ok(client.get(f"/api/v2/tags/{by_name['doctorant·es']['id']}"))
+    assert [x["id"] for x in page["people"]] == [p["id"]]
+    assert [x["id"] for x in page["tasks"]] == [task["id"]]
+    assert client.get("/api/v2/tags/" + "0" * 32).status_code == 404
+
+
 def test_search_endpoint(client, tree):
     ok(client.post("/api/v2/tasks", json={"title": "Définir les métadonnées", "project_id": tree["dico"]["id"]}), 201)
     hits = ok(client.get("/api/v2/search?q=metadonnees"))

@@ -71,8 +71,31 @@ export interface Task {
 	waiting_on: string | null;
 	due_date: string | null;
 	done_at?: string | null;
+	status_since?: string;
 	steps_done: number;
 	steps_total: number;
+}
+
+export interface PersonView extends Person {
+	note: string | null;
+	tags: Tag[];
+	last_exchange: string | null;
+	waiting_on: Task[];
+	involved_in: Task[];
+}
+
+export interface PersonPatch {
+	display_name?: string;
+	email?: string | null;
+	organisation?: string | null;
+	role?: string | null;
+	note?: string | null;
+	tags?: string[];
+}
+
+export interface TagView extends Tag {
+	people: Person[];
+	tasks: Task[];
 }
 
 export interface Step {
@@ -216,6 +239,13 @@ export const v2 = {
 	validateDay: (day: string, tz: string) =>
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),
 	tasksInProgress: () => request<Task[]>('GET', '/api/v2/tasks/in-progress'),
+	personView: (id: string) => request<PersonView>('GET', `/api/v2/people/${encodeURIComponent(id)}`),
+	updatePerson: (id: string, patch: PersonPatch) => request<PersonView>('PATCH', `/api/v2/people/${id}`, patch),
+	deletePerson: (id: string) => request<void>('DELETE', `/api/v2/people/${id}`),
+	peopleWithTag: (tagId: string) => request<Person[]>('GET', `/api/v2/people?tag_id=${tagId}`),
+	tags: () => request<Tag[]>('GET', '/api/v2/tags'),
+	tag: (id: string) => request<TagView>('GET', `/api/v2/tags/${encodeURIComponent(id)}`),
+	pinTag: (id: string, pinned: boolean) => request<Tag>('PATCH', `/api/v2/tags/${id}`, { pinned }),
 	person: (name: string) => request<Person>('POST', '/api/v2/people', { name }),
 	tree: () => request<Tree>('GET', '/api/v2/tree'),
 	people: () => request<Person[]>('GET', '/api/v2/people'),

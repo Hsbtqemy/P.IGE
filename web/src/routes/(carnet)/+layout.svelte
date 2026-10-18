@@ -66,14 +66,21 @@
 						{#if carnet.timers.length}<span class="running" title="Minuteurs en cours">● {carnet.timers.length}</span>{/if}
 					</a>
 					<span class="soon" title="Bientôt">Tâches</span>
-					<span class="soon" title="Bientôt">Personnes</span>
+					<a href="/personnes" aria-current={path.startsWith('/personnes') ? 'page' : undefined}>
+						<svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5M16 4.8a3.5 3.5 0 0 1 0 6.4M18.5 14.8c1.7.8 2.7 2.5 3 5.2" /></svg>
+						Personnes
+					</a>
+					<a href="/etiquettes" aria-current={path.startsWith('/etiquettes') ? 'page' : undefined}>
+						<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16" /></svg>
+						Étiquettes
+					</a>
 					<span class="soon" title="Bientôt">Agenda</span>
 				</nav>
 				{#if carnet.tree?.pinned_tags.length}
 					<div class="group">
 						<span class="label">Étiquettes épinglées</span>
 						{#each carnet.tree.pinned_tags as tag (tag.id)}
-							<span class="pin"><b aria-hidden="true">#</b>{tag.name}<small>{tag.uses}</small></span>
+							<a class="pin" href="/etiquettes/{tag.id}" aria-current={path === `/etiquettes/${tag.id}` ? 'page' : undefined}><b aria-hidden="true">#</b>{tag.name}<small>{tag.uses}</small></a>
 						{/each}
 					</div>
 				{/if}
@@ -197,6 +204,14 @@
 		align-items: center;
 		padding: 0 8px;
 		font-size: 0.875rem;
+	}
+	.pin {
+		text-decoration: none;
+		border-radius: 6px;
+	}
+	.pin[aria-current='page'] {
+		font-weight: 700;
+		background: var(--soft);
 	}
 	.pin b {
 		color: var(--accent);

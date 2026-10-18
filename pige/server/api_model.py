@@ -600,6 +600,18 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         store.delete_person(person_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+    @router.get("/tags")
+    def tags() -> list[dict[str, Any]]:
+        return [{**_out(tag), "uses": uses} for tag, uses in store.list_tags()]
+
+    @router.get("/tags/{tag_id}")
+    def get_tag(tag_id: IdPath) -> dict[str, Any]:
+        return {
+            **_out(store.get_tag(tag_id)),
+            "people": _out(store.list_people(tag_id)),
+            "tasks": _out(store.tasks_for_tag(tag_id)),
+        }
+
     @router.patch("/tags/{tag_id}")
     def update_tag(tag_id: IdPath, body: TagPatch) -> dict[str, Any]:
         return _out(store.set_tag_pinned(tag_id, body.pinned))
