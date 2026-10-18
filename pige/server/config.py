@@ -30,6 +30,15 @@ class Settings:
     session_days: int = 30
     sessions_not_before: int = 0
     timezone: str = "Europe/Paris"
+    # Address the browser shows (https://pige.example.org): needed for passkeys, which are
+    # bound to the site name. Without it, sign-in stays password only.
+    public_origin: str | None = None
+
+    @property
+    def passkey_rp_id(self) -> str | None:
+        if not self.public_origin:
+            return None
+        return self.public_origin.split("://", 1)[1].split(":", 1)[0]
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -61,6 +70,12 @@ class Settings:
             ZoneInfo(timezone)
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ConfigError(f"PIGE_TIMEZONE: unknown time zone {timezone!r}") from exc
+        origin = env.get("PIGE_PUBLIC_ORIGIN", "").strip().rstrip("/").lower()
+        if origin and not re.fullmatch(r"https://[a-z0-9.-]+(:\d+)?|http://localhost(:\d+)?", origin):
+            raise ConfigError(
+                "PIGE_PUBLIC_ORIGIN: expected the site address, e.g. https://pige.example.org "
+                "(http only for localhost)"
+            )
         return cls(
             data_dir=Path(required("PIGE_DATA_DIR")).expanduser(),
             password_hash=password_hash,
@@ -71,4 +86,5 @@ class Settings:
             session_days=int(env.get("PIGE_SESSION_DAYS", "30")),
             sessions_not_before=int(env.get("PIGE_SESSIONS_NOT_BEFORE", "0")),
             timezone=timezone,
+            public_origin=origin or None,
         )

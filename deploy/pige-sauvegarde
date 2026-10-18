@@ -7,13 +7,17 @@ DAY=$(date +%F)
 mkdir -p "$DEST"
 chmod 700 "$DEST"
 # SQLite's own backup: a consistent copy even while the service writes.
-/opt/pige/venv/bin/python - "$DEST/pige-$DAY.sqlite3" <<'PY'
+# pige.sqlite3: the data; auth.sqlite3: signed-in devices and passkeys (public keys only).
+for NAME in pige auth; do
+  [ -f "/var/lib/pige/data/$NAME.sqlite3" ] || continue
+  /opt/pige/venv/bin/python - "/var/lib/pige/data/$NAME.sqlite3" "$DEST/$NAME-$DAY.sqlite3" <<'PY'
 import sqlite3, sys
-src = sqlite3.connect("/var/lib/pige/data/pige.sqlite3")
-dst = sqlite3.connect(sys.argv[1])
+src = sqlite3.connect(sys.argv[1])
+dst = sqlite3.connect(sys.argv[2])
 src.backup(dst)
 dst.close(); src.close()
 PY
+done
 # Legacy JSON data (current web app, Thunderbird extension).
-tar czf "$DEST/json-$DAY.tgz" -C /var/lib/pige/data --exclude='pige.sqlite3*' --exclude='.pige.lock' .
+tar czf "$DEST/json-$DAY.tgz" -C /var/lib/pige/data --exclude='*.sqlite3*' --exclude='.pige.lock' --exclude='avant-import' .
 find "$DEST" -type f -mtime +14 -delete

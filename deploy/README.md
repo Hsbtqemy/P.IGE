@@ -148,11 +148,27 @@ sudo -u pige sh -c 'export PATH=/opt/pige/node/bin:$PATH; cd /opt/pige/app/web &
 sudo systemctl restart pige
 ```
 
+## Clés d'accès (passkeys)
+
+Elles remplacent le mot de passe sur les appareils qui les gèrent (Touch ID, Face ID,
+Windows Hello, téléphone Android). Une clé est liée au nom du site : indiquer son adresse
+exacte dans l'environnement, une fois.
+
+```sh
+grep -q '^PIGE_PUBLIC_ORIGIN=' /etc/pige/pige.env \
+  || echo 'PIGE_PUBLIC_ORIGIN=https://pige.example.org' | sudo tee -a /etc/pige/pige.env
+sudo systemctl restart pige
+```
+
+Ensuite, dans l'interface : **Réglages › Ajouter une clé d'accès sur cet appareil**, sur
+chaque appareil (une clé créée sur l'iPhone sert aussi sur l'iPad et le Mac si le
+trousseau iCloud est actif). Le mot de passe reste possible.
+
 ## Limites connues de la preuve de concept
 
-- « Se déconnecter » efface la session sur l'appareil, mais un cookie volé resterait
-  valable jusqu'à son expiration. Pour fermer toutes les sessions : changer le mot de
-  passe, ou régler `PIGE_SESSIONS_NOT_BEFORE` (voir `pige.env.example`), puis redémarrer.
+- Les sessions sont enregistrées côté serveur (`auth.sqlite3`) : « Se déconnecter » et
+  « Réglages › Appareils connectés » les ferment vraiment. En dernier recours : changer
+  le mot de passe, ou régler `PIGE_SESSIONS_NOT_BEFORE`, puis redémarrer.
 - Le serveur et l'application de bureau Tkinter ne doivent pas écrire dans le même
   dossier de données : ils ne se verrouillent pas encore l'un l'autre (étape 2 du plan).
 

@@ -107,24 +107,34 @@ class SessionSigner:
     def _sign(self, payload: str) -> str:
         return _b64e(hmac.new(self._key, payload.encode("ascii"), hashlib.sha256).digest())
 
-    def issue(self, now: float | None = None) -> str:
+    def issue(self, session_id: str = "", now: float | None = None) -> str:
+        """A signed cookie value carrying ``session_id`` (the device's session, see security.py)."""
         issued = int(now if now is not None else time.time())
-        body = _b64e(json.dumps({"iat": issued, "nonce": secrets.token_hex(8)}).encode("utf-8"))
+        payload = {"iat": issued, "sid": session_id, "nonce": secrets.token_hex(8)}
+        body = _b64e(json.dumps(payload).encode("utf-8"))
         return f"{body}.{self._sign(body)}"
 
-    def is_valid(self, value: str | None, now: float | None = None) -> bool:
+    def read(self, value: str | None, now: float | None = None) -> dict[str, object] | None:
+        """The payload of a valid, unexpired cookie value, else None."""
         if not value or value.count(".") != 1:
-            return False
+            return None
         body, signature = value.split(".")
         try:
             if not hmac.compare_digest(signature.encode("ascii"), self._sign(body).encode("ascii")):
-                return False
+                return None
             payload = json.loads(_b64d(body))
             issued = int(payload["iat"])
         except (ValueError, KeyError, TypeError, UnicodeError):
-            return False
+            return None
+        if not isinstance(payload, dict):
+            return None
         current = now if now is not None else time.time()
-        return issued >= self.not_before and 0 <= current - issued <= self.max_age_seconds
+        if issued >= self.not_before and 0 <= current - issued <= self.max_age_seconds:
+            return payload
+        return None
+
+    def is_valid(self, value: str | None, now: float | None = None) -> bool:
+        return self.read(value, now) is not None
 
 
 @dataclass
