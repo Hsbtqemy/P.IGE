@@ -118,7 +118,7 @@
 				<details class="group spaces" open={wide}>
 					<summary class="label">Espaces et projets</summary>
 					{#each carnet.tree?.spaces ?? [] as space (space.id)}
-						<span class="space">{space.name}</span>
+						<a class="space" href="/espaces/{space.id}" aria-current={path === `/espaces/${space.id}` ? 'page' : undefined}>{space.name}</a>
 						{#each space.projects as project (project.id)}
 							<a
 								class="project"
@@ -307,11 +307,19 @@
 	}
 	.space {
 		display: block;
+		text-decoration: none;
+		border-radius: 6px;
 		margin-top: 12px;
 		padding: 0 8px 2px;
 		font-size: 0.8125rem;
 		font-weight: 700;
 		letter-spacing: 0.01em;
+	}
+	.space:hover {
+		background: var(--softer);
+	}
+	.space[aria-current='page'] {
+		background: var(--soft);
 	}
 	.space:first-of-type {
 		margin-top: 4px;

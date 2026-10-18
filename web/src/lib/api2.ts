@@ -277,6 +277,7 @@ export const v2 = {
 	people: () => request<Person[]>('GET', '/api/v2/people'),
 	timeline: (params: {
 		day?: string;
+		space_id?: string;
 		project_id?: string;
 		person_id?: string;
 		tag_id?: string;
@@ -287,6 +288,10 @@ export const v2 = {
 	journalDays: (month: string) => request<string[]>('GET', `/api/v2/journal/days?month=${month}`),
 	createEntry: (entry: NewEntry) => request<Entry>('POST', '/api/v2/entries', entry),
 	updateEntry: (id: string, patch: EntryPatch) => request<Entry>('PATCH', `/api/v2/entries/${id}`, patch),
+	spaceTasks: (id: string) => request<Task[]>('GET', `/api/v2/spaces/${encodeURIComponent(id)}/tasks`),
+	renameSpace: (id: string, name: string) => request<Space>('PATCH', `/api/v2/spaces/${encodeURIComponent(id)}`, { name }),
+	moveTask: (id: string, to: { project_id?: string | null; space_id?: string | null }) =>
+		request<TaskView>('POST', `/api/v2/tasks/${id}/move`, to),
 	moveEntry: (id: string, to: { project_id?: string | null; space_id?: string | null }) =>
 		request<Entry>('POST', `/api/v2/entries/${id}/move`, to),
 	entry: (id: string) => request<Entry>('GET', `/api/v2/entries/${encodeURIComponent(id)}`),
