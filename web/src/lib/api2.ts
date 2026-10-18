@@ -107,6 +107,45 @@ export interface ProjectPatch {
 /** Relative position in a list: exactly one of the two. */
 export type Place = { before: string } | { after: string };
 
+export type OverlapMode = 'shared' | 'both' | 'exclusive';
+
+export interface TimeBlock {
+	id: string;
+	space_id: string;
+	project_id: string | null;
+	task_id: string | null;
+	entry_id: string | null;
+	start_at: string;
+	end_at: string | null;
+	source: 'timer' | 'agenda' | 'manual';
+	overlap_mode: OverlapMode;
+	note: string | null;
+	validated: boolean;
+}
+
+export interface CountedBlock {
+	block: TimeBlock;
+	start: string;
+	end: string;
+	counted_seconds: number;
+	running: boolean;
+}
+
+export interface DayReport {
+	day: string;
+	presence_seconds: number;
+	by_space: Record<string, number>;
+	by_project: Record<string, number>;
+	blocks: CountedBlock[];
+	stale_timers: TimeBlock[];
+}
+
+export interface Target {
+	project_id?: string | null;
+	space_id?: string | null;
+	task_id?: string | null;
+}
+
 export interface Tree {
 	spaces: (Space & { projects: Project[] })[];
 	pinned_tags: Tag[];
@@ -163,6 +202,20 @@ export const v2 = {
 	updateStep: (id: string, done: boolean) => request<Step>('PATCH', `/api/v2/steps/${id}`, { done }),
 	placeStep: (id: string, place: Place) => request<void>('POST', `/api/v2/steps/${id}/place`, place),
 	deleteStep: (id: string) => request<void>('DELETE', `/api/v2/steps/${id}`),
+	timers: () => request<TimeBlock[]>('GET', '/api/v2/timers'),
+	startTimer: (target: Target & { note?: string | null }) => request<TimeBlock>('POST', '/api/v2/timers', target),
+	stopTimer: (id: string, at?: string) => request<TimeBlock>('POST', `/api/v2/timers/${id}/stop`, at ? { at } : {}),
+	addBlock: (block: Target & { start: string; end: string; note?: string | null; overlap_mode?: OverlapMode }) =>
+		request<TimeBlock>('POST', '/api/v2/blocks', block),
+	updateBlock: (
+		id: string,
+		patch: Target & { start?: string; end?: string | null; note?: string | null; overlap_mode?: OverlapMode }
+	) => request<TimeBlock>('PATCH', `/api/v2/blocks/${id}`, patch),
+	deleteBlock: (id: string) => request<void>('DELETE', `/api/v2/blocks/${id}`),
+	day: (day: string, tz: string) => request<DayReport>('GET', `/api/v2/days/${day}?tz=${encodeURIComponent(tz)}`),
+	validateDay: (day: string, tz: string) =>
+		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),
+	tasksInProgress: () => request<Task[]>('GET', '/api/v2/tasks/in-progress'),
 	person: (name: string) => request<Person>('POST', '/api/v2/people', { name }),
 	tree: () => request<Tree>('GET', '/api/v2/tree'),
 	people: () => request<Person[]>('GET', '/api/v2/people'),

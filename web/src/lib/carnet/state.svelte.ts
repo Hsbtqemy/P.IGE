@@ -1,11 +1,18 @@
 // Shared data of the new interface: the tree (spaces, projects, pinned tags) and known people.
 
 import { ApiError } from '../api.js';
-import { v2, type Person, type Project, type Space, type Tree } from '../api2.js';
+import { v2, type Person, type Project, type Space, type TimeBlock, type Tree } from '../api2.js';
 
-export const carnet = $state<{ tree: Tree | null; people: Person[]; error: string; needsLogin: boolean }>({
+export const carnet = $state<{
+	tree: Tree | null;
+	people: Person[];
+	timers: TimeBlock[];
+	error: string;
+	needsLogin: boolean;
+}>({
 	tree: null,
 	people: [],
+	timers: [],
 	error: '',
 	needsLogin: false
 });
@@ -27,9 +34,10 @@ export function isDay(text: string): boolean {
 }
 
 export async function reload(): Promise<void> {
-	const [tree, people] = await Promise.all([v2.tree(), v2.people()]);
+	const [tree, people, timers] = await Promise.all([v2.tree(), v2.people(), v2.timers()]);
 	carnet.tree = tree;
 	carnet.people = people;
+	carnet.timers = timers;
 	carnet.error = '';
 }
 
@@ -72,4 +80,23 @@ export function longDate(day: string): string {
 		year: day.slice(0, 4) === todayIso().slice(0, 4) ? undefined : 'numeric'
 	});
 	return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The browser's time zone, for day reports. */
+export function timeZone(): string {
+	return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Paris';
+}
+
+/** 5400 -> « 1 h 30 », 300 -> « 5 min ». */
+export function duration(seconds: number): string {
+	const minutes = Math.round(seconds / 60);
+	if (minutes < 60) return `${minutes} min`;
+	const h = Math.floor(minutes / 60);
+	const m = minutes % 60;
+	return m ? `${h} h ${String(m).padStart(2, '0')}` : `${h} h`;
+}
+
+/** Where a timer or block belongs, in words: « Projet » or « Espace ». */
+export function placeName(target: { project_id: string | null; space_id: string }): string {
+	return projectOf(target.project_id)?.name ?? spaceOf(target.space_id)?.name ?? '—';
 }
