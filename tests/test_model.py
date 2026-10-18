@@ -587,3 +587,54 @@ def test_stale_projects_see_activity_in_subprojects(store, tree):
     store.create_entry(entry_date="2026-10-15", project_id=tree["porfavor"].id, title="récent")
     stale = {p.name for p, _ in store.stale_projects(days=30, now=future - timedelta(days=20))}
     assert "Portail des revues" not in stale
+
+
+# ---------------------------------------------------------------- API follow-ups
+
+
+def test_failed_commit_leaves_the_connection_usable(tmp_path):
+    store = ModelStore(tmp_path / "db.sqlite3")  # no WAL: a reader blocks the commit
+    store.conn.execute("PRAGMA busy_timeout = 100")
+    reader = sqlite3.connect(tmp_path / "db.sqlite3")
+    reader.execute("BEGIN")
+    reader.execute("SELECT count(*) FROM spaces").fetchone()  # holds a shared lock
+    with pytest.raises(sqlite3.OperationalError):
+        store.create_space("Bloquée")
+    assert not store.conn.in_transaction
+    reader.rollback()
+    reader.close()
+    assert store.create_space("Ensuite").name == "Ensuite"
+    assert [s.name for s in store.list_spaces()] == ["Ensuite"]
+    store.close()
+
+
+def test_deletes_refuse_non_empty_containers_and_detach_history(store, tree):
+    task = store.create_task("t", project_id=tree["dico"].id, steps=["a"])
+    entry = store.create_entry(entry_date="2026-10-15", task_id=task.id, title="fil")
+    block = store.add_block(at(9), at(10), task_id=task.id)
+    with pytest.raises(InvalidOperationError):
+        store.delete_project(tree["dico"].id)
+    store.delete_task(task.id)
+    assert store.get_entry(entry.id).task_id is None
+    assert store.get_block(block.id).task_id is None
+    person = store.get_or_create_person("Quelqu'un")
+    waiting = store.create_task("w", project_id=tree["porfavor"].id)
+    store.set_task_status(waiting.id, "waiting", waiting_on=person.id)
+    with pytest.raises(InvalidOperationError):
+        store.delete_person(person.id)
+    store.delete_entry(entry.id)
+    store.delete_block(block.id)
+    store.delete_project(tree["dico"].id)
+    with pytest.raises(NotFoundError):
+        store.get_project(tree["dico"].id)
+
+
+def test_counts_and_timeline_paging(store, tree):
+    pid = tree["dico"].id
+    store.create_task("a", project_id=pid)
+    done = store.create_task("b", project_id=pid)
+    store.set_task_status(done.id, "done")
+    assert store.open_task_counts() == {pid: 1} and store.open_task_count(pid) == 1
+    for d in ("2026-01-01", "2026-01-02", "2026-01-03"):
+        store.create_entry(entry_date=d, project_id=pid, title=d)
+    assert [e.title for e in store.timeline(project_id=pid, limit=2, offset=1)] == ["2026-01-02", "2026-01-01"]

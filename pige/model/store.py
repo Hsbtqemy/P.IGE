@@ -39,14 +39,24 @@ class InvalidOperationError(ValueError):
     """The operation breaks a rule of the model."""
 
 
+class ConflictError(InvalidOperationError):
+    """Someone else saved the row in between (stale revision)."""
+
+
 def _new_id() -> str:
     return uuid.uuid4().hex
 
 
 def _aware(moment: datetime, field: str = "datetime") -> datetime:
     if moment.tzinfo is None or moment.utcoffset() is None:
-        raise ValueError(f"{field} must be timezone-aware")
-    return moment.astimezone(timezone.utc)
+        raise InvalidOperationError(f"{field} must be timezone-aware")
+    try:
+        utc = moment.astimezone(timezone.utc)
+    except OverflowError as exc:
+        raise InvalidOperationError(f"{field} is out of range") from exc
+    if not 1900 <= utc.year <= 2200:
+        raise InvalidOperationError(f"{field} is out of range")
+    return utc
 
 
 def _utc(moment: datetime) -> str:
@@ -67,6 +77,30 @@ def _required(value: str | None, field: str) -> str:
     if not cleaned:
         raise InvalidOperationError(f"{field} cannot be empty")
     return cleaned
+
+
+_TRIGGER_MESSAGES = (
+    "parent project not found",
+    "sub-projects cannot have sub-projects",
+    "a project with sub-projects cannot become a sub-project",
+    "sub-project must be in its parent space",
+    "task space must match its project space",
+    "entry space must match its project space",
+    "time block space must match its project space",
+)
+
+
+def _integrity_message(exc: sqlite3.IntegrityError) -> str:
+    """A user-facing message: our own trigger messages, otherwise nothing internal."""
+    text = str(exc)
+    for message in _TRIGGER_MESSAGES:
+        if message in text:
+            return message
+    if "mail_message_id" in text:
+        return "this mail is already recorded"
+    if "FOREIGN KEY" in text:
+        return "a referenced item does not exist"
+    return "this change breaks a rule of the model"
 
 
 def _clean(text: str | None) -> str | None:
@@ -278,27 +312,33 @@ class ModelStore:
             conn.close()
             self._local.conn = None
 
+    def transaction(self) -> Any:
+        """Group several operations into one transaction (``with store.transaction(): ...``)."""
+        return self._tx()
+
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
         """One transaction per operation; a nested operation becomes a savepoint,
         so a failure inside it can be caught without keeping its partial writes."""
         conn = self.conn
         depth: int = self._local.depth
+        if depth == 0 and conn.in_transaction:
+            conn.execute("ROLLBACK")  # left over by an earlier failure: never build on it
         conn.execute("BEGIN IMMEDIATE" if depth == 0 else f"SAVEPOINT sp{depth}")
         self._local.depth = depth + 1
         try:
             yield conn
+            conn.execute("COMMIT" if depth == 0 else f"RELEASE sp{depth}")
         except BaseException:
-            self._local.depth = depth
             if depth == 0:
                 if conn.in_transaction:
                     conn.execute("ROLLBACK")
-            else:
+            elif conn.in_transaction:
                 conn.execute(f"ROLLBACK TO sp{depth}")
                 conn.execute(f"RELEASE sp{depth}")
             raise
-        self._local.depth = depth
-        conn.execute("COMMIT" if depth == 0 else f"RELEASE sp{depth}")
+        finally:
+            self._local.depth = depth
 
     def _one(self, sql: str, params: Sequence[Any] = ()) -> sqlite3.Row | None:
         row: sqlite3.Row | None = self.conn.execute(sql, params).fetchone()
@@ -307,7 +347,7 @@ class ModelStore:
     def _require(self, table: str, row_id: str) -> sqlite3.Row:
         row = self._one(f"SELECT * FROM {table} WHERE id = ?", (row_id,))
         if row is None:
-            raise NotFoundError(f"{table}: {row_id} not found")
+            raise NotFoundError(f"{table.rstrip('s').replace('_', ' ')} not found")
         return row
 
     # ------------------------------------------------------------ ordering
@@ -426,7 +466,7 @@ class ModelStore:
                      _clean(team), position, now, now),
                 )
             except sqlite3.IntegrityError as exc:
-                raise InvalidOperationError(str(exc)) from exc
+                raise InvalidOperationError(_integrity_message(exc)) from exc
             return self.get_project(project_id)
 
     def get_project(self, project_id: str) -> Project:
@@ -482,7 +522,7 @@ class ModelStore:
                 try:
                     self.conn.execute(f"UPDATE projects SET {sets} WHERE id = ?", (*changes.values(), project_id))
                 except sqlite3.IntegrityError as exc:
-                    raise InvalidOperationError(str(exc)) from exc
+                    raise InvalidOperationError(_integrity_message(exc)) from exc
             return self.get_project(project_id)
 
     def move_project(self, project_id: str, *, space_id: str, parent_id: str | None) -> Project:
@@ -499,7 +539,7 @@ class ModelStore:
                     (space_id, parent_id, position, _utc(_now()), project_id),
                 )
             except sqlite3.IntegrityError as exc:
-                raise InvalidOperationError(str(exc)) from exc
+                raise InvalidOperationError(_integrity_message(exc)) from exc
             return self.get_project(project_id)
 
     def reorder_project(self, project_id: str, *, before: str | None = None, after: str | None = None) -> None:
@@ -579,6 +619,15 @@ class ModelStore:
             )
             return self.get_person(person_id)
 
+    def find_or_create_person(self, name: str) -> tuple[Person, bool]:
+        """(person, created): the person with this name, created if unknown."""
+        cleaned = " ".join(name.strip().lstrip("@").split())
+        with self._tx():
+            found = self.find_people(cleaned) if cleaned else []
+            if found:
+                return found[0], False
+            return self.get_or_create_person(cleaned), True
+
     def get_person(self, person_id: str) -> Person:
         return _row_to(Person, self._require("people", person_id))
 
@@ -611,7 +660,7 @@ class ModelStore:
                 try:
                     self.conn.execute(f"UPDATE people SET {sets} WHERE id = ?", (*changes.values(), person_id))
                 except sqlite3.IntegrityError as exc:
-                    raise InvalidOperationError(f"another person already has this e-mail: {exc}") from exc
+                    raise InvalidOperationError("another person already has this e-mail") from exc
             return self.get_person(person_id)
 
     def list_people(self, tag_id: str | None = None) -> list[Person]:
@@ -750,6 +799,8 @@ class ModelStore:
     ) -> Task:
         with self._tx():
             space, project = self._scope_for(project_id=project_id, space_id=space_id)
+            if origin_entry_id is not None:
+                self._require("entries", origin_entry_id)
             task_id = _new_id()
             now = _utc(_now())
             position = self._next_position("tasks", "space_id = ? AND project_id IS ?", (space, project))
@@ -781,16 +832,17 @@ class ModelStore:
     def get_task(self, task_id: str) -> Task:
         found = self._tasks("t.id = ?", (task_id,))
         if not found:
-            raise NotFoundError(f"tasks: {task_id} not found")
+            raise NotFoundError("task not found")
         return found[0]
 
-    def tasks_for_project(self, project_id: str, *, include_done: bool = False) -> list[Task]:
-        """Tasks of a project in manual order (done ones last, most recent first)."""
+    def tasks_for_project(self, project_id: str, *, include_done: bool = False, done_limit: int = 100) -> list[Task]:
+        """Tasks of a project in manual order (then the ``done_limit`` most recently done)."""
         open_tasks = self._tasks("t.project_id = ? AND t.status <> 'done'", (project_id,))
         if not include_done:
             return open_tasks
-        return open_tasks + self._tasks("t.project_id = ? AND t.status = 'done'", (project_id,),
-                                        order="t.done_at DESC")
+        done = self._tasks("t.project_id = ? AND t.status = 'done'", (project_id,),
+                           order=f"t.done_at DESC LIMIT {int(done_limit)}")
+        return open_tasks + done
 
     def tasks_for_space(self, space_id: str) -> list[Task]:
         """Open tasks attached to the space itself (no project)."""
@@ -826,7 +878,7 @@ class ModelStore:
                 try:
                     self.conn.execute(f"UPDATE tasks SET {sets} WHERE id = ?", (*changes.values(), task_id))
                 except sqlite3.IntegrityError as exc:
-                    raise InvalidOperationError(str(exc)) from exc
+                    raise InvalidOperationError(_integrity_message(exc)) from exc
             return self.get_task(task_id)
 
     def set_task_status(self, task_id: str, status: TaskStatus, *, waiting_on: str | None = None) -> Task:
@@ -944,7 +996,7 @@ class ModelStore:
                      _clean(mail_message_id), now, now),
                 )
             except sqlite3.IntegrityError as exc:
-                raise InvalidOperationError(str(exc)) from exc
+                raise InvalidOperationError(_integrity_message(exc)) from exc
             for pid in self._resolve_people(people, person_ids):
                 self.conn.execute("INSERT INTO entry_people(entry_id, person_id) VALUES (?, ?)", (entry_id, pid))
             for tid in self._resolve_tags(tags):
@@ -981,7 +1033,7 @@ class ModelStore:
         with self._tx():
             current = self.get_entry(entry_id)
             if expected_revision is not None and expected_revision != current.revision:
-                raise InvalidOperationError(
+                raise ConflictError(
                     f"entry changed elsewhere (revision {current.revision}, expected {expected_revision})"
                 )
             changes: dict[str, Any] = {}
@@ -1023,13 +1075,13 @@ class ModelStore:
             try:
                 self.conn.execute(f"UPDATE entries SET {sets} WHERE id = ?", (*changes.values(), entry_id))
             except sqlite3.IntegrityError as exc:
-                raise InvalidOperationError(str(exc)) from exc
+                raise InvalidOperationError(_integrity_message(exc)) from exc
             return self.get_entry(entry_id)
 
-    def entry_versions(self, entry_id: str) -> list[EntryVersion]:
+    def entry_versions(self, entry_id: str, *, limit: int = 20) -> list[EntryVersion]:
         """Previous versions, newest first (the current text is in the entry itself)."""
         rows = self.conn.execute(
-            "SELECT * FROM entry_versions WHERE entry_id = ? ORDER BY version DESC", (entry_id,)
+            "SELECT * FROM entry_versions WHERE entry_id = ? ORDER BY version DESC LIMIT ?", (entry_id, int(limit))
         ).fetchall()
         return [_row_to(EntryVersion, r) for r in rows]
 
@@ -1047,9 +1099,15 @@ class ModelStore:
             )
             return self.get_entry(entry_id)
 
+    def _touch_entry(self, entry_id: str) -> None:
+        self.conn.execute(
+            "UPDATE entries SET revision = revision + 1, updated_at = ? WHERE id = ?", (_utc(_now()), entry_id)
+        )
+
     def set_entry_people(self, entry_id: str, *, names: Iterable[str] = (), person_ids: Iterable[str] = ()) -> None:
         with self._tx():
             self._require("entries", entry_id)
+            self._touch_entry(entry_id)
             self.conn.execute("DELETE FROM entry_people WHERE entry_id = ?", (entry_id,))
             for pid in self._resolve_people(names, person_ids):
                 self.conn.execute("INSERT INTO entry_people(entry_id, person_id) VALUES (?, ?)", (entry_id, pid))
@@ -1057,6 +1115,7 @@ class ModelStore:
     def set_entry_tags(self, entry_id: str, tags: Iterable[str]) -> None:
         with self._tx():
             self._require("entries", entry_id)
+            self._touch_entry(entry_id)
             self.conn.execute("DELETE FROM entry_tags WHERE entry_id = ?", (entry_id,))
             for tid in self._resolve_tags(tags):
                 self.conn.execute("INSERT INTO entry_tags(entry_id, tag_id) VALUES (?, ?)", (entry_id, tid))
@@ -1079,6 +1138,7 @@ class ModelStore:
         tag_id: str | None = None,
         day: str | None = None,
         limit: int = 200,
+        offset: int = 0,
     ) -> list[Entry]:
         """Entries, newest first, filtered by any combination of the arguments.
 
@@ -1116,8 +1176,8 @@ class ModelStore:
         sql = "SELECT e.* FROM entries e"
         if where:
             sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY e.entry_date DESC, coalesce(e.start_time, '99:99') DESC, e.created_at DESC LIMIT ?"
-        params.append(int(limit))
+        sql += " ORDER BY e.entry_date DESC, coalesce(e.start_time, '99:99') DESC, e.created_at DESC LIMIT ? OFFSET ?"
+        params += [int(limit), int(offset)]
         out = []
         for r in self.conn.execute(sql, params).fetchall():
             applied = r["decision_applied"]
@@ -1130,6 +1190,125 @@ class ModelStore:
             (person_id,),
         )
         return row[0] if row is not None else None
+
+    # ------------------------------------------------------------ deleting
+
+    def _delete(self, table: str, row_id: str, refusal: str) -> None:
+        with self._tx():
+            self._require(table, row_id)
+            try:
+                self.conn.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
+            except sqlite3.IntegrityError as exc:
+                raise ConflictError(refusal) from exc
+
+    def delete_entry(self, entry_id: str) -> None:
+        """Delete an entry and its versions (time blocks and tasks keep existing, unlinked)."""
+        self._delete("entries", entry_id, "entry cannot be deleted")
+
+    def delete_task(self, task_id: str) -> None:
+        """Delete a task and its steps; its entries and time stay, detached from it."""
+        self._delete("tasks", task_id, "task cannot be deleted")
+
+    def delete_step(self, step_id: str) -> None:
+        self._delete("task_steps", step_id, "step cannot be deleted")
+
+    def delete_block(self, block_id: str) -> None:
+        self._delete("time_blocks", block_id, "time block cannot be deleted")
+
+    def delete_project(self, project_id: str) -> None:
+        """Only an empty project (no sub-project, task, entry or time) can be deleted."""
+        self._delete("projects", project_id, "move or delete what the project contains first")
+
+    def delete_space(self, space_id: str) -> None:
+        self._delete("spaces", space_id, "move or delete what the space contains first")
+
+    def delete_person(self, person_id: str) -> None:
+        """Delete a person; refused while a task is waiting on them."""
+        self._delete("people", person_id, "a task is waiting on this person")
+
+    # ------------------------------------------------------------ counts
+
+    def open_task_counts(self) -> dict[str, int]:
+        """Open (not done) tasks per project id."""
+        rows = self.conn.execute(
+            "SELECT project_id, count(*) AS n FROM tasks WHERE status <> 'done' AND project_id IS NOT NULL"
+            " GROUP BY project_id"
+        ).fetchall()
+        return {r["project_id"]: int(r["n"]) for r in rows}
+
+    def open_task_count(self, project_id: str) -> int:
+        row = self._one("SELECT count(*) FROM tasks WHERE project_id = ? AND status <> 'done'", (project_id,))
+        return int(row[0]) if row is not None else 0
+
+    def people_for_entries(self, entry_ids: Sequence[str]) -> dict[str, list[Person]]:
+        out: dict[str, list[Person]] = {eid: [] for eid in entry_ids}
+        if entry_ids:
+            marks = ",".join("?" for _ in entry_ids)
+            rows = self.conn.execute(
+                f"SELECT ep.entry_id AS entry_id, p.* FROM entry_people ep JOIN people p ON p.id = ep.person_id"
+                f" WHERE ep.entry_id IN ({marks})",
+                list(entry_ids),
+            ).fetchall()
+            for r in rows:
+                out[r["entry_id"]].append(_row_to(Person, r))
+        for people in out.values():
+            people.sort(key=lambda p: fold(p.display_name))
+        return out
+
+    def tags_for_entries(self, entry_ids: Sequence[str]) -> dict[str, list[Tag]]:
+        out: dict[str, list[Tag]] = {eid: [] for eid in entry_ids}
+        if entry_ids:
+            marks = ",".join("?" for _ in entry_ids)
+            rows = self.conn.execute(
+                f"SELECT et.entry_id AS entry_id, t.* FROM entry_tags et JOIN tags t ON t.id = et.tag_id"
+                f" WHERE et.entry_id IN ({marks}) ORDER BY t.name",
+                list(entry_ids),
+            ).fetchall()
+            for r in rows:
+                out[r["entry_id"]].append(_row_to(Tag, r, pinned=bool(r["pinned"])))
+        return out
+
+    def task_people(self, task_id: str) -> list[Person]:
+        rows = self.conn.execute(
+            "SELECT p.* FROM people p JOIN task_people tp ON tp.person_id = p.id WHERE tp.task_id = ?", (task_id,)
+        ).fetchall()
+        return sorted((_row_to(Person, r) for r in rows), key=lambda p: fold(p.display_name))
+
+    def task_tags(self, task_id: str) -> list[Tag]:
+        rows = self.conn.execute(
+            "SELECT t.* FROM tags t JOIN task_tags tt ON tt.tag_id = t.id WHERE tt.task_id = ? ORDER BY t.name",
+            (task_id,),
+        ).fetchall()
+        return [_row_to(Tag, r, pinned=bool(r["pinned"])) for r in rows]
+
+    def last_exchanges(self) -> dict[str, str]:
+        """Date of the latest entry per person id."""
+        rows = self.conn.execute(
+            "SELECT ep.person_id AS pid, max(e.entry_date) AS last FROM entry_people ep"
+            " JOIN entries e ON e.id = ep.entry_id GROUP BY ep.person_id"
+        ).fetchall()
+        return {r["pid"]: r["last"] for r in rows}
+
+    def person_tags(self, person_id: str) -> list[Tag]:
+        rows = self.conn.execute(
+            "SELECT t.* FROM tags t JOIN person_tags pt ON pt.tag_id = t.id WHERE pt.person_id = ? ORDER BY t.name",
+            (person_id,),
+        ).fetchall()
+        return [_row_to(Tag, r, pinned=bool(r["pinned"])) for r in rows]
+
+    def entry_tags(self, entry_id: str) -> list[Tag]:
+        rows = self.conn.execute(
+            "SELECT t.* FROM tags t JOIN entry_tags et ON et.tag_id = t.id WHERE et.entry_id = ? ORDER BY t.name",
+            (entry_id,),
+        ).fetchall()
+        return [_row_to(Tag, r, pinned=bool(r["pinned"])) for r in rows]
+
+    def tasks_for_person(self, person_id: str) -> list[Task]:
+        """Open tasks where this person is involved (not counting « waiting on »)."""
+        return self._tasks(
+            "t.status <> 'done' AND EXISTS (SELECT 1 FROM task_people tp WHERE tp.task_id = t.id AND tp.person_id = ?)",
+            (person_id,),
+        )
 
     # ------------------------------------------------------------ search
 
@@ -1260,7 +1439,7 @@ class ModelStore:
                      _clean(note), _utc(_now())),
                 )
             except sqlite3.IntegrityError as exc:
-                raise InvalidOperationError(str(exc)) from exc
+                raise InvalidOperationError(_integrity_message(exc)) from exc
             return self.get_block(block_id)
 
     def update_block(
@@ -1286,7 +1465,7 @@ class ModelStore:
                      _clean(note) if note is not None else block.note, block_id),
                 )
             except sqlite3.IntegrityError as exc:
-                raise InvalidOperationError(str(exc)) from exc
+                raise InvalidOperationError(_integrity_message(exc)) from exc
             return self.get_block(block_id)
 
     def reassign_block(
@@ -1311,6 +1490,8 @@ class ModelStore:
     @staticmethod
     def _day_window(day: date, tz: tzinfo) -> tuple[datetime, datetime]:
         """A local day as UTC bounds (23 or 25 hours long on clock-change days)."""
+        if not 1900 <= day.year <= 2200:
+            raise InvalidOperationError("day is out of range")
         start = datetime.combine(day, time(0, 0), tzinfo=tz).astimezone(timezone.utc)
         end = datetime.combine(day + timedelta(days=1), time(0, 0), tzinfo=tz).astimezone(timezone.utc)
         return start, end

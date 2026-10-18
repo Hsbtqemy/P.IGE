@@ -10,6 +10,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pige.server.auth import is_password_hash
 
@@ -28,6 +29,7 @@ class Settings:
     cookie_secure: bool = True
     session_days: int = 30
     sessions_not_before: int = 0
+    timezone: str = "Europe/Paris"
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -54,6 +56,11 @@ class Settings:
                 "`python -m pige.server hash-password`, in single quotes"
             )
         web_dir = env.get("PIGE_WEB_DIR", "").strip()
+        timezone = env.get("PIGE_TIMEZONE", "Europe/Paris").strip() or "Europe/Paris"
+        try:
+            ZoneInfo(timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ConfigError(f"PIGE_TIMEZONE: unknown time zone {timezone!r}") from exc
         return cls(
             data_dir=Path(required("PIGE_DATA_DIR")).expanduser(),
             password_hash=password_hash,
@@ -63,4 +70,5 @@ class Settings:
             cookie_secure=env.get("PIGE_COOKIE_SECURE", "1").strip() not in ("0", "false", "no"),
             session_days=int(env.get("PIGE_SESSION_DAYS", "30")),
             sessions_not_before=int(env.get("PIGE_SESSIONS_NOT_BEFORE", "0")),
+            timezone=timezone,
         )
