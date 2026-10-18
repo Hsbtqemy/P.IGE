@@ -395,6 +395,18 @@
 		document.getElementById(`step-${step.id}`)?.focus();
 	}
 
+	async function startTaskTimer(taskId: string) {
+		const timer = await attempt('Minuteur non démarré', () => v2.startTimer({ task_id: taskId }));
+		if (timer) carnet.timers = [...carnet.timers, timer];
+	}
+
+	async function stopTaskTimer(taskId: string) {
+		for (const timer of carnet.timers.filter((t) => t.task_id === taskId)) {
+			const stopped = await attempt('Minuteur non arrêté', () => v2.stopTimer(timer.id));
+			if (stopped) carnet.timers = carnet.timers.filter((t) => t.id !== timer.id);
+		}
+	}
+
 	/** Keep the « 2/5 » of the row in step with the opened task. */
 	function syncSteps() {
 		if (!detail) return;
@@ -582,6 +594,11 @@
 										</div>
 										<div class="actions">
 											<button class="btn" onclick={closeTask}>Fermer</button>
+											{#if carnet.timers.some((t) => t.task_id === detail?.id)}
+												<button class="btn" onclick={() => detail && stopTaskTimer(detail.id)}>■ Arrêter le minuteur</button>
+											{:else}
+												<button class="btn" onclick={() => detail && startTaskTimer(detail.id)}>▶ Démarrer un minuteur</button>
+											{/if}
 											<button class="btn danger" onclick={removeTask}>Supprimer la tâche</button>
 										</div>
 									{/if}
@@ -934,7 +951,11 @@
 	}
 	.actions {
 		display: flex;
-		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.actions .danger {
+		margin-left: auto;
 	}
 	.danger {
 		color: var(--warn);

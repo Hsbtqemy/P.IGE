@@ -60,6 +60,11 @@
 						<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 4h11l3 3v13H5z" /><path d="M8 9h8M8 13h8M8 17h5" /></svg>
 						Journal
 					</a>
+					<a href="/journee/{todayIso()}" aria-current={path.startsWith('/journee') ? 'page' : undefined}>
+						<svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5M9 2h6" /></svg>
+						Ma journée
+						{#if carnet.timers.length}<span class="running" title="Minuteurs en cours">● {carnet.timers.length}</span>{/if}
+					</a>
 					<span class="soon" title="Bientôt">Tâches</span>
 					<span class="soon" title="Bientôt">Personnes</span>
 					<span class="soon" title="Bientôt">Agenda</span>
@@ -156,6 +161,12 @@
 	nav a[aria-current='page'] {
 		font-weight: 700;
 		background: var(--soft);
+	}
+	.running {
+		margin-left: auto;
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--accent);
 	}
 	nav .soon {
 		color: var(--muted);
