@@ -169,12 +169,26 @@ Depuis l'étape 3, le serveur ouvre aussi une base SQLite `pige.sqlite3` dans `P
 Les anciennes routes `/api/tasks` (appli web actuelle, extension Thunderbird) continuent
 d'utiliser les fichiers JSON.
 
-Pour sauvegarder la base sans arrêter le service, utiliser la commande de sauvegarde de SQLite
-plutôt qu'une simple copie :
+### Sauvegarde quotidienne
 
-```bash
-sudo -u pige sqlite3 /var/lib/pige/data/pige.sqlite3 ".backup '/var/lib/pige/sauvegardes/pige-$(date +%F).sqlite3'"
+Une copie simple de `pige.sqlite3` pendant que le service tourne peut être incohérente :
+le script `pige-sauvegarde` utilise la sauvegarde intégrée de SQLite, archive aussi les
+fichiers JSON, et garde 14 jours dans `/var/lib/pige/sauvegardes`.
+
+```sh
+sudo install -m 755 /opt/pige/app/deploy/pige-sauvegarde /usr/local/bin/pige-sauvegarde
+sudo cp /opt/pige/app/deploy/pige-sauvegarde.service /opt/pige/app/deploy/pige-sauvegarde.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now pige-sauvegarde.timer
+sudo systemctl start pige-sauvegarde.service      # une première sauvegarde tout de suite
+sudo ls -l /var/lib/pige/sauvegardes
 ```
+
+Restaurer : arrêter le service, remplacer `pige.sqlite3` par la copie voulue (et supprimer
+`pige.sqlite3-wal` et `pige.sqlite3-shm`), redémarrer.
+
+Ces sauvegardes restent sur le VPS : pour se protéger d'une panne du serveur lui-même,
+les recopier ailleurs de temps en temps (par exemple `scp` vers un autre ordinateur).
 
 Variable facultative : `PIGE_TIMEZONE` (par défaut `Europe/Paris`), qui découpe les journées
 dans les relevés de temps.
