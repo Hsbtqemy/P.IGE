@@ -150,6 +150,7 @@
 		min-height: 32px;
 		padding: 0 8px;
 		border-radius: 8px;
+		font-size: 0.875rem;
 		text-decoration: none;
 	}
 	nav a[aria-current='page'] {
@@ -212,26 +213,35 @@
 		background: rgb(30 35 32 / 0.35);
 	}
 	.space {
-		margin-top: 8px;
+		display: block;
+		margin-top: 12px;
 		padding: 0 8px 2px;
-		font-family: var(--serif);
-		font-weight: 600;
-		border-bottom: 1px solid var(--line);
+		font-size: 0.8125rem;
+		font-weight: 700;
+		letter-spacing: 0.01em;
+	}
+	.space:first-of-type {
+		margin-top: 4px;
 	}
 	.project {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		min-height: 28px;
-		padding: 0 8px 0 18px;
+		padding: 0 8px 0 16px;
 		border-radius: 6px;
-		font-size: 0.875rem;
+		font-size: 0.8125rem;
+		color: var(--muted);
 		text-decoration: none;
 	}
+	.project:hover {
+		color: var(--ink);
+	}
 	.project.sub {
-		padding-left: 34px;
+		padding-left: 30px;
 	}
 	.project[aria-current='page'] {
+		color: var(--ink);
 		font-weight: 700;
 		background: var(--soft);
 	}

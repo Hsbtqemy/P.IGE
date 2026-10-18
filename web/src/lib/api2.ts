@@ -70,9 +70,42 @@ export interface Task {
 	status: TaskStatus;
 	waiting_on: string | null;
 	due_date: string | null;
+	done_at?: string | null;
 	steps_done: number;
 	steps_total: number;
 }
+
+export interface Step {
+	id: string;
+	task_id: string;
+	label: string;
+	done: boolean;
+	position: number;
+}
+
+export interface TaskView extends Task {
+	steps: Step[];
+	people: Person[];
+	tags: Tag[];
+}
+
+export interface TaskPatch {
+	title?: string;
+	note?: string | null;
+	due_date?: string;
+	status?: TaskStatus;
+	waiting_on?: string;
+}
+
+export interface ProjectPatch {
+	name?: string;
+	description?: string | null;
+	team?: string | null;
+	state?: Project['state'];
+}
+
+/** Relative position in a list: exactly one of the two. */
+export type Place = { before: string } | { after: string };
 
 export interface Tree {
 	spaces: (Space & { projects: Project[] })[];
@@ -118,7 +151,19 @@ export interface ProjectView extends Project {
 
 export const v2 = {
 	project: (id: string) => request<ProjectView>('GET', `/api/v2/projects/${encodeURIComponent(id)}`),
-	projectTasks: (id: string) => request<Task[]>('GET', `/api/v2/projects/${encodeURIComponent(id)}/tasks`),
+	projectTasks: (id: string, includeDone = false) =>
+		request<Task[]>('GET', `/api/v2/projects/${encodeURIComponent(id)}/tasks${includeDone ? '?include_done=true' : ''}`),
+	updateProject: (id: string, patch: ProjectPatch) =>
+		request<ProjectView>('PATCH', `/api/v2/projects/${encodeURIComponent(id)}`, patch),
+	task: (id: string) => request<TaskView>('GET', `/api/v2/tasks/${id}`),
+	updateTask: (id: string, patch: TaskPatch) => request<TaskView>('PATCH', `/api/v2/tasks/${id}`, patch),
+	placeTask: (id: string, place: Place) => request<void>('POST', `/api/v2/tasks/${id}/place`, place),
+	deleteTask: (id: string) => request<void>('DELETE', `/api/v2/tasks/${id}`),
+	addStep: (taskId: string, label: string) => request<Step>('POST', `/api/v2/tasks/${taskId}/steps`, { label }),
+	updateStep: (id: string, done: boolean) => request<Step>('PATCH', `/api/v2/steps/${id}`, { done }),
+	placeStep: (id: string, place: Place) => request<void>('POST', `/api/v2/steps/${id}/place`, place),
+	deleteStep: (id: string) => request<void>('DELETE', `/api/v2/steps/${id}`),
+	person: (name: string) => request<Person>('POST', '/api/v2/people', { name }),
 	tree: () => request<Tree>('GET', '/api/v2/tree'),
 	people: () => request<Person[]>('GET', '/api/v2/people'),
 	timeline: (params: { day?: string; project_id?: string; person_id?: string; tag_id?: string; limit?: number }) =>
