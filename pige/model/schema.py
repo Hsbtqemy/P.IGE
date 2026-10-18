@@ -312,6 +312,8 @@ MIGRATIONS: tuple[str, ...] = (
         active        INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
         last_sync     TEXT,
         last_error    TEXT,
+        last_attempt  TEXT,
+        failures      INTEGER NOT NULL DEFAULT 0,
         created_at    TEXT NOT NULL
     );
 

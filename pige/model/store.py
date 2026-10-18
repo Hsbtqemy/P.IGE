@@ -286,6 +286,8 @@ class Calendar:
     active: bool
     last_sync: str | None
     last_error: str | None
+    last_attempt: str | None
+    failures: int
     created_at: str
 
 
@@ -1470,13 +1472,19 @@ class ModelStore:
         self._delete("calendars", calendar_id, "calendar cannot be deleted")
 
     def calendar_synced(self, calendar_id: str, *, error: str | None = None) -> None:
+        """Record a sync attempt: success resets the failure count, an error increments it."""
+        now = _utc(_now())
         with self._tx():
             if error is None:
                 self.conn.execute(
-                    "UPDATE calendars SET last_sync = ?, last_error = NULL WHERE id = ?", (_utc(_now()), calendar_id)
+                    "UPDATE calendars SET last_sync = ?, last_attempt = ?, last_error = NULL, failures = 0 WHERE id = ?",
+                    (now, now, calendar_id),
                 )
             else:
-                self.conn.execute("UPDATE calendars SET last_error = ? WHERE id = ?", (error[:500], calendar_id))
+                self.conn.execute(
+                    "UPDATE calendars SET last_attempt = ?, last_error = ?, failures = failures + 1 WHERE id = ?",
+                    (now, error[:500], calendar_id),
+                )
 
     def _event(self, row: sqlite3.Row) -> CalendarEvent:
         return _row_to(CalendarEvent, row, all_day=bool(row["all_day"]), attendees=json.loads(row["attendees"] or "[]"))
@@ -1516,12 +1524,13 @@ class ModelStore:
                     )
                     added += 1
             day_start, day_end = window_start[:10], window_end[:10]
+            # Everything overlapping the window that the feed no longer has (already-removed ones aside).
             stale = [
                 r["id"]
                 for r in self.conn.execute(
-                    "SELECT id FROM calendar_events WHERE calendar_id = ?"
-                    " AND ((all_day = 0 AND start_at >= ? AND start_at < ?) OR (all_day = 1 AND start_at >= ? AND start_at < ?))",
-                    (calendar_id, window_start, window_end, day_start, day_end),
+                    "SELECT id FROM calendar_events WHERE calendar_id = ? AND status IS NOT 'removed'"
+                    " AND ((all_day = 0 AND start_at < ? AND end_at > ?) OR (all_day = 1 AND start_at < ? AND end_at > ?))",
+                    (calendar_id, window_end, window_start, day_end, day_start),
                 ).fetchall()
                 if r["id"] not in seen
             ]

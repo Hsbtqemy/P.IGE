@@ -76,10 +76,8 @@
 				project_id: form.project || null
 			};
 			if (form.url.trim()) patch.url = form.url.trim();
-			if (form.username.trim()) {
-				patch.username = form.username.trim();
-				if (form.password) patch.password = form.password;
-			}
+			if (form.username.trim()) patch.username = form.username.trim();
+			if (form.password) patch.password = form.password; // a new password alone keeps the identifier
 			const r = await v2.updateCalendar(c.id, patch);
 			editing = null;
 			form = empty();
@@ -173,7 +171,7 @@
 							<div class="row">
 								<button class="btn primary" disabled={busy}>Enregistrer</button>
 								<button type="button" class="btn" onclick={() => ((editing = null), (form = empty()))}>Annuler</button>
-								{#if c.has_password}<button type="button" class="btn" onclick={() => removeCredentials(c)}>Retirer l’identifiant</button>{/if}
+								<button type="button" class="btn" onclick={() => removeCredentials(c)}>Retirer l’identifiant</button>
 							</div>
 						</form>
 					{:else}

@@ -6,6 +6,7 @@ signed in with a session; reading the agenda and taking notes also work with a t
 
 from __future__ import annotations
 
+import urllib.parse
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -55,6 +56,7 @@ def calendar_view(c: Calendar) -> dict[str, Any]:
     return {
         "id": c.id, "name": c.name, "color": c.color, "host": c.source_host, "has_password": c.has_password,
         "project_id": c.project_id, "active": c.active, "last_sync": c.last_sync, "last_error": c.last_error,
+        "failures": c.failures,
     }
 
 
@@ -130,6 +132,9 @@ def build_agenda_router(
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
             username = source.username
             password = source.password
+            moved = urllib.parse.urlsplit(url).hostname != urllib.parse.urlsplit(source.url).hostname
+            if moved and not sent & {"username", "password"}:
+                username = password = None  # never send the old credentials to another server
             if "username" in sent:
                 username = (body.username or "").strip() or None
                 if username is None:

@@ -247,3 +247,113 @@ def test_events_that_disappear_are_removed_unless_used(app):
     assert [(e["title"], e["status"]) for e in left] == [("Point FoReLLIS", "removed")]  # kept: a note was taken
     assert c.delete(f"/api/v2/calendars/{cid}", headers=WEB).status_code == 204
     assert c.get("/api/v2/agenda?start=2026-10-19&days=7").json() == []
+
+
+# ---------------------------------------------------------------- review follow-ups
+
+
+def test_odd_addresses_are_encoded_or_refused():
+    assert normalize_url("https://cal.univ.fr/mon agenda.ics") == "https://cal.univ.fr/mon%20agenda.ics"
+    assert normalize_url("https://cal.univ.fr/é.ics") == "https://cal.univ.fr/%C3%A9.ics"
+    with pytest.raises(CalendarError):
+        normalize_url("https://cal.univ.fr/a\nb.ics")
+
+
+def test_unexpected_errors_are_recorded_without_their_text(app, caplog):
+    c = web(app)
+
+    def broken(source):
+        raise RuntimeError(f"boom {source.url}")
+
+    app.state.agenda.fetcher = broken
+    r = c.post("/api/v2/calendars", json={"name": "x", "url": "https://cal.univ.fr/secret-token.ics"}, headers=WEB)
+    assert r.status_code == 201 and r.json()["sync"] == {"ok": False, "error": "Lecture impossible (RuntimeError)."}
+    assert "secret-token" not in caplog.text and "secret-token" not in str(c.get("/api/v2/calendars").json())
+
+
+def test_failing_calendars_back_off():
+    from pige.server.agenda import retry_delay
+
+    assert [retry_delay(n).total_seconds() / 60 for n in range(6)] == [15, 15, 30, 60, 120, 240]
+    assert retry_delay(20).total_seconds() == 6 * 3600
+
+
+def test_background_sync_respects_the_back_off(app):
+    c = web(app)
+    calls = []
+
+    def failing(source):
+        calls.append(source.url)
+        raise CalendarError("Accès refusé par le serveur du calendrier : vérifie l'identifiant et le mot de passe.")
+
+    app.state.agenda.fetcher = failing
+    c.post("/api/v2/calendars", json={"name": "x", "url": "https://cal.univ.fr/a.ics", "username": "h", "password": "p"},
+           headers=WEB)
+    assert len(calls) == 1
+    agenda = app.state.agenda
+    later = datetime.now(timezone.utc)
+    from datetime import timedelta
+
+    agenda.sync_due(now=later + timedelta(minutes=5))  # too early after a failure
+    assert len(calls) == 1
+    agenda.sync_due(now=later + timedelta(minutes=16))  # first retry after 15 min
+    assert len(calls) == 2
+    agenda.sync_due(now=later + timedelta(minutes=30))  # second failure: wait 30 min from then
+    assert len(calls) == 2
+    assert c.get("/api/v2/calendars").json()[0]["failures"] == 2
+
+
+def test_a_moved_occurrence_keeps_its_note(app):
+    c, project, _paul, week = _agenda_with_meeting(app)
+    meeting = next(e for e in week if e["title"] == "Point FoReLLIS")
+    c.post(f"/api/v2/agenda/{meeting['id']}/note", json={"project_id": project["id"]}, headers=WEB)
+    moved = ICS.replace(b"END:VCALENDAR", b"""BEGIN:VEVENT
+UID:weekly@x
+RECURRENCE-ID;TZID=Europe/Paris:20261019T100000
+DTSTART;TZID=Europe/Paris:20261019T160000
+DTEND;TZID=Europe/Paris:20261019T170000
+SUMMARY:Point FoReLLIS (d\\xc3\\xa9plac\\xc3\\xa9)
+END:VEVENT
+END:VCALENDAR""")
+    app.state.feeds["https://cal.univ.fr/hugo.ics"] = moved
+    cid = c.get("/api/v2/calendars").json()[0]["id"]
+    app.state.agenda.sync(cid, now=NOW)
+    day = c.get("/api/v2/agenda?start=2026-10-19&days=1&tz=Europe/Paris").json()
+    points = [e for e in day if e["title"].startswith("Point")]
+    assert len(points) == 1 and points[0]["id"] == meeting["id"] and points[0]["entry_id"]
+    assert points[0]["start"].startswith("2026-10-19T14:00")
+
+
+def test_a_new_server_never_gets_the_old_password(app):
+    c = web(app)
+    seen = []
+
+    def record(source):
+        seen.append(source)
+        return ICS
+
+    app.state.agenda.fetcher = record
+    added = c.post("/api/v2/calendars", json={"name": "x", "url": "https://cal.univ.fr/a.ics", "username": "h", "password": "p"},
+                   headers=WEB).json()
+    c.patch(f"/api/v2/calendars/{added['calendar']['id']}", json={"url": "https://autre.example/a.ics"}, headers=WEB)
+    assert (seen[0].username, seen[0].password) == ("h", "p")
+    assert (seen[1].url, seen[1].username, seen[1].password) == ("https://autre.example/a.ics", None, None)
+    same_host = c.patch(f"/api/v2/calendars/{added['calendar']['id']}", json={"url": "https://autre.example/b.ics",
+                        "username": "h2", "password": "p2"}, headers=WEB).json()
+    assert same_host["calendar"]["has_password"] is True and (seen[2].username, seen[2].password) == ("h2", "p2")
+
+
+def test_too_many_occurrences_are_refused():
+    flood = b"""BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:flood@x
+DTSTART:20261018T000000Z
+DTEND:20261018T000030Z
+RRULE:FREQ=MINUTELY
+SUMMARY:x
+END:VEVENT
+END:VCALENDAR
+"""
+    with pytest.raises(CalendarError, match="trop chargé"):
+        parse_events("cal", flood, NOW, NOW.replace(year=2027), PARIS)

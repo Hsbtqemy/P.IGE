@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import json
 import logging
 import threading
+import time as clock
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -32,10 +34,21 @@ from pige.model import ModelStore
 logger = logging.getLogger(__name__)
 
 MAX_ICS_BYTES = 10 * 1024 * 1024
-TIMEOUT_SECONDS = 30
+TIMEOUT_SECONDS = 30  # per network operation
+TOTAL_SECONDS = 90  # for the whole download
+MAX_OCCURRENCES = 5_000
 WINDOW_PAST = timedelta(days=60)
 WINDOW_FUTURE = timedelta(days=240)
 SYNC_EVERY = timedelta(minutes=15)
+MAX_RETRY_DELAY = timedelta(hours=6)
+
+
+def retry_delay(failures: int) -> timedelta:
+    """After n failures in a row: 15 min, 30 min, 1 h… up to 6 h (a wrong password must not
+    hammer the university server and get the account locked)."""
+    if failures <= 0:
+        return SYNC_EVERY
+    return min(SYNC_EVERY * (2 ** (failures - 1)), MAX_RETRY_DELAY)
 
 
 class CalendarError(Exception):
@@ -81,6 +94,10 @@ class Vault:
 def normalize_url(text: str) -> str:
     """webcal(s):// becomes https://; only https is accepted (http only for localhost tests)."""
     url = text.strip()
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in url):
+        raise CalendarError("Adresse de calendrier invalide (caractère de contrôle).")
+    # Spaces and accents are percent-encoded, as a browser would.
+    url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=%~")
     for prefix in ("webcals://", "webcal://"):
         if url.lower().startswith(prefix):
             url = "https://" + url[len(prefix):]
@@ -130,9 +147,22 @@ def fetch(source: Source) -> bytes:
         token = base64.b64encode(f"{source.username}:{source.password}".encode("utf-8")).decode("ascii")
         headers["Authorization"] = f"Basic {token}"
     opener = urllib.request.build_opener(_SafeRedirects())
+    deadline = clock.monotonic() + TOTAL_SECONDS
     try:
         with opener.open(urllib.request.Request(url, headers=headers), timeout=TIMEOUT_SECONDS) as response:
-            data: bytes = response.read(MAX_ICS_BYTES + 1)
+            chunks: list[bytes] = []
+            size = 0
+            while True:
+                chunk = response.read(64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                size += len(chunk)
+                if size > MAX_ICS_BYTES:
+                    break
+                if clock.monotonic() > deadline:
+                    raise CalendarError(f"Le serveur du calendrier est trop lent ({host}).")
+            data = b"".join(chunks)
     except urllib.error.HTTPError as exc:
         logger.warning("Calendar %s: HTTP %s", host, exc.code)
         if exc.code in (401, 403):
@@ -140,7 +170,8 @@ def fetch(source: Source) -> bytes:
         if exc.code == 404:
             raise CalendarError("Calendrier introuvable à cette adresse (404).") from exc
         raise CalendarError(f"Le serveur du calendrier répond {exc.code}.") from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException, ValueError) as exc:
+        # Never the exception text: it may quote the address path, which holds the private token.
         logger.warning("Calendar %s: network error %s", host, type(exc).__name__)
         raise CalendarError(f"Serveur du calendrier injoignable ({host}).") from exc
     if len(data) > MAX_ICS_BYTES:
@@ -176,66 +207,98 @@ def parse_events(
     import icalendar
     import recurring_ical_events
 
-    try:
+    def occurrences() -> Any:
         cal = icalendar.Calendar.from_ical(data)
-        occurrences = recurring_ical_events.of(cal).between(window_start, window_end)
+        for count, component in enumerate(recurring_ical_events.of(cal).after(window_start)):
+            if count >= MAX_OCCURRENCES:
+                raise CalendarError("Calendrier trop chargé (plus de 5 000 événements sur la période).")
+            begin = component.get("DTSTART")
+            if begin is not None:
+                moment = begin.dt
+                if not isinstance(moment, datetime):
+                    moment = datetime.combine(moment, datetime.min.time(), local_zone)
+                elif moment.tzinfo is None:
+                    moment = moment.replace(tzinfo=local_zone)
+                if moment >= window_end:
+                    return
+            yield component
+
+    out: dict[str, dict[str, Any]] = {}
+    try:
+        for event in occurrences():
+            if event.name != "VEVENT":
+                continue
+            _read_event(event, calendar_id, local_zone, out)
+    except CalendarError:
+        raise
     except Exception as exc:  # malformed feeds raise many different errors
         raise CalendarError(f"Calendrier illisible ({type(exc).__name__}).") from exc
-    out: dict[str, dict[str, Any]] = {}
-    for event in occurrences:
-        if event.name != "VEVENT":
-            continue
-        start = event.get("DTSTART")
-        if start is None:
-            continue
-        start_value = start.dt
-        end_field = event.get("DTEND")
-        end_value = end_field.dt if end_field is not None else None
-        all_day = isinstance(start_value, date) and not isinstance(start_value, datetime)
-        if all_day:
-            first: date = start_value
-            last: date = end_value if isinstance(end_value, date) and not isinstance(end_value, datetime) else first + timedelta(days=1)
-            start_at, end_at = first.isoformat(), max(last, first + timedelta(days=1)).isoformat()
-            key_moment = first.isoformat()
-        else:
-            begin = start_value if start_value.tzinfo else start_value.replace(tzinfo=local_zone)
-            finish = end_value if isinstance(end_value, datetime) else begin + timedelta(hours=1)
-            if finish.tzinfo is None:
-                finish = finish.replace(tzinfo=local_zone)
-            if finish <= begin:
-                finish = begin + timedelta(hours=1)  # no end given: an hour, like most meetings
-            start_at, end_at = _utc_text(begin), _utc_text(finish)
-            key_moment = start_at
-        uid = str(event.get("UID") or "") or hashlib.sha256(f"{start_at}{event.get('SUMMARY')}".encode()).hexdigest()
-        event_id = hashlib.sha256(f"{calendar_id}|{uid}|{key_moment}".encode("utf-8")).hexdigest()[:32]
-        attendees = []
-        raw = event.get("ATTENDEE")
-        for item in raw if isinstance(raw, list) else ([raw] if raw is not None else []):
-            name = str(getattr(item, "params", {}).get("CN", "") or "")
-            attendees.append({"name": name[:120], "email": _address(item).lower()[:200]})
-        organizer = event.get("ORGANIZER")
-        status = _text(event.get("STATUS"), 20)
-        out[event_id] = {
-            "id": event_id,
-            "uid": uid[:500],
-            "start_at": start_at,
-            "end_at": end_at,
-            "all_day": all_day,
-            "title": _text(event.get("SUMMARY"), 300) or "(sans titre)",
-            "location": _text(event.get("LOCATION"), 300),
-            "description": _text(event.get("DESCRIPTION"), 2000),
-            "organizer": _address(organizer).lower()[:200] if organizer is not None else None,
-            "attendees": attendees[:100],
-            "status": status.lower() if status else None,
-        }
     return list(out.values())
+
+
+def _recurrence_key(event: Any, local_zone: Any) -> str:
+    """The occurrence's original date (RECURRENCE-ID): stays the same when one occurrence is moved."""
+    rid = event.get("RECURRENCE-ID")
+    if rid is None:
+        return ""
+    value = rid.dt
+    if isinstance(value, datetime):
+        return _utc_text(value if value.tzinfo else value.replace(tzinfo=local_zone))
+    return value.isoformat()
+
+
+def _read_event(event: Any, calendar_id: str, local_zone: Any, out: dict[str, dict[str, Any]]) -> None:
+    start = event.get("DTSTART")
+    if start is None:
+        return
+    start_value = start.dt
+    end_field = event.get("DTEND")
+    end_value = end_field.dt if end_field is not None else None
+    all_day = isinstance(start_value, date) and not isinstance(start_value, datetime)
+    if all_day:
+        first: date = start_value
+        last: date = end_value if isinstance(end_value, date) and not isinstance(end_value, datetime) else first + timedelta(days=1)
+        start_at, end_at = first.isoformat(), max(last, first + timedelta(days=1)).isoformat()
+    else:
+        begin = start_value if start_value.tzinfo else start_value.replace(tzinfo=local_zone)
+        finish = end_value if isinstance(end_value, datetime) else begin + timedelta(hours=1)
+        if finish.tzinfo is None:
+            finish = finish.replace(tzinfo=local_zone)
+        if finish <= begin:
+            finish = begin + timedelta(hours=1)  # no end given: an hour, like most meetings
+        start_at, end_at = _utc_text(begin), _utc_text(finish)
+    uid = str(event.get("UID") or "") or hashlib.sha256(f"{start_at}{event.get('SUMMARY')}".encode()).hexdigest()
+    # Same meeting, same id: by UID, and for a recurring one by its original date, so a
+    # moved occurrence keeps its notes and time.
+    key = _recurrence_key(event, local_zone)
+    event_id = hashlib.sha256(f"{calendar_id}|{uid}|{key}".encode("utf-8")).hexdigest()[:32]
+    attendees = []
+    raw = event.get("ATTENDEE")
+    for item in raw if isinstance(raw, list) else ([raw] if raw is not None else []):
+        name = str(getattr(item, "params", {}).get("CN", "") or "")
+        attendees.append({"name": name[:120], "email": _address(item).lower()[:200]})
+    organizer = event.get("ORGANIZER")
+    status = _text(event.get("STATUS"), 20)
+    out[event_id] = {
+        "id": event_id,
+        "uid": uid[:500],
+        "start_at": start_at,
+        "end_at": end_at,
+        "all_day": all_day,
+        "title": _text(event.get("SUMMARY"), 300) or "(sans titre)",
+        "location": _text(event.get("LOCATION"), 300),
+        "description": _text(event.get("DESCRIPTION"), 2000),
+        "organizer": _address(organizer).lower()[:200] if organizer is not None else None,
+        "attendees": attendees[:100],
+        "status": status.lower() if status else None,
+    }
 
 
 # ---------------------------------------------------------------- syncing
 
 
 class Agenda:
-    """Syncs the calendars; one sync at a time, also on a timer in the background."""
+    """Syncs the calendars, one sync per calendar at a time, also on a timer in the background."""
 
     def __init__(
         self, store: ModelStore, vault: Vault, local_zone: Any, fetcher: Callable[[Source], bytes] = fetch
@@ -244,21 +307,32 @@ class Agenda:
         self.vault = vault
         self.zone = local_zone
         self.fetcher = fetcher
-        self._lock = threading.Lock()
+        self._locks: dict[str, threading.Lock] = {}
+        self._guard = threading.Lock()
         self._stop = threading.Event()
+
+    def _lock_for(self, calendar_id: str) -> threading.Lock:
+        with self._guard:
+            return self._locks.setdefault(calendar_id, threading.Lock())
 
     def sync(self, calendar_id: str, *, now: datetime | None = None) -> dict[str, int]:
         """Fetch one calendar and store its events; records (and re-raises) a readable error."""
-        calendar = self.store.get_calendar(calendar_id)
         moment = now or datetime.now(timezone.utc)
         start, end = moment - WINDOW_PAST, moment + WINDOW_FUTURE
-        with self._lock:
+        with self._lock_for(calendar_id):
+            calendar = self.store.get_calendar(calendar_id)  # read under the lock: never a stale address
             try:
                 source = self.vault.open(calendar.source_enc)
                 events = parse_events(calendar_id, self.fetcher(source), start, end, self.zone)
             except CalendarError as exc:
                 self.store.calendar_synced(calendar_id, error=str(exc))
                 raise
+            except Exception as exc:
+                # Unknown failure: only its type is kept, never its text (it could quote the address).
+                logger.warning("Calendar %s: unexpected %s", calendar.source_host, type(exc).__name__)
+                error = CalendarError(f"Lecture impossible ({type(exc).__name__}).")
+                self.store.calendar_synced(calendar_id, error=str(error))
+                raise error from None
             counts = self.store.replace_calendar_events(
                 calendar_id, events, window_start=_utc_text(start), window_end=_utc_text(end)
             )
@@ -266,27 +340,29 @@ class Agenda:
             logger.info("Calendar %s synced: %s", calendar.name, counts)
             return counts
 
-    def sync_due(self) -> None:
-        """Sync every active calendar not synced for SYNC_EVERY."""
-        now = datetime.now(timezone.utc)
+    def sync_due(self, now: datetime | None = None) -> None:
+        """Sync every active calendar whose next attempt is due (backing off after failures)."""
+        moment = now or datetime.now(timezone.utc)
         for calendar in self.store.list_calendars():
             if not calendar.active:
                 continue
-            if calendar.last_sync:
-                last = datetime.strptime(calendar.last_sync, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
-                if now - last < SYNC_EVERY:
+            last = calendar.last_attempt or calendar.last_sync
+            if last:
+                when = datetime.strptime(last, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+                if moment - when < retry_delay(calendar.failures):
                     continue
             try:
-                self.sync(calendar.id, now=now)
+                self.sync(calendar.id, now=moment)
             except CalendarError:
                 pass  # recorded on the calendar, shown in Réglages
-            except Exception:  # never let one calendar stop the loop
-                logger.exception("Calendar sync failed")
 
     def start(self) -> None:
         def loop() -> None:
             while not self._stop.wait(60):
-                self.sync_due()
+                try:
+                    self.sync_due()
+                except Exception as exc:  # the loop must survive anything (e.g. database busy)
+                    logger.warning("Calendar loop: %s", type(exc).__name__)
 
         threading.Thread(target=loop, name="pige-agenda", daemon=True).start()
 

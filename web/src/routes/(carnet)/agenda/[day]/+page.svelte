@@ -29,19 +29,23 @@
 			.catch((err) => (message = failure(err, 'Agenda non chargé : ')));
 	});
 
-	function localDay(e: AgendaEvent): string {
-		if (e.all_day) return e.start;
-		const d = new Date(e.start);
-		return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+	function localIso(ms: number): string {
+		return new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+	}
+
+	/** Does the event take place (even partly) on this local day? */
+	function onDay(e: AgendaEvent, iso: string): boolean {
+		if (e.all_day) return e.start <= iso && iso < e.end;
+		const first = localIso(new Date(e.start).getTime());
+		const last = localIso(new Date(e.end).getTime() - 1);
+		return first <= iso && iso <= last;
 	}
 
 	let days = $derived(
 		monday
 			? Array.from({ length: 7 }, (_, i) => {
 					const iso = shiftDay(monday, i);
-					const list = (events ?? []).filter((e) =>
-						e.all_day ? e.start <= iso && iso < e.end : localDay(e) === iso
-					);
+					const list = (events ?? []).filter((e) => onDay(e, iso));
 					return { iso, list };
 				})
 			: []
