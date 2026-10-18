@@ -1,0 +1,8 @@
+[Unit]
+Description=Sauvegarde quotidienne de P.IGE
+
+[Service]
+Type=oneshot
+User=pige
+Group=pige
+ExecStart=/usr/local/bin/pige-sauvegarde
