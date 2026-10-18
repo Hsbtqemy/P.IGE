@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import { ApiError } from '#lib/api.js';
 	import { v2, type Entry, type ProjectView, type Task } from '#lib/api2.js';
-	import { projectOf, spaceOf } from '#lib/carnet/state.svelte.js';
+	import { failure, projectOf, spaceOf } from '#lib/carnet/state.svelte.js';
 
 	let id = $derived(page.params.id ?? '');
 	let project = $state<ProjectView | null>(null);
@@ -24,7 +24,7 @@
 				entries = e;
 			})
 			.catch((err) => {
-				message = err instanceof ApiError && err.status === 404 ? 'Projet introuvable.' : 'Impossible de charger le projet.';
+				message = err instanceof ApiError && err.status === 404 ? 'Projet introuvable.' : failure(err, 'Projet non chargé : ');
 			});
 	});
 
@@ -46,7 +46,7 @@
 			{#if project.description}<p class="desc">{project.description}</p>{/if}
 			{#if project.links.length}
 				<div class="links">
-					{#each project.links as link (link.url)}
+					{#each project.links.filter((l) => /^https?:\/\//i.test(l.url)) as link (link.url)}
 						<a href={link.url} target="_blank" rel="noopener noreferrer">↗ {link.label ?? link.url.replace(/^https?:\/\//, '')}</a>
 					{/each}
 				</div>

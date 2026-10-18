@@ -1,12 +1,30 @@
 // Shared data of the new interface: the tree (spaces, projects, pinned tags) and known people.
 
+import { ApiError } from '../api.js';
 import { v2, type Person, type Project, type Space, type Tree } from '../api2.js';
 
-export const carnet = $state<{ tree: Tree | null; people: Person[]; error: string }>({
+export const carnet = $state<{ tree: Tree | null; people: Person[]; error: string; needsLogin: boolean }>({
 	tree: null,
 	people: [],
-	error: ''
+	error: '',
+	needsLogin: false
 });
+
+/** A user-facing message for a failed call; an expired session asks to sign in again (the page stays). */
+export function failure(err: unknown, prefix = ''): string {
+	if (err instanceof ApiError && err.status === 401) {
+		carnet.needsLogin = true;
+		return 'Session expirée : reconnecte-toi, ton texte est gardé.';
+	}
+	if (err instanceof ApiError && err.status === 0) return `${prefix}hors connexion.`;
+	if (err instanceof ApiError) return `${prefix}${err.message}`;
+	return `${prefix}erreur inattendue.`;
+}
+
+/** A real calendar date (rejects 2026-02-31). */
+export function isDay(text: string): boolean {
+	return /^\d{4}-\d{2}-\d{2}$/.test(text) && shiftDay(text, 0) === text;
+}
 
 export async function reload(): Promise<void> {
 	const [tree, people] = await Promise.all([v2.tree(), v2.people()]);

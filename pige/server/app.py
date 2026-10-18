@@ -81,7 +81,8 @@ class _AppStaticFiles(StaticFiles):
         except StarletteHTTPException as exc:
             fallback = Path(str(self.directory)) / "200.html"
             last = path.rsplit("/", 1)[-1]
-            if exc.status_code == 404 and "." not in last and fallback.is_file():
+            is_page = "." not in last and not path.startswith(("_app/", "api"))
+            if exc.status_code == 404 and is_page and fallback.is_file():
                 return FileResponse(fallback, media_type="text/html")
             raise
 
@@ -258,8 +259,9 @@ def create_app(
 
     app.include_router(build_router(model_store, require_auth, settings.timezone))
 
-    @app.api_route("/api/{path:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
-    def api_not_found(path: str) -> None:
+    @app.api_route("/api", methods=["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"], include_in_schema=False)
+    @app.api_route("/api/{path:path}", methods=["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"])
+    def api_not_found(path: str = "") -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Unknown API route")
 
     if settings.web_dir is not None:

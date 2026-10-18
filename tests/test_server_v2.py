@@ -301,3 +301,7 @@ def test_interface_routes_fall_back_to_the_app_shell(tmp_path):
         assert c.get("/missing.js").status_code == 404
         assert c.get("/app.js").text == "ok"
         assert c.get("/api/nope").status_code == 404
+        assert c.get("/api").status_code == 404
+        assert c.head("/api/v2/tree").status_code == 404  # never the HTML shell, never data
+        assert c.head("/api/nope").status_code == 404
+        assert c.get("/_app/immutable/missing").status_code == 404

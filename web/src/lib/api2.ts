@@ -117,8 +117,8 @@ export interface ProjectView extends Project {
 }
 
 export const v2 = {
-	project: (id: string) => request<ProjectView>('GET', `/api/v2/projects/${id}`),
-	projectTasks: (id: string) => request<Task[]>('GET', `/api/v2/projects/${id}/tasks`),
+	project: (id: string) => request<ProjectView>('GET', `/api/v2/projects/${encodeURIComponent(id)}`),
+	projectTasks: (id: string) => request<Task[]>('GET', `/api/v2/projects/${encodeURIComponent(id)}/tasks`),
 	tree: () => request<Tree>('GET', '/api/v2/tree'),
 	people: () => request<Person[]>('GET', '/api/v2/people'),
 	timeline: (params: { day?: string; project_id?: string; person_id?: string; tag_id?: string; limit?: number }) =>

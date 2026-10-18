@@ -30,6 +30,15 @@
 	onMount(start);
 
 	const path = $derived(page.url.pathname);
+	// The project list is open on large screens, folded on phones.
+	let wide = $state(true);
+	onMount(() => {
+		const query = matchMedia('(min-width: 761px)');
+		wide = query.matches;
+		const change = () => (wide = query.matches);
+		query.addEventListener('change', change);
+		return () => query.removeEventListener('change', change);
+	});
 </script>
 
 <div class="carnet">
@@ -63,7 +72,8 @@
 						{/each}
 					</div>
 				{/if}
-				<div class="group spaces">
+				<details class="group spaces" open={wide}>
+					<summary class="label">Espaces et projets</summary>
 					{#each carnet.tree?.spaces ?? [] as space (space.id)}
 						<span class="space">{space.name}</span>
 						{#each space.projects as project (project.id)}
@@ -79,11 +89,21 @@
 							</a>
 						{/each}
 					{/each}
-				</div>
+				</details>
 				<a class="old" href="/">Écran de saisie actuel</a>
 			</aside>
 			<main>{@render children()}</main>
 		</div>
+		{#if carnet.needsLogin}
+			<div class="overlay" role="dialog" aria-modal="true" aria-label="Reconnexion">
+				<Login
+					onlogin={() => {
+						carnet.needsLogin = false;
+						void reload();
+					}}
+				/>
+			</div>
+		{/if}
 	{/if}
 </div>
 
@@ -175,6 +195,22 @@
 		color: var(--muted);
 		font-variant-numeric: tabular-nums;
 	}
+	.spaces summary {
+		padding: 0 8px;
+		cursor: pointer;
+		list-style: none;
+	}
+	@media (min-width: 761px) {
+		.spaces summary {
+			display: none;
+		}
+	}
+	.overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 10;
+		background: rgb(30 35 32 / 0.35);
+	}
 	.space {
 		margin-top: 8px;
 		padding: 0 8px 2px;
@@ -232,7 +268,7 @@
 			border-right: 0;
 			border-bottom: 1px solid var(--line);
 		}
-		.spaces {
+		nav .soon {
 			display: none;
 		}
 	}

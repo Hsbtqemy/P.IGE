@@ -34,6 +34,7 @@ describe('read', () => {
 		expect(r.people).toEqual(['Guilbard Anne-Cécile', 'Pacaud Jérôme']);
 		expect(r.tags).toEqual(['PPrim']);
 		expect(r.tasks).toEqual(['Récupérer le résultat final', 'Relire']);
+		expect(read('[ ] relancer @L. Thouverez #urgent', projects, people).tasks).toEqual(['relancer L. Thouverez urgent']);
 		expect(r.kind).toBe('note');
 		expect(r.title).toBe('Repris dicodiachro avec A.-C. Guilbard et J. Pacaud. PPrim');
 	});
@@ -45,11 +46,30 @@ describe('read', () => {
 		expect(read('PORTAILS', projects, people).project).toBeNull(); // whole words only
 	});
 
-	it('spots decisions and keeps unknown or ambiguous people as written', () => {
+	it('spots decisions, keeps unknown people and sets ambiguous ones aside', () => {
 		const r = read('Décision : TIFF pour l’archive, avec @Brunet et @Nouvelle Personne', projects, people);
 		expect(r.kind).toBe('decision');
-		expect(r.people).toEqual(['Brunet', 'Nouvelle Personne']);
+		expect(r.people).toEqual(['Nouvelle Personne']);
+		expect(r.ambiguous).toEqual(['Brunet']);
 		expect(r.title).toBe('TIFF pour l’archive, avec Brunet et Nouvelle Personne');
+	});
+
+	it('does not make people out of e-mails, sentence ends or line breaks', () => {
+		expect(read('Écrire à jean@example.com', projects, people).people).toEqual([]);
+		expect(read('Vu avec @Paul. Ensuite on verra', projects, people).people).toEqual(['Brunet Paul']);
+		expect(read('Appel de @Paul\nDécision : oui', projects, people).people).toEqual(['Brunet Paul']);
+	});
+
+	it('does not take URL fragments or entities for tags', () => {
+		const r = read('voir https://x.fr/page#section et &#39; puis #PPrim', projects, people);
+		expect(r.tags).toEqual(['PPrim']);
+		expect(r.title).toBe('voir https://x.fr/page#section et &#39; puis PPrim');
+	});
+
+	it('recognises projects next to punctuation', () => {
+		expect(read('Point dicodiachro, rien', projects, people).project?.id).toBe('p1');
+		expect(read('Réunion (DICODIACHRO)', projects, people).project?.id).toBe('p1');
+		expect(read('POR FAVOR: suite', projects, people).project?.id).toBe('p3');
 	});
 
 	it('counts each person and tag once and shortens long titles', () => {
@@ -67,8 +87,9 @@ describe('read', () => {
 
 describe('resolvePerson', () => {
 	it('uses initials only when exactly one person matches', () => {
-		expect(resolvePerson('M. Brunet', people)).toBe('Brunet Maréva');
-		expect(resolvePerson('Brunet', people)).toBe('Brunet');
+		expect(resolvePerson('M. Brunet', people)).toEqual({ name: 'Brunet Maréva', ambiguous: false });
+		expect(resolvePerson('Brunet', people)).toEqual({ name: 'Brunet', ambiguous: true });
+		expect(resolvePerson('Inconnu', people)).toEqual({ name: 'Inconnu', ambiguous: false });
 	});
 });
 
@@ -78,7 +99,8 @@ describe('segments', () => {
 			{ type: 'text', text: 'Café ' },
 			{ type: 'tag', text: '#doctorant·es' },
 			{ type: 'text', text: ' avec ' },
-			{ type: 'person', text: '@M. Brunet.' },
+			{ type: 'person', text: '@M. Brunet' },
+			{ type: 'text', text: '.' },
 		]);
 		expect(segments('[ ] relancer')).toEqual([{ type: 'task', text: 'relancer' }]);
 		expect(segments('Décision : TIFF')[0]).toEqual({ type: 'decision', text: 'Décision' });

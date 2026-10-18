@@ -99,7 +99,9 @@
 	font-family: var(--sans);
 	font-size: 0.9em;
 	font-weight: 700;
-	white-space: nowrap;
+	overflow-wrap: anywhere;
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
 }
 
 .carnet .chip-person {

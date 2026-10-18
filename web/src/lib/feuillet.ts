@@ -19,6 +19,8 @@ export interface KnownPerson {
 export interface Reading {
 	project: KnownProject | null;
 	people: string[];
+	/** Mentions matching several known people: not linked, shown to the user. */
+	ambiguous: string[];
 	tags: string[];
 	tasks: string[];
 	kind: 'note' | 'decision';
@@ -33,6 +35,11 @@ export type Segment =
 	| { type: 'decision'; text: string };
 
 /** "PEYROL-KLEIBER Élodie" -> "peyrol kleiber elodie" (same rule as the server). */
+/** fold() plus punctuation turned into spaces, for whole-word matching. */
+function words(text: string): string {
+	return fold(text).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
 export function fold(text: string): string {
 	return text
 		.replace(/œ/g, 'oe')
@@ -46,8 +53,11 @@ export function fold(text: string): string {
 		.trim();
 }
 
-const MENTION = /@([\p{L}][\p{L}\p{M}.'’-]*(?:\s+[\p{Lu}][\p{L}\p{M}.'’-]*)?)/gu;
-const TAG = /#([\p{L}\p{N}][\p{L}\p{N}\p{M}·._-]*[\p{L}\p{N}\p{M}])|#([\p{L}\p{N}])/gu;
+// "@Paul", "@J.-L. Duchet", "@Anne-Cécile Guilbard"; not "jean@example.com", never across lines.
+const MENTION =
+	/(?<![\p{L}\p{N}._%+-])@((?:\p{Lu}\.(?:-\p{Lu}\.)?|\p{L}[\p{L}\p{M}'’-]*)(?:[ \t]+\p{Lu}[\p{L}\p{M}'’-]*)?)/gu;
+// "#PPrim", "#doctorant·es"; not "page#section" or "&#39;".
+const TAG = /(?<![\p{L}\p{N}/&])#([\p{L}\p{N}][\p{L}\p{N}\p{M}·._-]*[\p{L}\p{N}\p{M}]|[\p{L}\p{N}])/gu;
 const TASK_LINE = /^\s*(?:[-*]\s*)?\[\s?\]\s+(.+?)\s*$/;
 const DECISION = /^\s*d[ée]cision\s*:\s*/i;
 
@@ -63,16 +73,17 @@ function mentionMatches(mention: string, person: string): boolean {
 	return wanted.every((w) => have.some((h) => h === w || (w.length === 1 && h.startsWith(w))));
 }
 
-export function resolvePerson(mention: string, people: KnownPerson[]): string {
+export function resolvePerson(mention: string, people: KnownPerson[]): { name: string; ambiguous: boolean } {
 	const matches = people.filter((p) => mentionMatches(mention, p.display_name));
-	return matches.length === 1 ? matches[0].display_name : mention.trim();
+	if (matches.length === 1) return { name: matches[0].display_name, ambiguous: false };
+	return { name: mention.trim(), ambiguous: matches.length > 1 };
 }
 
 function findProject(text: string, projects: KnownProject[]): KnownProject | null {
-	const haystack = ` ${fold(text)} `;
+	const haystack = ` ${words(text)} `;
 	let best: { project: KnownProject; at: number; length: number } | null = null;
 	for (const project of projects) {
-		const needle = fold(project.name);
+		const needle = words(project.name);
 		if (needle.length < 3) continue;
 		const at = haystack.indexOf(` ${needle} `);
 		if (at < 0) continue;
@@ -83,19 +94,30 @@ function findProject(text: string, projects: KnownProject[]): KnownProject | nul
 	return best?.project ?? null;
 }
 
-function stripMarkers(line: string): string {
-	return line.replace(DECISION, '').replace(/[@#]/g, '').replace(/\s+/g, ' ').trim();
+/** Text without the markers' signs: "@Paul" -> "Paul", "#PPrim" -> "PPrim", URLs untouched. */
+export function stripMarkers(line: string): string {
+	return line
+		.replace(DECISION, '')
+		.replace(MENTION, (m) => m.slice(1))
+		.replace(TAG, (m) => m.slice(1))
+		.replace(/\s+/g, ' ')
+		.trim();
 }
 
 export function read(text: string, projects: KnownProject[], people: KnownPerson[]): Reading {
 	const lines = text.split('\n');
-	const tasks = lines.map((l) => l.match(TASK_LINE)?.[1]).filter((t): t is string => !!t);
+	const tasks = lines
+		.map((l) => l.match(TASK_LINE)?.[1])
+		.filter((t): t is string => !!t)
+		.map(stripMarkers);
 	const prose = lines.filter((l) => !TASK_LINE.test(l)).join('\n');
 
 	const found: string[] = [];
+	const ambiguous: string[] = [];
 	for (const m of text.matchAll(MENTION)) {
-		const name = resolvePerson(m[1].replace(/[.'’-]+$/, ''), people);
-		if (!found.some((f) => fold(f) === fold(name))) found.push(name);
+		const { name, ambiguous: unclear } = resolvePerson(m[1].replace(/['’-]+$/, ''), people);
+		const list = unclear ? ambiguous : found;
+		if (!list.some((f) => fold(f) === fold(name))) list.push(name);
 	}
 	const tags: string[] = [];
 	for (const m of text.matchAll(TAG)) {
@@ -109,6 +131,7 @@ export function read(text: string, projects: KnownProject[], people: KnownPerson
 	return {
 		project: findProject(text, projects),
 		people: found,
+		ambiguous,
 		tags,
 		tasks,
 		kind: DECISION.test(prose) || lines.some((l) => DECISION.test(l)) ? 'decision' : 'note',
