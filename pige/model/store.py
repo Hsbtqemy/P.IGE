@@ -1184,6 +1184,15 @@ class ModelStore:
             out.append(_row_to(Entry, r, decision_applied=None if applied is None else bool(applied)))
         return out
 
+    def entry_days(self, month: str) -> list[str]:
+        """Days of a month (YYYY-MM) that have at least one entry."""
+        if not re.fullmatch(r"\d{4}-\d{2}", month):
+            raise InvalidOperationError("month: expected YYYY-MM")
+        rows = self.conn.execute(
+            "SELECT DISTINCT entry_date FROM entries WHERE entry_date LIKE ? ORDER BY entry_date", (f"{month}-%",)
+        ).fetchall()
+        return [r[0] for r in rows]
+
     def last_exchange(self, person_id: str) -> str | None:
         row = self._one(
             "SELECT max(e.entry_date) FROM entries e JOIN entry_people ep ON ep.entry_id = e.id WHERE ep.person_id = ?",

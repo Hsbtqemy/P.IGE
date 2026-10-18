@@ -276,3 +276,28 @@ def test_find_or_create_person_status_and_view(client):
     again = client.post("/api/v2/people", json={"name": "@martin bob"})
     assert again.status_code == 200 and again.json()["id"] == created.json()["id"]
     assert "waiting_on" in again.json()
+
+
+def test_journal_days(client, tree):
+    for d in ("2026-10-01", "2026-10-15", "2026-10-15", "2026-11-02"):
+        ok(client.post("/api/v2/entries", json={"entry_date": d, "project_id": tree["dico"]["id"]}), 201)
+    assert ok(client.get("/api/v2/journal/days?month=2026-10")) == ["2026-10-01", "2026-10-15"]
+    assert client.get("/api/v2/journal/days?month=octobre").status_code == 422
+
+
+def test_interface_routes_fall_back_to_the_app_shell(tmp_path):
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "index.html").write_text("<p>accueil</p>")
+    (web / "200.html").write_text("<p>appli</p>")
+    (web / "app.js").write_text("ok")
+    settings = Settings(data_dir=tmp_path, password_hash=_HASH, session_secret="s" * 48,
+                        api_token_hashes=frozenset(), cookie_secure=False, web_dir=web)
+    with TestClient(create_app(settings)) as c:
+        assert c.get("/").text == "<p>accueil</p>"
+        page = c.get("/journal/2026-10-15")
+        assert page.status_code == 200 and page.text == "<p>appli</p>"
+        assert page.headers["cache-control"] == "no-cache"
+        assert c.get("/missing.js").status_code == 404
+        assert c.get("/app.js").text == "ok"
+        assert c.get("/api/nope").status_code == 404

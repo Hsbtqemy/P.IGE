@@ -236,6 +236,7 @@
 		<h1>P.IGE</h1>
 		{#if phase === 'app'}
 			<p class="status" class:warn={!online || needsLogin} role="status">{status}</p>
+			<a class="try" href="/journal">Essayer le nouveau journal →</a>
 		{/if}
 	</header>
 
@@ -538,5 +539,9 @@
 		overflow: hidden;
 		clip-path: inset(50%);
 		white-space: nowrap;
+	}
+	.try {
+		font-size: var(--step--1);
+		color: var(--accent);
 	}
 </style>

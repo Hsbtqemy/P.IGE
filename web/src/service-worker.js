@@ -11,12 +11,14 @@ const CACHE = `pige-shell-${version}`;
 // (an empty path, the prerendered home page, would otherwise resolve to this script).
 const ROOT = new URL('./', self.registration.scope).href;
 const SHELL = [...immutable, ...assets, ...prerendered].map((f) => new URL(f.path || './', ROOT).href);
+// Shell of the interface pages (/journal/…), served by the server for unknown paths.
+const APP_SHELL = new URL('200.html', ROOT).href;
 
 self.addEventListener('install', (/** @type {Event & {waitUntil(p: Promise<unknown>): void}} */ event) => {
 	event.waitUntil(
 		caches
 			.open(CACHE)
-			.then((cache) => cache.addAll(SHELL))
+			.then((cache) => cache.addAll([...SHELL, APP_SHELL]))
 			.then(() => self.skipWaiting())
 	);
 });
@@ -39,7 +41,10 @@ self.addEventListener('fetch', (/** @type {Event & {request: Request, respondWit
 	if (request.mode === 'navigate') {
 		// Network first so a new version shows up at once; cached shell when offline.
 		event.respondWith(
-			fetch(request).catch(async () => (await caches.match(ROOT)) ?? Response.error())
+			fetch(request).catch(async () => {
+				const isHome = url.href === ROOT || url.pathname === '/index.html';
+				return (await caches.match(isHome ? ROOT : APP_SHELL)) ?? (await caches.match(ROOT)) ?? Response.error();
+			})
 		);
 		return;
 	}

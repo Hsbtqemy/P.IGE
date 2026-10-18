@@ -10,7 +10,8 @@ export default defineConfig({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 			// Static files served by the P.IGE server (PIGE_WEB_DIR=web/build).
-			adapter: adapter({ pages: 'build', assets: 'build', strict: true }),
+			// 200.html: shell for the interface routes (/journal/…), served by the server for unknown pages.
+			adapter: adapter({ pages: 'build', assets: 'build', fallback: '200.html', strict: true }),
 			csp: {
 				mode: 'hash',
 				directives: {
