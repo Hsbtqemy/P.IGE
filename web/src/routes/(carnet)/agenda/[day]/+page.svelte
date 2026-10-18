@@ -15,19 +15,36 @@
 	let calendars = $state<CalendarInfo[]>([]);
 	let message = $state('');
 
-	$effect(() => {
-		const start = monday;
-		if (!start) return;
-		events = null;
-		message = '';
-		Promise.all([v2.agenda(start, 7, timeZone()), v2.calendars()])
+	let refreshing = $state(false);
+
+	function load(start: string) {
+		return Promise.all([v2.agenda(start, 7, timeZone()), v2.calendars()])
 			.then(([e, c]) => {
 				if (start !== monday) return;
 				events = e;
 				calendars = c;
 			})
 			.catch((err) => (message = failure(err, 'Agenda non chargé : ')));
+	}
+
+	$effect(() => {
+		const start = monday;
+		if (!start) return;
+		events = null;
+		message = '';
+		void load(start);
 	});
+
+	/** Re-read every active calendar now, instead of waiting for the next 15-minute round. */
+	async function refresh() {
+		refreshing = true;
+		message = '';
+		const results = await Promise.allSettled(calendars.filter((c) => c.active).map((c) => v2.syncCalendar(c.id)));
+		const failed = results.filter((r) => r.status === 'rejected').length;
+		await load(monday);
+		if (failed) message = `${failed} calendrier${failed > 1 ? 's' : ''} n’${failed > 1 ? 'ont' : 'a'} pas pu être relu${failed > 1 ? 's' : ''} : voir ci-dessous ou dans Réglages.`;
+		refreshing = false;
+	}
 
 	function localIso(ms: number): string {
 		return new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
@@ -69,6 +86,9 @@
 				<a href="/agenda/{shiftDay(monday, -7)}">‹ Semaine précédente</a>
 				{#if !(todayIso() >= monday && todayIso() < shiftDay(monday, 7))}<a href="/agenda/{todayIso()}">Cette semaine</a>{/if}
 				<a href="/agenda/{shiftDay(monday, 7)}">Semaine suivante ›</a>
+				{#if calendars.some((c) => c.active)}
+					<button class="refresh" onclick={refresh} disabled={refreshing}>{refreshing ? 'Lecture…' : '↻ Actualiser'}</button>
+				{/if}
 			</div>
 			<h1>Agenda <span class="range">du {longDate(monday).toLocaleLowerCase('fr')} au {longDate(shiftDay(monday, 6)).toLocaleLowerCase('fr')}</span></h1>
 		</header>
@@ -116,6 +136,16 @@
 	}
 	.nav a {
 		color: var(--muted);
+	}
+	.refresh {
+		margin-left: auto;
+		padding: 2px 10px;
+		font: inherit;
+		color: var(--ink);
+		background: var(--surface);
+		border: 1px solid var(--line);
+		border-radius: 14px;
+		cursor: pointer;
 	}
 	h1 {
 		font-size: 1.875rem;
