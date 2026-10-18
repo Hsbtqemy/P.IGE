@@ -46,8 +46,13 @@ class ConflictError(InvalidOperationError):
     """Someone else saved the row in between (stale revision)."""
 
 
-def _new_id() -> str:
-    return uuid.uuid4().hex
+def _new_id(chosen: str | None = None) -> str:
+    """A fresh id, or the one a device chose (32 lowercase hex) so that a resend is recognised."""
+    if chosen is None:
+        return uuid.uuid4().hex
+    if not re.fullmatch(r"[0-9a-f]{32}", chosen):
+        raise InvalidOperationError("id: expected 32 lowercase hexadecimal characters")
+    return chosen
 
 
 def _aware(moment: datetime, field: str = "datetime") -> datetime:
@@ -821,12 +826,13 @@ class ModelStore:
         person_ids: Iterable[str] = (),
         tags: Iterable[str] = (),
         steps: Iterable[str] = (),
+        new_id: str | None = None,
     ) -> Task:
         with self._tx():
             space, project = self._scope_for(project_id=project_id, space_id=space_id)
             if origin_entry_id is not None:
                 self._require("entries", origin_entry_id)
-            task_id = _new_id()
+            task_id = _new_id(new_id)
             now = _utc(_now())
             position = self._next_position("tasks", "space_id = ? AND project_id IS ?", (space, project))
             self.conn.execute(
@@ -1005,10 +1011,11 @@ class ModelStore:
         people: Iterable[str] = (),
         person_ids: Iterable[str] = (),
         tags: Iterable[str] = (),
+        new_id: str | None = None,
     ) -> Entry:
         with self._tx():
             space, project = self._target(project_id, space_id, task_id)
-            entry_id = _new_id()
+            entry_id = _new_id(new_id)
             now = _utc(_now())
             try:
                 self.conn.execute(
@@ -1032,6 +1039,12 @@ class ModelStore:
         row = self._require("entries", entry_id)
         applied = row["decision_applied"]
         return _row_to(Entry, row, decision_applied=None if applied is None else bool(applied))
+
+    def entry_exists(self, entry_id: str) -> bool:
+        return self._one("SELECT 1 FROM entries WHERE id = ?", (entry_id,)) is not None
+
+    def task_exists(self, task_id: str) -> bool:
+        return self._one("SELECT 1 FROM tasks WHERE id = ?", (task_id,)) is not None
 
     def entry_by_mail(self, message_id: str) -> Entry | None:
         row = self._one("SELECT id FROM entries WHERE mail_message_id = ?", (message_id.strip(),))

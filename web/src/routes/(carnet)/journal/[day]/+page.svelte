@@ -3,6 +3,8 @@
 	import { page } from '$app/state';
 	import { ApiError } from '#lib/api.js';
 	import { v2, type Entry, type EntryPatch } from '#lib/api2.js';
+	import { newId, prepare } from '#lib/carnet/capture.js';
+	import { outbox, queue } from '#lib/carnet/outbox.svelte.js';
 	import { fold, read, resolvePerson, segments, type Reading } from '#lib/feuillet.js';
 	import {
 		allProjects,
@@ -25,6 +27,7 @@
 	let message = $state('');
 
 	let draft = $state('');
+	let draftId: string | null = null;
 	let placeChoice = $state(''); // '' = automatic, 'p:<id>' project, 's:<id>' space
 	let saving = $state(false);
 	let composer: HTMLTextAreaElement | undefined = $state();
@@ -147,9 +150,13 @@
 		message = '';
 		const r = read(text, known, carnet.people);
 		const target = place;
+		// Same id until it is saved: a retry after a lost reply cannot create a duplicate.
+		draftId ??= newId();
+		const id = draftId;
 		let entry: Entry;
 		try {
 			entry = await v2.createEntry({
+				id,
 				entry_date: day,
 				project_id: target.project_id,
 				space_id: target.space_id,
@@ -162,11 +169,30 @@
 				tags: r.tags
 			});
 		} catch (err) {
-			message = failure(err, 'Non enregistré : ');
+			if (err instanceof ApiError && err.status === 0) {
+				// No network: the paragraph waits on this device and leaves when the network returns.
+				const c = prepare(text, carnet.tree, carnet.people, {
+					place: { project_id: target.project_id, space_id: target.space_id },
+					day,
+					source: 'journal'
+				});
+				try {
+					await queue({ ...c, id });
+					draft = '';
+					draftId = null;
+					placeChoice = '';
+					message = 'Hors connexion : paragraphe gardé sur cet appareil, il sera envoyé au retour du réseau.';
+				} catch {
+					message = failure(err, 'Non enregistré : ');
+				}
+			} else {
+				message = failure(err, 'Non enregistré : ');
+			}
 			saving = false;
 			return;
 		}
 		// From here the paragraph exists: never send it twice.
+		draftId = null;
 		draft = '';
 		placeChoice = '';
 		reportTasks(await createTasks(r.tasks, target, entry.id), target, entry.id);
@@ -322,6 +348,14 @@
 		const tag = entry.tags.find((t) => t.name.toLowerCase() === text.slice(1).toLowerCase());
 		return tag ? `/etiquettes/${tag.id}` : undefined;
 	}
+
+	// A paragraph kept offline has just been sent: show it.
+	let waiting = 0;
+	$effect(() => {
+		const n = outbox.pending.length;
+		if (n < waiting) void refresh();
+		waiting = n;
+	});
 </script>
 
 <svelte:head><title>{day ? longDate(day) : 'Journal'} · P.IGE</title></svelte:head>

@@ -1,6 +1,7 @@
 // Shared data of the new interface: the tree (spaces, projects, pinned tags) and known people.
 
 import { ApiError } from '../api.js';
+import { cache } from './capture.js';
 import { v2, type Person, type Project, type Space, type TimeBlock, type Tree } from '../api2.js';
 
 export const carnet = $state<{
@@ -39,6 +40,7 @@ export async function reload(): Promise<void> {
 	carnet.people = people;
 	carnet.timers = timers;
 	carnet.error = '';
+	void cache.save(tree, people).catch(() => {}); // for notes taken offline (/capture)
 }
 
 export function allProjects(): Project[] {
