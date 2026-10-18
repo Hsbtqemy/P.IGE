@@ -169,8 +169,10 @@ trousseau iCloud est actif). Le mot de passe reste possible.
 ## Agenda (calendriers ICS)
 
 Rien à configurer sur le serveur : dans l'interface, **Réglages › Calendriers › Suivre un
-calendrier**, avec l'adresse ICS (« iCal », « webcal ») de l'agenda et, s'il en demande, un
-identifiant et un mot de passe. Le serveur relit chaque calendrier toutes les quinze minutes.
+calendrier**, avec l'adresse ICS (« iCal », « webcal ») ou CalDAV de l'agenda — celle que
+Thunderbird affiche dans les propriétés de l'agenda, par exemple
+`https://zimbra…/dav/moi%40univ.fr/Calendar/` — et, s'il en demande, un identifiant et un
+mot de passe. Le serveur relit chaque calendrier toutes les quinze minutes.
 
 - L'adresse (qui contient souvent un jeton privé) et le mot de passe sont chiffrés dans
   `pige.sqlite3` avec une clé dérivée de `PIGE_SESSION_SECRET`, jamais renvoyés au

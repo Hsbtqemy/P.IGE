@@ -152,7 +152,7 @@ def app(tmp_path):
     application = create_app(settings)
     feeds: dict[str, bytes] = {"https://cal.univ.fr/hugo.ics": ICS}
 
-    def fake_fetch(source: Source) -> bytes:
+    def fake_fetch(source: Source, *_window) -> bytes:
         if source.url not in feeds:
             raise CalendarError("Calendrier introuvable à cette adresse (404).")
         return feeds[source.url]
@@ -262,7 +262,7 @@ def test_odd_addresses_are_encoded_or_refused():
 def test_unexpected_errors_are_recorded_without_their_text(app, caplog):
     c = web(app)
 
-    def broken(source):
+    def broken(source, *_window):
         raise RuntimeError(f"boom {source.url}")
 
     app.state.agenda.fetcher = broken
@@ -282,7 +282,7 @@ def test_background_sync_respects_the_back_off(app):
     c = web(app)
     calls = []
 
-    def failing(source):
+    def failing(source, *_window):
         calls.append(source.url)
         raise CalendarError("Accès refusé par le serveur du calendrier : vérifie l'identifiant et le mot de passe.")
 
@@ -328,7 +328,7 @@ def test_a_new_server_never_gets_the_old_password(app):
     c = web(app)
     seen = []
 
-    def record(source):
+    def record(source, *_window):
         seen.append(source)
         return ICS
 
@@ -357,3 +357,101 @@ END:VCALENDAR
 """
     with pytest.raises(CalendarError, match="trop chargé"):
         parse_events("cal", flood, NOW, NOW.replace(year=2027), PARIS)
+
+
+# ---------------------------------------------------------------- CalDAV (Zimbra, as Thunderbird shows it)
+
+MULTISTATUS = """<?xml version="1.0" encoding="UTF-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+ <D:response><D:href>/dav/hugo%40univ.fr/Calendar/1.ics</D:href><D:propstat><D:prop>
+  <C:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VTIMEZONE
+TZID:Europe/Paris
+BEGIN:STANDARD
+DTSTART:19701025T030000
+TZOFFSETFROM:+0200
+TZOFFSETTO:+0100
+RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
+END:STANDARD
+BEGIN:DAYLIGHT
+DTSTART:19700329T020000
+TZOFFSETFROM:+0100
+TZOFFSETTO:+0200
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU
+END:DAYLIGHT
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:copil@zimbra
+DTSTART;TZID=Europe/Paris:20261020T140000
+DTEND;TZID=Europe/Paris:20261020T150000
+SUMMARY:COPIL
+END:VEVENT
+END:VCALENDAR
+</C:calendar-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+ <D:response><D:href>/dav/hugo%40univ.fr/Calendar/2.ics</D:href><D:propstat><D:prop>
+  <C:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VTIMEZONE
+TZID:Europe/Paris
+BEGIN:STANDARD
+DTSTART:19701025T030000
+TZOFFSETFROM:+0200
+TZOFFSETTO:+0100
+END:STANDARD
+END:VTIMEZONE
+BEGIN:VEVENT
+UID:cours@zimbra
+DTSTART;TZID=Europe/Paris:20261021T090000
+DTEND;TZID=Europe/Paris:20261021T120000
+RRULE:FREQ=WEEKLY;COUNT=2
+SUMMARY:Cours L3
+END:VEVENT
+END:VCALENDAR
+</C:calendar-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>
+</D:multistatus>
+"""
+
+
+class _Dav(http.server.BaseHTTPRequestHandler):
+    requests: list[tuple[str, str, str, bytes]] = []
+
+    def do_REPORT(self):  # noqa: N802
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        _Dav.requests.append((self.command, self.path, self.headers.get("Depth", ""), body))
+        payload = MULTISTATUS.encode() if "Calendar" in self.path else b'<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "a">]><x/>'
+        self.send_response(207)
+        self.send_header("Content-Type", "application/xml")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture()
+def dav():
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Dav)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    _Dav.requests = []
+    yield f"http://localhost:{server.server_port}"
+    server.shutdown()
+
+
+def test_caldav_collection_is_read_with_a_report(dav):
+    from pige.server.agenda import is_caldav
+
+    url = f"{dav}/dav/hugo%40univ.fr/Calendar/"
+    assert is_caldav(url) and not is_caldav(f"{dav}/home/hugo/Calendar?fmt=ics")
+    start, end = datetime(2026, 10, 1, tzinfo=timezone.utc), datetime(2026, 12, 1, tzinfo=timezone.utc)
+    ics = fetch(Source(url), start, end)
+    method, path, depth, body = _Dav.requests[0]
+    assert (method, path, depth) == ("REPORT", "/dav/hugo%40univ.fr/Calendar/", "1")
+    assert b'time-range start="20261001T000000Z" end="20261201T000000Z"' in body
+    events = parse_events("cal", ics, start, end, PARIS)
+    assert sorted(e["title"] for e in events) == ["COPIL", "Cours L3", "Cours L3"]
+    copil = next(e for e in events if e["title"] == "COPIL")
+    assert copil["start_at"].startswith("2026-10-20T12:00")  # 14:00 Paris (summer time) in UTC
+    assert ics.count(b"BEGIN:VTIMEZONE") == 1  # merged once
+    with pytest.raises(CalendarError, match="déclarations XML"):
+        fetch(Source(f"{dav}/dav/hugo/Other/"), start, end)

@@ -1,4 +1,4 @@
-"""Calendars followed by the server: ICS feeds (the university's agenda, a shared one…).
+"""Calendars followed by the server: ICS feeds and CalDAV collections (Zimbra, Google…).
 
 * The feed address often embeds a private token, and some feeds need a user name and
   password: all three are stored **encrypted** (Fernet, key derived from the session
@@ -136,20 +136,14 @@ class _SafeRedirects(urllib.request.HTTPRedirectHandler):
         return new_req
 
 
-def fetch(source: Source) -> bytes:
-    """Download a feed (raises CalendarError with a message safe to show)."""
-    url = normalize_url(source.url)
+def _download(url: str, headers: dict[str, str], *, method: str = "GET", body: bytes | None = None) -> bytes:
+    """One HTTP exchange with the safety rules (size, total time, redirects, safe messages)."""
     host = shown_host(url)
-    headers = {"User-Agent": "PIGE-Agenda/1.0", "Accept": "text/calendar, text/plain;q=0.8, */*;q=0.1"}
-    if source.username and source.password:
-        if not url.startswith("https://"):
-            raise CalendarError("Identifiants refusés hors HTTPS.")
-        token = base64.b64encode(f"{source.username}:{source.password}".encode("utf-8")).decode("ascii")
-        headers["Authorization"] = f"Basic {token}"
     opener = urllib.request.build_opener(_SafeRedirects())
     deadline = clock.monotonic() + TOTAL_SECONDS
+    request = urllib.request.Request(url, headers=headers, data=body, method=method)
     try:
-        with opener.open(urllib.request.Request(url, headers=headers), timeout=TIMEOUT_SECONDS) as response:
+        with opener.open(request, timeout=TIMEOUT_SECONDS) as response:
             chunks: list[bytes] = []
             size = 0
             while True:
@@ -176,8 +170,91 @@ def fetch(source: Source) -> bytes:
         raise CalendarError(f"Serveur du calendrier injoignable ({host}).") from exc
     if len(data) > MAX_ICS_BYTES:
         raise CalendarError("Calendrier trop volumineux (plus de 10 Mo).")
+    return data
+
+
+def is_caldav(url: str) -> bool:
+    """A CalDAV collection (as Thunderbird shows it: « …/dav/…/Calendar/ ») rather than an .ics file."""
+    path = urllib.parse.urlsplit(url).path
+    return path.endswith("/") and not urllib.parse.urlsplit(url).query
+
+
+_CALDAV_QUERY = """<?xml version="1.0" encoding="utf-8"?>
+<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop><c:calendar-data/></d:prop>
+  <c:filter>
+    <c:comp-filter name="VCALENDAR">
+      <c:comp-filter name="VEVENT"><c:time-range start="{start}" end="{end}"/></c:comp-filter>
+    </c:comp-filter>
+  </c:filter>
+</c:calendar-query>
+"""
+
+
+def merge_caldav(xml: bytes) -> bytes:
+    """The events of a CalDAV « multistatus » answer, as one ICS calendar."""
+    import xml.etree.ElementTree as ET
+
+    import icalendar
+
+    head = xml[:2048].upper()
+    if b"<!DOCTYPE" in head or b"<!ENTITY" in xml.upper():
+        raise CalendarError("Réponse CalDAV refusée (déclarations XML).")
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError as exc:
+        raise CalendarError("Ce n'est pas une réponse CalDAV lisible.") from exc
+    merged = icalendar.Calendar()
+    merged.add("prodid", "-//P.IGE//CalDAV//FR")
+    merged.add("version", "2.0")
+    zones: set[str] = set()
+    found = 0
+    for node in root.iter("{urn:ietf:params:xml:ns:caldav}calendar-data"):
+        if not node.text or "BEGIN:VCALENDAR" not in node.text.upper():
+            continue
+        try:
+            part = icalendar.Calendar.from_ical(node.text)
+        except Exception as exc:  # one broken event must not hide the others
+            logger.warning("CalDAV: unreadable event skipped (%s)", type(exc).__name__)
+            continue
+        for component in part.subcomponents:
+            if component.name == "VTIMEZONE":
+                tzid = str(component.get("TZID", ""))
+                if tzid in zones:
+                    continue
+                zones.add(tzid)
+            merged.add_component(component)
+        found += 1
+    if not found and root.tag != "{DAV:}multistatus":
+        raise CalendarError("Ce n'est pas un calendrier CalDAV (réponse inattendue).")
+    data: bytes = merged.to_ical()
+    return data
+
+
+def fetch(source: Source, start: datetime | None = None, end: datetime | None = None) -> bytes:
+    """Download a calendar as ICS: an .ics address directly, a CalDAV collection by a REPORT
+    limited to the window (raises CalendarError with a message safe to show)."""
+    url = normalize_url(source.url)
+    headers = {"User-Agent": "PIGE-Agenda/1.0", "Accept": "text/calendar, text/plain;q=0.8, */*;q=0.1"}
+    if source.username and source.password:
+        if not url.startswith("https://"):
+            raise CalendarError("Identifiants refusés hors HTTPS.")
+        token = base64.b64encode(f"{source.username}:{source.password}".encode("utf-8")).decode("ascii")
+        headers["Authorization"] = f"Basic {token}"
+    if is_caldav(url):
+        now = datetime.now(timezone.utc)
+        first, last = start or now - WINDOW_PAST, end or now + WINDOW_FUTURE
+        query = _CALDAV_QUERY.format(
+            start=first.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+            end=last.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+        )
+        headers.update({"Depth": "1", "Content-Type": "application/xml; charset=utf-8", "Accept": "application/xml, text/xml"})
+        return merge_caldav(_download(url, headers, method="REPORT", body=query.encode("utf-8")))
+    data = _download(url, headers)
     if b"BEGIN:VCALENDAR" not in data[:4096].upper():
-        raise CalendarError("Ce n'est pas un calendrier (format ICS attendu).")
+        raise CalendarError(
+            "Ce n'est pas un calendrier (format ICS attendu). Pour une adresse CalDAV, garde la barre « / » finale."
+        )
     return data
 
 
@@ -301,7 +378,8 @@ class Agenda:
     """Syncs the calendars, one sync per calendar at a time, also on a timer in the background."""
 
     def __init__(
-        self, store: ModelStore, vault: Vault, local_zone: Any, fetcher: Callable[[Source], bytes] = fetch
+        self, store: ModelStore, vault: Vault, local_zone: Any,
+        fetcher: Callable[[Source, datetime, datetime], bytes] = fetch,
     ) -> None:
         self.store = store
         self.vault = vault
@@ -323,7 +401,7 @@ class Agenda:
             calendar = self.store.get_calendar(calendar_id)  # read under the lock: never a stale address
             try:
                 source = self.vault.open(calendar.source_enc)
-                events = parse_events(calendar_id, self.fetcher(source), start, end, self.zone)
+                events = parse_events(calendar_id, self.fetcher(source, start, end), start, end, self.zone)
             except CalendarError as exc:
                 self.store.calendar_synced(calendar_id, error=str(exc))
                 raise

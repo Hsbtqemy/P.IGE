@@ -122,8 +122,8 @@
 {#snippet fields(edit: boolean)}
 	<label>Nom <input bind:value={form.name} required maxlength="120" placeholder="Agenda université" /></label>
 	<label class="wide">
-		Adresse ICS {#if edit}<small>(laisser vide pour garder l’actuelle)</small>{/if}
-		<input bind:value={form.url} required={!edit} type="url" inputmode="url" placeholder="https://… ou webcal://…" autocomplete="off" />
+		Adresse {#if edit}<small>(laisser vide pour garder l’actuelle)</small>{:else}<small>ICS, webcal, ou CalDAV copiée depuis Thunderbird (Propriétés › Emplacement)</small>{/if}
+		<input bind:value={form.url} required={!edit} type="url" inputmode="url" placeholder="https://…" autocomplete="off" />
 	</label>
 	<label>
 		Identifiant <small>(si le calendrier en demande un)</small>
@@ -154,8 +154,8 @@
 	<h2 id="cal-title">Calendriers</h2>
 	<p class="hint">
 		Les réunions de ton agenda apparaissent dans l’Agenda, le journal et Ma journée, où tu peux les noter ou compter leur
-		temps. P.IGE lit l’adresse ICS (« iCal », « webcal ») toutes les quinze minutes, sans jamais rien écrire dans
-		l’agenda. L’adresse et le mot de passe sont gardés chiffrés sur le serveur et ne sont plus jamais affichés.
+		temps. P.IGE lit le calendrier (adresse ICS « iCal », « webcal », ou CalDAV comme dans Thunderbird) toutes les quinze
+		minutes, sans jamais rien écrire dans l’agenda. L’adresse et le mot de passe sont gardés chiffrés sur le serveur et ne sont plus jamais affichés.
 	</p>
 	{#if message}<p class="warn" role="alert">{message}</p>{/if}
 	{#if info}<p class="info" role="status">{info}</p>{/if}
