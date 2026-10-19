@@ -163,6 +163,25 @@
 		await load();
 	}
 
+	/** « depuis 3 jours », « depuis 2 mois »: how long a task has been in progress. */
+	function since(task: Task): string {
+		if (!task.status_since) return '';
+		const days = Math.floor((Date.now() - new Date(task.status_since).getTime()) / 86_400_000);
+		if (days < 1) return 'depuis aujourd’hui';
+		if (days < 2) return 'depuis hier';
+		if (days < 31) return `depuis ${days} jours`;
+		if (days < 365) return `depuis ${Math.floor(days / 30.4)} mois`;
+		const years = Math.floor(days / 365);
+		return `depuis ${years} an${years > 1 ? 's' : ''}`;
+	}
+
+	async function backToDo(task: Task) {
+		const done = await attempt('Tâche non modifiée', () => v2.updateTask(task.id, { status: 'open' }));
+		if (!done) return;
+		inProgress = inProgress.filter((t) => t.id !== task.id);
+		info = `« ${task.title} » remise dans « À faire ».`;
+	}
+
 	async function startOnTask(task: Task) {
 		const timer = await attempt('Minuteur non démarré', () => v2.startTimer({ task_id: task.id }));
 		if (timer) await load();
@@ -349,8 +368,13 @@
 							{#each allIdle ? idle : idle.slice(0, 5) as task (task.id)}
 								<div class="doing-row">
 									<button class="play" onclick={() => startOnTask(task)} aria-label="Démarrer un minuteur sur « {task.title} »">▶</button>
-									<span>{task.title}</span>
-									<small>{placeName(task)}</small>
+									<a class="task-link" href="{task.project_id ? `/projets/${task.project_id}` : `/espaces/${task.space_id}`}?tache={task.id}">
+										<span>{task.title}</span>
+										<small>{placeName(task)}{since(task) ? ` · ${since(task)}` : ''}</small>
+									</a>
+									<button class="plain back" onclick={() => backToDo(task)} title="Ce n’est pas en cours : remettre dans « À faire »">
+										Remettre à faire
+									</button>
 								</div>
 							{/each}
 							{#if idle.length > 5}
@@ -627,6 +651,28 @@
 		flex-direction: column;
 		gap: 2px;
 		margin-top: 14px;
+	}
+	.task-link {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		text-decoration: none;
+	}
+	.task-link span {
+		overflow-wrap: anywhere;
+	}
+	.back {
+		padding: 4px 0;
+		background: none;
+		border: 0;
+		color: var(--muted);
+		font: inherit;
+		font-size: 0.8125rem;
+		text-decoration: underline;
+		cursor: pointer;
+	}
+	.back:hover {
+		color: var(--accent);
 	}
 	.doing-row {
 		display: grid;

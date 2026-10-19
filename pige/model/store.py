@@ -922,8 +922,16 @@ class ModelStore:
         return self._tasks("t.status <> 'done'", ())
 
     def in_progress_tasks(self) -> list[Task]:
-        """Tasks in progress, the longest-running first."""
-        return self._tasks("t.status = 'in_progress'", (), order="t.status_since")
+        """Tasks in progress in living places (no dormant or closed project, no archived space),
+        the most recently started first."""
+        return self._tasks(
+            "t.status = 'in_progress'"
+            " AND NOT EXISTS (SELECT 1 FROM spaces sp WHERE sp.id = t.space_id AND sp.archived = 1)"
+            " AND NOT EXISTS (SELECT 1 FROM projects p LEFT JOIN projects parent ON parent.id = p.parent_id"
+            "                 WHERE p.id = t.project_id AND (p.state <> 'active' OR coalesce(parent.state, 'active') <> 'active'))",
+            (),
+            order="t.status_since DESC, t.rid DESC",
+        )
 
     def update_task(
         self,
