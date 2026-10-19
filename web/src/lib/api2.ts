@@ -92,6 +92,7 @@ export interface PersonView extends Person {
 	last_exchange: string | null;
 	waiting_on: Task[];
 	involved_in: Task[];
+	projects: (Project & { project_role: string | null })[];
 }
 
 export interface PersonPatch {
@@ -128,6 +129,7 @@ export interface TaskPatch {
 	due_date?: string;
 	status?: TaskStatus;
 	waiting_on?: string;
+	person_ids?: string[];
 }
 
 export interface ProjectPatch {
@@ -284,6 +286,8 @@ export interface ProjectView extends Project {
 	links: { url: string; label: string | null }[];
 	last_activity: string | null;
 	open_tasks: number;
+	/** Its people, then those of its parent project (« inherited »: shown, not copied). */
+	people: (Person & { project_role: string | null; inherited: boolean })[];
 }
 
 export const v2 = {
@@ -339,6 +343,10 @@ export const v2 = {
 	tag: (id: string) => request<TagView>('GET', `/api/v2/tags/${encodeURIComponent(id)}`),
 	pinTag: (id: string, pinned: boolean) => request<Tag>('PATCH', `/api/v2/tags/${id}`, { pinned }),
 	person: (name: string) => request<Person>('POST', '/api/v2/people', { name }),
+	setProjectPerson: (projectId: string, personId: string, role: string | null) =>
+		request<ProjectView>('PUT', `/api/v2/projects/${encodeURIComponent(projectId)}/people/${encodeURIComponent(personId)}`, { role }),
+	removeProjectPerson: (projectId: string, personId: string) =>
+		request<ProjectView>('DELETE', `/api/v2/projects/${encodeURIComponent(projectId)}/people/${encodeURIComponent(personId)}`),
 	tree: (includeArchived = false) => request<Tree>('GET', `/api/v2/tree${includeArchived ? '?include_archived=true' : ''}`),
 	createSpace: (name: string) => request<Space>('POST', '/api/v2/spaces', { name }),
 	updateSpace: (id: string, patch: { name?: string; archived?: boolean }) =>

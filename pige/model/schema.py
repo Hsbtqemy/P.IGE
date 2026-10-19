@@ -351,6 +351,18 @@ MIGRATIONS: tuple[str, ...] = (
         CHECK ((project_id IS NULL) <> (space_id IS NULL))
     );
     """,
+    # ------------------------------------------------------------------ 4
+    # People of a project (or sub-project), with an optional role.
+    """
+    CREATE TABLE project_people (
+        project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+        role        TEXT CHECK (role IS NULL OR length(role) <= 120),
+        position    INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (project_id, person_id)
+    );
+    CREATE INDEX project_people_person ON project_people(person_id);
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

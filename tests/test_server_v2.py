@@ -392,3 +392,25 @@ def test_all_open_tasks(client, tree):
     c = ok(client.post("/api/v2/tasks", json={"title": "C", "project_id": tree["porfavor"]["id"]}), 201)
     ok(client.patch(f"/api/v2/tasks/{c['id']}", json={"status": "done"}))
     assert {t["id"] for t in ok(client.get("/api/v2/tasks"))} == {a["id"], b["id"]}
+
+
+def test_people_of_projects_and_tasks(client, tree):
+    anne = ok(client.post("/api/v2/people", json={"name": "Martin Anne"}), 201)
+    paul = ok(client.post("/api/v2/people", json={"name": "Durand Paul"}), 201)
+    portail, porfavor = tree["portail"]["id"], tree["porfavor"]["id"]  # porfavor is a sub-project of portail
+    view = ok(client.put(f"/api/v2/projects/{portail}/people/{anne['id']}", json={"role": "responsable"}))
+    assert [(p["id"], p["project_role"], p["inherited"]) for p in view["people"]] == [(anne["id"], "responsable", False)]
+    ok(client.put(f"/api/v2/projects/{portail}/people/{anne['id']}", json={"role": " co-responsable "}))
+    sub = ok(client.put(f"/api/v2/projects/{porfavor}/people/{paul['id']}", json={}))
+    assert [(p["display_name"], p["inherited"]) for p in sub["people"]] == [("Durand Paul", False), ("Martin Anne", True)]
+    person = ok(client.get(f"/api/v2/people/{anne['id']}"))
+    assert [(p["id"], p["project_role"]) for p in person["projects"]] == [(portail, "co-responsable")]
+    # a task's people, set by hand
+    task = ok(client.post("/api/v2/tasks", json={"title": "Relire", "project_id": porfavor}), 201)
+    ok(client.patch(f"/api/v2/tasks/{task['id']}", json={"person_ids": [anne["id"], paul["id"]]}))
+    assert {p["id"] for p in ok(client.get(f"/api/v2/tasks/{task['id']}"))["people"]} == {anne["id"], paul["id"]}
+    assert [t["id"] for t in ok(client.get(f"/api/v2/people/{paul['id']}"))["involved_in"]] == [task["id"]]
+    web = TestClient(client.app)
+    ok(web.post("/api/login", json={"password": PASSWORD}))
+    ok(web.delete(f"/api/v2/projects/{portail}/people/{anne['id']}", headers={CSRF_HEADER: "web"}))
+    assert ok(client.get(f"/api/v2/people/{anne['id']}"))["projects"] == []

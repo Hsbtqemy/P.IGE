@@ -1432,6 +1432,44 @@ class ModelStore:
             (person_id,),
         )
 
+    # ------------------------------------------------------------ project people
+
+    def set_project_person(self, project_id: str, person_id: str, role: str | None = None) -> None:
+        """Add a person to a project, or change their role there."""
+        role = _clean(role)
+        with self._tx():
+            self._require("projects", project_id)
+            self._require("people", person_id)
+            last = self._one("SELECT coalesce(max(position), 0) AS m FROM project_people WHERE project_id = ?",
+                             (project_id,))
+            self.conn.execute(
+                "INSERT INTO project_people(project_id, person_id, role, position) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(project_id, person_id) DO UPDATE SET role = excluded.role",
+                (project_id, person_id, role[:120] if role else None, (last["m"] if last else 0) + 1),
+            )
+
+    def remove_project_person(self, project_id: str, person_id: str) -> None:
+        with self._tx():
+            self.conn.execute("DELETE FROM project_people WHERE project_id = ? AND person_id = ?",
+                              (project_id, person_id))
+
+    def project_people(self, project_id: str) -> list[tuple[Person, str | None]]:
+        """The project's people, in the order they were added, with their role."""
+        rows = self.conn.execute(
+            "SELECT p.*, pp.role AS project_role FROM project_people pp JOIN people p ON p.id = pp.person_id"
+            " WHERE pp.project_id = ? ORDER BY pp.position, p.display_name", (project_id,)
+        ).fetchall()
+        return [(_row_to(Person, r), r["project_role"]) for r in rows]
+
+    def person_projects(self, person_id: str) -> list[tuple[Project, str | None]]:
+        """The projects a person belongs to, with their role, by space then name."""
+        rows = self.conn.execute(
+            "SELECT pr.*, pp.role AS project_role FROM project_people pp JOIN projects pr ON pr.id = pp.project_id"
+            " JOIN spaces s ON s.id = pr.space_id WHERE pp.person_id = ? ORDER BY s.position, s.name, pr.name",
+            (person_id,),
+        ).fetchall()
+        return [(self.get_project(r["id"]), r["project_role"]) for r in rows]
+
     # ------------------------------------------------------------ calendars
 
     def _calendar(self, row: sqlite3.Row) -> Calendar:
