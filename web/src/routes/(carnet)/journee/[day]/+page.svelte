@@ -2,6 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { page } from '$app/state';
 	import EventRow from '#lib/carnet/EventRow.svelte';
+	import DayPlan from '#lib/carnet/DayPlan.svelte';
 	import { v2, type AgendaEvent, type CountedBlock, type DayReport, type OverlapMode, type Target, type Task, type TimeBlock } from '#lib/api2.js';
 	import {
 		carnet,
@@ -18,7 +19,7 @@
 	let day = $derived(isDay(page.params.day ?? '') ? (page.params.day as string) : '');
 	let report = $state<DayReport | null>(null);
 	let meetings = $state<AgendaEvent[]>([]);
-	let inProgress = $state<Task[]>([]);
+	let openTasks = $state<Task[]>([]); // open tasks of active projects: the day's plan
 	let message = $state('');
 	let info = $state('');
 	let taskTitles = $state<Record<string, string>>({});
@@ -64,14 +65,14 @@
 			const [r, timers, doing, agenda] = await Promise.all([
 				v2.day(current, timeZone()),
 				v2.timers(),
-				v2.tasksInProgress(),
+				v2.openTasks(true),
 				v2.agenda(current, 1, timeZone()).catch(() => [] as AgendaEvent[])
 			]);
 			if (current !== day) return;
 			report = r;
 			meetings = agenda.filter((m) => !m.all_day);
 			carnet.timers = timers;
-			inProgress = doing;
+			openTasks = doing;
 			for (const t of doing) taskTitles[t.id] = t.title;
 			void fetchTitles([...r.blocks.map((b) => b.block.task_id), ...timers.map((t) => t.task_id)]);
 		} catch (err) {
@@ -161,25 +162,6 @@
 		if (startTask) taskTitles[startTask] = startTasks.find((x) => x.id === startTask)?.title ?? '';
 		startNote = '';
 		await load();
-	}
-
-	/** « depuis 3 jours », « depuis 2 mois »: how long a task has been in progress. */
-	function since(task: Task): string {
-		if (!task.status_since) return '';
-		const days = Math.floor((Date.now() - new Date(task.status_since).getTime()) / 86_400_000);
-		if (days < 1) return 'depuis aujourd’hui';
-		if (days < 2) return 'depuis hier';
-		if (days < 31) return `depuis ${days} jours`;
-		if (days < 365) return `depuis ${Math.floor(days / 30.4)} mois`;
-		const years = Math.floor(days / 365);
-		return `depuis ${years} an${years > 1 ? 's' : ''}`;
-	}
-
-	async function backToDo(task: Task) {
-		const done = await attempt('Tâche non modifiée', () => v2.updateTask(task.id, { status: 'open' }));
-		if (!done) return;
-		inProgress = inProgress.filter((t) => t.id !== task.id);
-		info = `« ${task.title} » remise dans « À faire ».`;
 	}
 
 	async function startOnTask(task: Task) {
@@ -285,8 +267,6 @@
 			}));
 		return rows.sort((a, b) => b.seconds - a.seconds);
 	});
-	let idle = $derived(inProgress.filter((t) => !carnet.timers.some((x) => x.task_id === t.id)));
-	let allIdle = $state(false);
 	let maxSeconds = $derived(Math.max(1, ...byProject.map((r) => r.seconds)));
 	let unchecked = $derived(report?.blocks.some((c) => !c.block.validated && !c.running) ?? false);
 </script>
@@ -321,6 +301,25 @@
 		{#if message}<p class="message" role="alert">{message}</p>{/if}
 		{#if info}<p class="info" role="status">{info}</p>{/if}
 
+		<div class="today">
+			{#if meetings.length}
+				<section aria-labelledby="meet-title">
+					<h2 id="meet-title">Rendez-vous <small>{meetings.length}</small></h2>
+					{#each meetings as m (m.id)}
+						<EventRow
+							event={m}
+							onchanged={(u) => {
+								meetings = meetings.map((x) => (x.id === u.id ? u : x));
+								if (u.block_id && !m.block_id) void load();
+							}}
+						/>
+					{/each}
+				</section>
+			{/if}
+			<DayPlan tasks={openTasks} {day} isToday={day === todayIso()} onchanged={() => void load()} onstart={startOnTask} />
+		</div>
+
+		<h2 class="time-title">Temps</h2>
 		<div class="cols">
 			<div class="main">
 				<section aria-labelledby="timers-title">
@@ -362,44 +361,8 @@
 					</form>
 					<p class="hint">Plusieurs minuteurs peuvent tourner en même temps : le temps commun est partagé entre eux.</p>
 
-					{#if idle.length}
-						<div class="doing">
-							<span class="label">Tâches en cours, sans minuteur <small>{idle.length}</small></span>
-							{#each allIdle ? idle : idle.slice(0, 5) as task (task.id)}
-								<div class="doing-row">
-									<button class="play" onclick={() => startOnTask(task)} aria-label="Démarrer un minuteur sur « {task.title} »">▶</button>
-									<a class="task-link" href="{task.project_id ? `/projets/${task.project_id}` : `/espaces/${task.space_id}`}?tache={task.id}">
-										<span>{task.title}</span>
-										<small>{placeName(task)}{since(task) ? ` · ${since(task)}` : ''}</small>
-									</a>
-									<button class="plain back" onclick={() => backToDo(task)} title="Ce n’est pas en cours : remettre dans « À faire »">
-										Remettre à faire
-									</button>
-								</div>
-							{/each}
-							{#if idle.length > 5}
-								<button class="plain link" onclick={() => (allIdle = !allIdle)}>
-									{allIdle ? 'Réduire la liste' : `Voir les ${idle.length - 5} autres`}
-								</button>
-							{/if}
-						</div>
-					{/if}
 				</section>
 
-				{#if meetings.length}
-					<section aria-labelledby="meet-title">
-						<h2 id="meet-title">Réunions de l’agenda <small>comptées seules sur leur créneau</small></h2>
-						{#each meetings as m (m.id)}
-							<EventRow
-								event={m}
-								onchanged={(u) => {
-									meetings = meetings.map((x) => (x.id === u.id ? u : x));
-									if (u.block_id && !m.block_id) void load();
-								}}
-							/>
-						{/each}
-					</section>
-				{/if}
 
 				<section aria-labelledby="blocks-title">
 					<h2 id="blocks-title">Créneaux <small>{report ? report.blocks.length : ''}</small></h2>
@@ -646,52 +609,6 @@
 		font-size: 0.8125rem;
 		color: var(--muted);
 	}
-	.doing {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		margin-top: 14px;
-	}
-	.task-link {
-		display: flex;
-		flex-direction: column;
-		min-width: 0;
-		text-decoration: none;
-	}
-	.task-link span {
-		overflow-wrap: anywhere;
-	}
-	.back {
-		padding: 4px 0;
-		background: none;
-		border: 0;
-		color: var(--muted);
-		font: inherit;
-		font-size: 0.8125rem;
-		text-decoration: underline;
-		cursor: pointer;
-	}
-	.back:hover {
-		color: var(--accent);
-	}
-	.doing-row {
-		display: grid;
-		grid-template-columns: 32px minmax(0, 1fr) auto;
-		gap: 8px;
-		align-items: center;
-		min-height: 34px;
-	}
-	.play {
-		width: 30px;
-		height: 30px;
-		color: var(--accent);
-		background: transparent;
-		border: 1px solid var(--line);
-		border-radius: 50%;
-	}
-	.play:hover {
-		background: var(--soft);
-	}
 	.blocks {
 		list-style: none;
 		margin: 0;
@@ -860,5 +777,14 @@
 		.flags .edit {
 			width: 24px;
 		}
+	}
+	.today {
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+	}
+	.time-title {
+		margin-top: 8px;
+		font-size: 1.5rem;
 	}
 </style>

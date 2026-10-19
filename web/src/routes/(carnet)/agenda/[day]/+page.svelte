@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { goto, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
-	import { v2, type AgendaEvent, type CalendarInfo } from '#lib/api2.js';
+	import { v2, type AgendaEvent, type CalendarInfo, type Task } from '#lib/api2.js';
 	import EventRow from '#lib/carnet/EventRow.svelte';
-	import { failure, isDay, longDate, shiftDay, timeZone, todayIso } from '#lib/carnet/state.svelte.js';
+	import { failure, isDay, longDate, placeName, shiftDay, timeZone, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let day = $derived(isDay(page.params.day ?? '') ? (page.params.day as string) : '');
 	let view = $derived<'semaine' | 'mois'>(page.url.searchParams.get('vue') === 'mois' ? 'mois' : 'semaine');
@@ -31,17 +31,19 @@
 	let rangeKey = $derived(`${range.start}/${range.days}`);
 
 	let events = $state<AgendaEvent[] | null>(null);
+	let dueTasks = $state<Task[]>([]); // open tasks with a due date, shown on their day
 	let calendars = $state<CalendarInfo[]>([]);
 	let message = $state('');
 	let refreshing = $state(false);
 
 	function load(start: string, days: number) {
 		const key = `${start}/${days}`;
-		return Promise.all([v2.agenda(start, days, timeZone()), v2.calendars()])
-			.then(([e, c]) => {
+		return Promise.all([v2.agenda(start, days, timeZone()), v2.calendars(), v2.openTasks(true).catch(() => [] as Task[])])
+			.then(([e, c, t]) => {
 				if (key !== rangeKey) return;
 				events = e;
 				calendars = c;
+				dueTasks = t.filter((task) => task.due_date);
 			})
 			.catch((err) => (message = failure(err, 'Agenda non chargé : ')));
 	}
@@ -75,6 +77,10 @@
 		const first = localIso(new Date(e.start).getTime());
 		const last = localIso(new Date(e.end).getTime() - 1);
 		return first <= iso && iso <= last;
+	}
+
+	function dueOn(iso: string): Task[] {
+		return dueTasks.filter((t) => t.due_date === iso);
 	}
 
 	function listFor(iso: string): AgendaEvent[] {
@@ -132,6 +138,16 @@
 	let today = $derived(todayIso());
 </script>
 
+{#snippet due(iso: string)}
+	{#each dueOn(iso) as t (t.id)}
+		<a class="due" href="{t.project_id ? `/projets/${t.project_id}` : `/espaces/${t.space_id}`}?tache={t.id}">
+			<span class="tag">à rendre</span>
+			<b>{t.title}</b>
+			<small>{placeName(t)}</small>
+		</a>
+	{/each}
+{/snippet}
+
 <svelte:head><title>Agenda · P.IGE</title></svelte:head>
 
 <div class="wrap">
@@ -176,7 +192,8 @@
 				Aucun calendrier suivi. Ajoute l’adresse de ton agenda (ICS) dans <a href="/reglages">Réglages › Calendriers</a> : les
 				réunions apparaîtront ici, dans le journal et dans Ma journée.
 			</p>
-		{:else if !events}
+		{/if}
+		{#if !events}
 			<p class="muted">Chargement…</p>
 		{:else if view === 'mois'}
 			<div class="month" role="grid" aria-label="Mois de {monthName(monthStart)}">
@@ -203,6 +220,7 @@
 								</span>
 							{/each}
 							{#if c.list.length > 3}<span class="more">+{c.list.length - 3}</span>{/if}
+							{#if dueOn(c.iso).length}<span class="due-mark">{dueOn(c.iso).length} à rendre</span>{/if}
 							{#if c.list.length}<span class="dots" aria-hidden="true">{#each c.list.slice(0, 4) as e (e.id)}<i style="background: {e.color || 'var(--decision)'}"></i>{/each}</span>{/if}
 						</button>
 					{/each}
@@ -210,20 +228,22 @@
 			</div>
 			<section class="dayview" aria-label={longDate(selected || day)}>
 				<h2><a href="/journal/{selected || day}">{longDate(selected || day)}</a> <small>{listFor(selected || day).length || ''}</small></h2>
+				{@render due(selected || day)}
 				{#each listFor(selected || day) as e (e.id)}
 					<EventRow event={e} choosePlace onchanged={changed} onreload={() => load(range.start, range.days)} />
 				{:else}
-					<p class="muted">Rien ce jour-là.</p>
+					{#if !dueOn(selected || day).length}<p class="muted">Rien ce jour-là.</p>{/if}
 				{/each}
 			</section>
 		{:else}
 			{#each days as d (d.iso)}
 				<section class:today={d.iso === today} aria-label={longDate(d.iso)}>
 					<h2><a href="/journal/{d.iso}">{longDate(d.iso)}</a> <small>{d.list.length || ''}</small></h2>
+					{@render due(d.iso)}
 					{#each d.list as e (e.id)}
 						<EventRow event={e} choosePlace onchanged={changed} onreload={() => load(range.start, range.days)} />
 					{:else}
-						<p class="muted">—</p>
+						{#if !dueOn(d.iso).length}<p class="muted">—</p>{/if}
 					{/each}
 				</section>
 			{/each}
@@ -444,5 +464,33 @@
 		.wrap {
 			padding: 16px;
 		}
+	}
+	.due {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 10px;
+		align-items: baseline;
+		padding: 8px 0 8px 12px;
+		border-left: 3px dashed var(--accent);
+		border-bottom: 1px solid var(--line);
+		text-decoration: none;
+	}
+	.due .tag {
+		font-size: 0.6875rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--accent);
+	}
+	.due small {
+		color: var(--muted);
+		font-size: 0.8125rem;
+	}
+	.due-mark {
+		display: block;
+		font-size: 0.6875rem;
+		font-weight: 700;
+		color: var(--accent);
+		text-align: left;
 	}
 </style>

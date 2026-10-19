@@ -318,7 +318,7 @@ export const v2 = {
 	validateDay: (day: string, tz: string) =>
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),
 	search: (text: string, limit = 20) => request<SearchHit[]>('GET', `/api/v2/search?${q({ q: text, limit })}`),
-	openTasks: () => request<Task[]>('GET', '/api/v2/tasks'),
+	openTasks: (living = false) => request<Task[]>('GET', `/api/v2/tasks${living ? '?living=true' : ''}`),
 	calendars: () => request<CalendarInfo[]>('GET', '/api/v2/calendars'),
 	addCalendar: (input: CalendarInput & { name: string; url: string }) =>
 		request<{ calendar: CalendarInfo; sync: SyncResult }>('POST', '/api/v2/calendars', input),

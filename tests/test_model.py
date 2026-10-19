@@ -196,6 +196,8 @@ def test_in_progress_skips_sleeping_places_newest_first(store, tree):
     store.update_project(tree["portail"].id, state="dormant")  # the parent sleeps: its sub-project too
     store.update_project(tree["dico"].id, state="closed")
     assert [t.id for t in store.in_progress_tasks()] == [new.id]
+    assert {t.id for t in store.open_tasks(living=True)} == {new.id}
+    assert {old.id, new.id, asleep.id} <= {t.id for t in store.open_tasks()}
     store.set_space_archived(tree["mimmoc"].id, True)
     assert store.in_progress_tasks() == []
 

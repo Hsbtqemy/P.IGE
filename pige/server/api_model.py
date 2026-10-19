@@ -436,9 +436,10 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         return _task_view(task.id)
 
     @router.get("/tasks")
-    def open_tasks() -> list[dict[str, Any]]:
-        """Every open task (the « Tâches » view groups them by project)."""
-        return _out(store.open_tasks())
+    def open_tasks(living: bool = False) -> list[dict[str, Any]]:
+        """Every open task (the « Tâches » view groups them by project); ``living``: only those
+        of active projects and spaces (the day's plan)."""
+        return _out(store.open_tasks(living=living))
 
     @router.get("/tasks/in-progress")
     def tasks_in_progress() -> list[dict[str, Any]]:
