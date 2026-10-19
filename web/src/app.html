@@ -11,6 +11,18 @@
 		<link rel="icon" href="/icon-192.png" type="image/png" />
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 		<title>P.IGE</title>
+		<script>
+			// The theme chosen in Réglages (lib/theme.ts), applied before the first paint.
+			try {
+				var t = localStorage.getItem('pige-theme');
+				if (t === 'light' || t === 'dark') {
+					document.documentElement.dataset.theme = t;
+					document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {
+						m.content = t === 'dark' ? '#14181d' : '#eef1f4';
+					});
+				}
+			} catch (e) {}
+		</script>
 		%sveltekit.head%
 	</head>
 	<body>

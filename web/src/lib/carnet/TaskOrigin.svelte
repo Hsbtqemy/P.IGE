@@ -1,8 +1,8 @@
 <script lang="ts">
 	// What a task came from (often a mail filed from Thunderbird): its text, readable anywhere,
-	// on the phone as on the site, and a button to reopen the mail when Thunderbird is there.
+	// on the phone as on the site, and a button to reopen the mail (Thunderbird or Apple Mail).
 	import { v2, type Entry } from '../api2.js';
-	import { openMail, thunderbird } from './thunderbird.svelte.js';
+	import MailOpen from './MailOpen.svelte';
 
 	let { entryId }: { entryId: string } = $props();
 
@@ -44,9 +44,7 @@
 				{#if isMail}✉ <b>{entry.title || '(sans objet)'}</b>{#if sender}<small> · de {sender}</small>{/if}{:else}Vient du paragraphe{/if}
 				<small> · <a href="/journal/{entry.entry_date}">{day}</a></small>
 			</span>
-			{#if isMail && thunderbird.available && entry.mail_message_id}
-				<button class="btn" onclick={() => entry?.mail_message_id && openMail(entry.mail_message_id)}>Ouvrir dans Thunderbird</button>
-			{/if}
+			{#if entry.mail_message_id}<MailOpen messageId={entry.mail_message_id} label="Ouvrir le mail" />{/if}
 		</header>
 		{#if text}
 			<div class="text">{shown}</div>

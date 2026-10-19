@@ -6,7 +6,7 @@
 	import EventRow from '#lib/carnet/EventRow.svelte';
 	import { newId, prepare } from '#lib/carnet/capture.js';
 	import { outbox, queue } from '#lib/carnet/outbox.svelte.js';
-	import { onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
+	import { appleMail, appleMailHref, onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
 	import { fold, read, resolvePerson, segments, type Reading } from '#lib/feuillet.js';
 	import {
 		allProjects,
@@ -441,8 +441,10 @@
 							{#if entry.mail_message_id}
 								{#if thunderbird.available}
 									<button class="mail" onclick={() => entry.mail_message_id && openMail(entry.mail_message_id)} title="Ouvrir le mail dans Thunderbird">✉ Ouvrir le mail</button>
+								{:else if appleMail}
+									<a class="mail" href={appleMailHref(entry.mail_message_id)} title="Ouvrir le mail dans Mail">✉ Ouvrir le mail</a>
 								{:else}
-									<span class="mail-tag" title="Ouvre P.IGE dans Thunderbird pour retrouver le mail">✉ mail</span>
+									<span class="mail-tag" title="Ouvre P.IGE dans Thunderbird, ou sur un Mac ou un iPhone, pour retrouver le mail">✉ mail</span>
 								{/if}
 							{/if}
 							{#if editingId !== entry.id && entry.source !== 'writing'}
@@ -733,6 +735,7 @@
 	}
 	.mail {
 		align-self: flex-end;
+		text-decoration: none;
 		padding: 2px 6px;
 		font-family: var(--sans);
 		font-size: 0.75rem;
