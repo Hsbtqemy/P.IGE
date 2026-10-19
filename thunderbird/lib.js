@@ -93,12 +93,47 @@ export function parseMenuId(id) {
   return null;
 }
 
+/** The mail's text kept in P.IGE: long enough to work from the phone, without the thread below. */
+export const MAIL_TEXT_MAX = 20_000;
+
+/** "12 Ko", "1,4 Mo". */
+export function formatSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} o`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} Ko`;
+  return `${(n / 1024 / 1024).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mo`;
+}
+
+/** "Anne Martin, Paul Durand et 3 autres" from header addresses. */
+function names(list, max = 8) {
+  const people = (list || []).map((a) => {
+    const p = parseAuthor(a);
+    return p.name || p.email;
+  }).filter(Boolean);
+  if (people.length <= max) return people.join(', ');
+  return `${people.slice(0, max).join(', ')} et ${people.length - max} autres`;
+}
+
+/** Recipients and attachments, below the text (they are not in the mail's body). */
+export function mailFooter(header, attachments) {
+  const lines = [];
+  const to = names(header.recipients);
+  const cc = names(header.ccList);
+  if (to) lines.push(`À : ${to}`);
+  if (cc) lines.push(`Cc : ${cc}`);
+  const files = (attachments || []).filter((a) => a && a.name);
+  if (files.length) lines.push(`Pièces jointes : ${files.map((a) => `${a.name} (${formatSize(a.size)})`).join(', ')}`);
+  return lines.join('\n');
+}
+
 /** The entry for a mail: dated the day it arrived, linked by its Message-ID. */
-export function entryForMail({ id, header, text, target, personIds }) {
+export function entryForMail({ id, header, text, attachments, target, personIds }) {
   const author = parseAuthor(header.author);
   const subject = (header.subject || '(sans objet)').trim();
   const from = author.name ? `${author.name} <${author.email}>` : author.email || 'expéditeur inconnu';
-  const body = [`Mail de ${from}`, excerpt(text)].filter(Boolean).join('\n\n');
+  // « Mail de … » then the text first: a mail filed by an older extension (short excerpt) is
+  // completed when filed again, because its old text is contained in the new one.
+  const body = [`Mail de ${from}`, excerpt(text, MAIL_TEXT_MAX), mailFooter(header, attachments)].filter(Boolean).join('\n\n');
   return {
     id,
     entry_date: localDay(header.date ? new Date(header.date) : new Date()),

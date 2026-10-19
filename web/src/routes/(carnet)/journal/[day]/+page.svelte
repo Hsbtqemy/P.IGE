@@ -368,6 +368,29 @@
 
 	// A mail filed from Thunderbird's message list shows up at once.
 	onMount(() => onMailFiled(() => void refresh()));
+
+	// Mails are kept whole (to read them from the phone): folded in the journal, unfolded on demand.
+	const MAIL_LINES = 8;
+	let unfolded = $state(new Set<string>());
+	function folded(entry: Entry): boolean {
+		return entry.source === 'mail' && !unfolded.has(entry.id) && (entry.body.split('\n').length > MAIL_LINES || entry.body.length > 800);
+	}
+	function bodyLines(entry: Entry): string[] {
+		const lines = entry.body.split('\n');
+		return folded(entry) ? shortMail(lines) : lines;
+	}
+	function shortMail(lines: string[]): string[] {
+		const out: string[] = [];
+		let size = 0;
+		for (const line of lines) {
+			if (out.length >= MAIL_LINES || size + line.length > 700) break;
+			out.push(line);
+			size += line.length;
+		}
+		if (!out.length) out.push(`${lines[0].slice(0, 700)}`);
+		out[out.length - 1] += ' …';
+		return out;
+	}
 </script>
 
 <svelte:head><title>{day ? longDate(day) : 'Journal'} · P.IGE</title></svelte:head>
@@ -463,7 +486,7 @@
 						{:else}
 							<div class="body">
 								{#if entry.kind === 'meeting'}<span class="kind">Réunion</span>{/if}
-								{#each entry.body.split('\n') as line, i (i)}
+								{#each bodyLines(entry) as line, i (i)}
 									{#if line.trim()}
 										<p>
 											{#each segments(line) as seg, j (j)}
@@ -478,6 +501,9 @@
 										</p>
 									{/if}
 								{/each}
+								{#if folded(entry)}
+									<button class="plain more" onclick={() => (unfolded = new Set([...unfolded, entry.id]))}>Lire tout le mail</button>
+								{/if}
 								<span class="where-inline">{placeLabel(entry)}</span>
 							</div>
 						{/if}
@@ -908,5 +934,15 @@
 		.empty {
 			margin-left: 68px;
 		}
+	}
+	.more {
+		padding: 0;
+		background: none;
+		border: 0;
+		color: var(--accent);
+		text-decoration: underline;
+		cursor: pointer;
+		font: inherit;
+		font-size: 0.875rem;
 	}
 </style>

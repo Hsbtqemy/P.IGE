@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { defaultSpace, entryForMail, excerpt, localDay, menuItems, parseAuthor, parseMenuId, plainBody, stableId } from '../lib.js';
+import { defaultSpace, entryForMail, excerpt, formatSize, localDay, mailFooter, menuItems, parseAuthor, parseMenuId, plainBody, stableId } from '../lib.js';
 
 const tree = {
   spaces: [
@@ -65,4 +65,35 @@ test('a mail becomes a dated entry linked by its Message-ID', () => {
   assert.deepEqual(entry.person_ids, ['x']);
   assert.equal(entry.project_id, 'p1');
   assert.equal(localDay(new Date('invalid')).length, 10);
+});
+
+test('a long mail is kept whole, with recipients and attachments below', () => {
+  const long = 'Phrase du mail. '.repeat(200);
+  const entry = entryForMail({
+    id: 'e'.repeat(32),
+    header: {
+      author: 'anne@univ.fr',
+      subject: 'Long',
+      date: new Date(2026, 2, 12),
+      recipients: ['Hugo <hugo@univ.fr>'],
+      ccList: ['Paul Durand <paul@univ.fr>', 'zoe@univ.fr']
+    },
+    text: long,
+    attachments: [{ name: 'devis.pdf', size: 125_000 }],
+    target: { space_id: 's1' },
+    personIds: []
+  });
+  assert.ok(entry.body.includes(long.trim()));
+  assert.ok(entry.body.endsWith('À : Hugo\nCc : Paul Durand, zoe@univ.fr\nPièces jointes : devis.pdf (122 Ko)'));
+  // The excerpt the old extension sent is contained in the new text (so the server completes it).
+  const old = `Mail de anne@univ.fr\n\n${excerpt(long)}`.replace(/…$/, '');
+  assert.ok(entry.body.replace(/\s+/g, ' ').includes(old.replace(/\s+/g, ' ')));
+});
+
+test('footer and sizes', () => {
+  assert.equal(mailFooter({}, []), '');
+  assert.equal(formatSize(900), '900 o');
+  assert.equal(formatSize(3 * 1024 * 1024 + 400_000), '3,4 Mo');
+  const many = Array.from({ length: 10 }, (_, i) => `p${i}@x.fr`);
+  assert.equal(mailFooter({ recipients: many }, null), `À : ${many.slice(0, 8).join(', ')} et 2 autres`);
 });

@@ -116,6 +116,23 @@ def test_mail_entries_are_idempotent(client, tree):
     assert first["id"] == second["id"]
 
 
+def test_mail_filed_again_brings_its_full_text(client, tree):
+    """An entry from the old extension (short excerpt) is completed by a newer one; edited text is kept."""
+    short = {"id": "a" * 32, "entry_date": "2026-01-16", "space_id": tree["porfavor"]["space_id"], "source": "mail",
+             "mail_message_id": "<long@univ>", "title": "Devis", "body": "Mail de Anne\n\nBonjour, voici…"}
+    first = ok(client.post("/api/v2/entries", json=short), 201)
+    full = "Mail de Anne\n\nBonjour, voici le devis complet.\n\nPièces jointes : devis.pdf (12 Ko)"
+    again = ok(client.post("/api/v2/entries", json={**short, "body": full}), 200)
+    assert again["id"] == first["id"] and again["body"] == full
+    ok(client.patch(f"/api/v2/entries/{first['id']}", json={"expected_revision": again["revision"],
+                                                               "body": "Mes notes à moi"}))
+    kept = ok(client.post("/api/v2/entries", json={**short, "id": "b" * 32, "body": full + " encore"}), 200)
+    assert kept["body"] == "Mes notes à moi"
+    shorter = ok(client.post("/api/v2/entries", json={**short, "mail_message_id": "<x@y>", "id": "f" * 32}), 201)
+    assert ok(client.post("/api/v2/entries", json={**short, "mail_message_id": "<x@y>", "id": "f" * 32,
+                                                     "body": "Mail de Anne"}), 200)["body"] == shorter["body"]
+
+
 def test_timeline_filters_and_paging(client, tree):
     pid = tree["porfavor"]["id"]
     for day in ("2026-01-13", "2026-01-23", "2026-01-29"):

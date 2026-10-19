@@ -137,7 +137,7 @@
 	{@const late = task.due_date && task.due_date < todayIso()}
 	<li>
 		<input type="checkbox" class="check" onchange={() => done(task)} aria-label="Terminer « {task.title} »" />
-		<a class="title" href={task.project_id ? `/projets/${task.project_id}` : `/espaces/${task.space_id}`}>{task.title}</a>
+		<a class="title" href="{task.project_id ? `/projets/${task.project_id}` : `/espaces/${task.space_id}`}?tache={task.id}">{task.title}</a>
 		<span class="info">
 			{#if showPlace}<span>{carnet.tree?.spaces.flatMap((s) => s.projects).find((p) => p.id === task.project_id)?.name ?? carnet.tree?.spaces.find((s) => s.id === task.space_id)?.name ?? ''}</span>{/if}
 			{#if task.status === 'in_progress'}<span class="doing" class:long={days(task.status_since) >= LONG}>en cours{days(task.status_since) >= 1 ? ` depuis ${days(task.status_since)} j` : ''}</span>{/if}
