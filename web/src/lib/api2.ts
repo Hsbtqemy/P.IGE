@@ -232,6 +232,8 @@ export interface AgendaEvent {
 	entry_id: string | null;
 	block_id: string | null;
 	project_id: string | null;
+	/** Where the note (else the counted time) is filed, once noted or counted. */
+	place: { project_id: string | null; space_id: string } | null;
 }
 
 export interface Tree {
@@ -319,9 +321,11 @@ export const v2 = {
 	agenda: (start: string, days: number, tz: string) =>
 		request<AgendaEvent[]>('GET', `/api/v2/agenda?${q({ start, days, tz })}`),
 	noteEvent: (id: string, target: Target, tz: string) =>
-		request<{ entry_id: string; created: boolean }>('POST', `/api/v2/agenda/${id}/note?${q({ tz })}`, target),
+		request<{ entry_id: string; created: boolean; event: AgendaEvent }>('POST', `/api/v2/agenda/${id}/note?${q({ tz })}`, target),
+	placeEvent: (id: string, target: Target) =>
+		request<AgendaEvent>('POST', `/api/v2/agenda/${encodeURIComponent(id)}/place`, target),
 	countEvent: (id: string, target: Target) =>
-		request<{ block_id: string; created: boolean }>('POST', `/api/v2/agenda/${id}/count`, target),
+		request<{ block_id: string; created: boolean; event: AgendaEvent }>('POST', `/api/v2/agenda/${id}/count`, target),
 	tasksInProgress: () => request<Task[]>('GET', '/api/v2/tasks/in-progress'),
 	personView: (id: string) => request<PersonView>('GET', `/api/v2/people/${encodeURIComponent(id)}`),
 	updatePerson: (id: string, patch: PersonPatch) => request<PersonView>('PATCH', `/api/v2/people/${id}`, patch),
