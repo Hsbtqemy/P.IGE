@@ -270,7 +270,7 @@ export interface EntryPatch {
 	tags?: string[];
 }
 
-const q = (params: Record<string, string | number | undefined>) =>
+const q = (params: Record<string, string | number | boolean | undefined>) =>
 	Object.entries(params)
 		.filter(([, v]) => v !== undefined && v !== '')
 		.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
@@ -355,6 +355,7 @@ export const v2 = {
 		person_id?: string;
 		tag_id?: string;
 		source?: Entry['source'];
+		without_project?: boolean;
 		limit?: number;
 	}) =>
 		request<Entry[]>('GET', `/api/v2/timeline?${q({ limit: 200, ...params })}`),

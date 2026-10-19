@@ -498,12 +498,13 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         tag_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{32}$"),
         day: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
         source: Literal["journal", "writing", "capture", "mail", "import"] | None = None,
+        without_project: bool = False,
         limit: int = Query(default=50, ge=1, le=200),
         offset: int = Query(default=0, ge=0, le=100_000),
     ) -> list[dict[str, Any]]:
         entries = store.timeline(
             space_id=space_id, project_id=project_id, task_id=task_id, person_id=person_id,
-            tag_id=tag_id, day=day, source=source, limit=limit, offset=offset,
+            tag_id=tag_id, day=day, source=source, without_project=without_project, limit=limit, offset=offset,
         )
         return _entry_views(entries)
 

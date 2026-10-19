@@ -141,6 +141,10 @@ def test_timeline_filters_and_paging(client, tree):
     page2 = ok(client.get(f"/api/v2/timeline?project_id={tree['portail']['id']}&limit=2&offset=2"))
     assert [e["title"] for e in page1 + page2] == ["2026-01-29", "2026-01-23", "2026-01-13"]
     assert [e["title"] for e in ok(client.get("/api/v2/timeline?day=2026-01-23"))] == ["2026-01-23"]
+    space = tree["porfavor"]["space_id"]
+    ok(client.post("/api/v2/entries", json={"entry_date": "2026-01-24", "space_id": space, "title": "hors projet"}), 201)
+    loose = ok(client.get(f"/api/v2/timeline?space_id={space}&without_project=true"))
+    assert [e["title"] for e in loose] == ["hors projet"]
 
 
 def test_time_day_report_and_timers(client, tree):
