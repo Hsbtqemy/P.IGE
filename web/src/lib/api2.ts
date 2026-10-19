@@ -331,7 +331,18 @@ export const v2 = {
 	tag: (id: string) => request<TagView>('GET', `/api/v2/tags/${encodeURIComponent(id)}`),
 	pinTag: (id: string, pinned: boolean) => request<Tag>('PATCH', `/api/v2/tags/${id}`, { pinned }),
 	person: (name: string) => request<Person>('POST', '/api/v2/people', { name }),
-	tree: () => request<Tree>('GET', '/api/v2/tree'),
+	tree: (includeArchived = false) => request<Tree>('GET', `/api/v2/tree${includeArchived ? '?include_archived=true' : ''}`),
+	createSpace: (name: string) => request<Space>('POST', '/api/v2/spaces', { name }),
+	updateSpace: (id: string, patch: { name?: string; archived?: boolean }) =>
+		request<Space>('PATCH', `/api/v2/spaces/${encodeURIComponent(id)}`, patch),
+	placeSpace: (id: string, place: Place) => request<void>('POST', `/api/v2/spaces/${id}/place`, place),
+	deleteSpace: (id: string) => request<void>('DELETE', `/api/v2/spaces/${id}`),
+	createProject: (project: { space_id: string; name: string; parent_id?: string | null; team?: string | null }) =>
+		request<ProjectView>('POST', '/api/v2/projects', project),
+	moveProject: (id: string, to: { space_id: string; parent_id: string | null }) =>
+		request<ProjectView>('POST', `/api/v2/projects/${id}/move`, to),
+	placeProject: (id: string, place: Place) => request<void>('POST', `/api/v2/projects/${id}/place`, place),
+	deleteProject: (id: string) => request<void>('DELETE', `/api/v2/projects/${id}`),
 	people: () => request<Person[]>('GET', '/api/v2/people'),
 	timeline: (params: {
 		day?: string;

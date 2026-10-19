@@ -3,16 +3,53 @@
 	import '@fontsource/newsreader/latin-400-italic.css';
 	import '@fontsource/newsreader/latin-600.css';
 	import '#lib/carnet/carnet.css';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { v2 } from '#lib/api2.js';
 	import { page } from '$app/state';
 	import { api, ApiError } from '#lib/api.js';
 	import Login from '#lib/carnet/Login.svelte';
 	import Palette from '#lib/carnet/Palette.svelte';
 	import { autoSync, outbox } from '#lib/carnet/outbox.svelte.js';
-	import { carnet, reload, todayIso } from '#lib/carnet/state.svelte.js';
+	import { carnet, failure, reload, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let { children } = $props();
 	let searchOpen = $state(false);
+
+	// « + » in the side column: a project in a space, or a new space.
+	let adding = $state<string | null>(null);
+	let quickName = $state('');
+	let quickError = $state('');
+
+	async function openAdd(key: string) {
+		quickError = '';
+		quickName = '';
+		adding = adding === key ? null : key;
+		await tick();
+		document.getElementById(key === 'space' ? 'quick-space' : `quick-${key}`)?.focus();
+	}
+
+	async function createHere(event: SubmitEvent, spaceId: string | null) {
+		event.preventDefault();
+		const name = quickName.trim();
+		if (!name) return;
+		quickError = '';
+		try {
+			if (spaceId) {
+				const project = await v2.createProject({ space_id: spaceId, name });
+				await reload();
+				adding = null;
+				await goto(`/projets/${project.id}`);
+			} else {
+				const space = await v2.createSpace(name);
+				await reload();
+				adding = null;
+				await goto(`/espaces/${space.id}`);
+			}
+		} catch (err) {
+			quickError = failure(err, spaceId ? 'Projet non créé : ' : 'Espace non créé : ');
+		}
+	}
 	const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 	function onGlobalKey(event: KeyboardEvent) {
@@ -123,8 +160,28 @@
 				{/if}
 				<details class="group spaces" open={wide}>
 					<summary class="label">Espaces et projets</summary>
-					{#each carnet.tree?.spaces ?? [] as space (space.id)}
-						<a class="space" href="/espaces/{space.id}" aria-current={path === `/espaces/${space.id}` ? 'page' : undefined}>{space.name}</a>
+					{#each carnet.tree?.spaces ?? [] as space, si (space.id)}
+						<div class="space-row" class:first={si === 0}>
+							<a class="space" href="/espaces/{space.id}" aria-current={path === `/espaces/${space.id}` ? 'page' : undefined}>{space.name}</a>
+							<button
+								class="add-here"
+								onclick={() => openAdd(space.id)}
+								aria-expanded={adding === space.id}
+								aria-label="Nouveau projet dans « {space.name} »"
+								title="Nouveau projet">+</button
+							>
+						</div>
+						{#if adding === space.id}
+							<form class="quick" onsubmit={(e) => createHere(e, space.id)}>
+								<input
+									id="quick-{space.id}"
+									bind:value={quickName}
+									placeholder="Nouveau projet"
+									aria-label="Nom du nouveau projet dans « {space.name} »"
+									onkeydown={(e) => e.key === 'Escape' && (adding = null)}
+								/>
+							</form>
+						{/if}
 						{#each space.projects as project (project.id)}
 							<a
 								class="project"
@@ -138,6 +195,22 @@
 							</a>
 						{/each}
 					{/each}
+					{#if adding === 'space'}
+						<form class="quick" onsubmit={(e) => createHere(e, null)}>
+							<input
+								id="quick-space"
+								bind:value={quickName}
+								placeholder="Nouvel espace"
+								aria-label="Nom du nouvel espace"
+								onkeydown={(e) => e.key === 'Escape' && (adding = null)}
+							/>
+						</form>
+					{/if}
+					<div class="organise">
+						<button class="link-btn" onclick={() => openAdd('space')}>+ Espace</button>
+						<a href="/organiser" aria-current={path.startsWith('/organiser') ? 'page' : undefined}>Organiser…</a>
+					</div>
+					{#if quickError}<p class="quick-error" role="alert">{quickError}</p>{/if}
 				</details>
 				<div class="foot">
 					<a class="old" href="/reglages" aria-current={path.startsWith('/reglages') ? 'page' : undefined}>Réglages</a>
@@ -305,11 +378,89 @@
 		z-index: 10;
 		background: rgb(30 35 32 / 0.35);
 	}
+	.space-row {
+		display: flex;
+		align-items: center;
+		margin-top: 12px;
+	}
+	.space-row.first {
+		margin-top: 4px;
+	}
+	.add-here {
+		width: 24px;
+		height: 22px;
+		padding: 0;
+		font: inherit;
+		font-size: 1rem;
+		line-height: 1;
+		color: var(--muted);
+		background: none;
+		border: 0;
+		border-radius: 6px;
+		cursor: pointer;
+		opacity: 0;
+	}
+	.space-row:hover .add-here,
+	.add-here:focus-visible,
+	.add-here[aria-expanded='true'] {
+		opacity: 1;
+	}
+	.add-here:hover {
+		color: var(--accent);
+		background: var(--soft);
+	}
+	@media (hover: none) {
+		.add-here {
+			opacity: 1;
+		}
+	}
+	.quick {
+		padding: 2px 8px 4px 16px;
+	}
+	.quick input {
+		width: 100%;
+		box-sizing: border-box;
+		font: inherit;
+		font-size: 0.8125rem;
+		color: var(--ink);
+		background: var(--surface);
+		border: 1px solid var(--accent);
+		border-radius: 6px;
+		padding: 4px 6px;
+	}
+	.organise {
+		display: flex;
+		gap: 12px;
+		margin-top: 10px;
+		padding: 0 8px;
+		font-size: 0.8125rem;
+	}
+	.organise a,
+	.link-btn {
+		color: var(--muted);
+	}
+	.organise a[aria-current='page'] {
+		color: var(--ink);
+		font-weight: 700;
+	}
+	.link-btn {
+		padding: 0;
+		font: inherit;
+		background: none;
+		border: 0;
+		text-decoration: underline;
+		cursor: pointer;
+	}
+	.quick-error {
+		margin: 4px 8px 0;
+		font-size: 0.8125rem;
+		color: var(--warn);
+	}
 	.space {
+		flex: 1;
 		display: block;
 		text-decoration: none;
 		border-radius: 6px;
-		margin-top: 12px;
 		padding: 0 8px 2px;
 		font-size: 0.8125rem;
 		font-weight: 700;
@@ -320,9 +471,6 @@
 	}
 	.space[aria-current='page'] {
 		background: var(--soft);
-	}
-	.space:first-of-type {
-		margin-top: 4px;
 	}
 	.project {
 		display: flex;
