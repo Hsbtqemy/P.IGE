@@ -307,6 +307,8 @@ class CalendarEvent:
     status: str | None
     entry_id: str | None
     block_id: str | None
+    project_id: str | None = None  # filed before any note: this occurrence alone
+    space_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1568,6 +1570,78 @@ class ModelStore:
             if block_id is not None:
                 self.conn.execute("UPDATE calendar_events SET block_id = ? WHERE id = ?", (block_id, event_id))
             return self.get_event(event_id)
+
+    def plan_event(self, event_id: str, *, project_id: str | None = None, space_id: str | None = None) -> CalendarEvent:
+        """Where this occurrence's note and time will go (nothing given: back to the default)."""
+        with self._tx():
+            self._require("calendar_events", event_id)
+            if project_id is not None:
+                self._require("projects", project_id)
+                space_id = None
+            elif space_id is not None:
+                self._require("spaces", space_id)
+            self.conn.execute(
+                "UPDATE calendar_events SET project_id = ?, space_id = ? WHERE id = ?", (project_id, space_id, event_id)
+            )
+            return self.get_event(event_id)
+
+    @staticmethod
+    def series_key(event: CalendarEvent, recurring: set[tuple[str, str]]) -> str | None:
+        """What makes a series: the event's UID when it recurs, else its title when the calendar
+        has other events with the same title (timetables often send each session on its own)."""
+        if (event.calendar_id, event.uid) in recurring:
+            return event.uid
+        title = f"title:{event.title}"
+        return title if (event.calendar_id, title) in recurring else None
+
+    def plan_series(
+        self, calendar_id: str, uid: str, *, project_id: str | None = None, space_id: str | None = None
+    ) -> None:
+        """Where every occurrence of a series goes (``uid``: a UID or « title:<title> »; nothing
+        given: the rule is removed). The occurrences' own choices are cleared, so the series decides."""
+        with self._tx():
+            self._require("calendars", calendar_id)
+            for e in self.series_events(calendar_id, uid):
+                self.conn.execute("UPDATE calendar_events SET project_id = NULL, space_id = NULL WHERE id = ?", (e.id,))
+            if project_id is None and space_id is None:
+                self.conn.execute("DELETE FROM calendar_series WHERE calendar_id = ? AND uid = ?", (calendar_id, uid))
+                return
+            if project_id is not None:
+                self._require("projects", project_id)
+                space_id = None
+            else:
+                self._require("spaces", space_id)  # type: ignore[arg-type]
+            self.conn.execute(
+                "INSERT INTO calendar_series(calendar_id, uid, project_id, space_id) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(calendar_id, uid) DO UPDATE SET project_id = excluded.project_id,"
+                " space_id = excluded.space_id",
+                (calendar_id, uid, project_id, space_id),
+            )
+
+    def series_places(self) -> dict[tuple[str, str], tuple[str | None, str | None]]:
+        """(calendar, uid) -> (project_id, space_id) for the series filed as a whole."""
+        rows = self.conn.execute("SELECT calendar_id, uid, project_id, space_id FROM calendar_series").fetchall()
+        return {(r["calendar_id"], r["uid"]): (r["project_id"], r["space_id"]) for r in rows}
+
+    def recurring_uids(self) -> set[tuple[str, str]]:
+        """Series keys: (calendar, uid) of events with several occurrences, and (calendar,
+        « title:<title> ») of titles found several times in a calendar."""
+        rows = self.conn.execute(
+            "SELECT calendar_id, uid AS k FROM calendar_events GROUP BY calendar_id, uid HAVING count(*) > 1"
+            " UNION SELECT calendar_id, 'title:' || title FROM calendar_events WHERE title <> ''"
+            " GROUP BY calendar_id, title HAVING count(*) > 1"
+        ).fetchall()
+        return {(r[0], r[1]) for r in rows}
+
+    def series_events(self, calendar_id: str, key: str) -> list[CalendarEvent]:
+        if key.startswith("title:"):
+            sql, value = "title = ?", key[len("title:"):]
+        else:
+            sql, value = "uid = ?", key
+        rows = self.conn.execute(
+            f"SELECT * FROM calendar_events WHERE calendar_id = ? AND {sql} ORDER BY start_at", (calendar_id, value)
+        ).fetchall()
+        return [self._event(r) for r in rows]
 
     # ------------------------------------------------------------ search
 

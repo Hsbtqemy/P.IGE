@@ -5,11 +5,18 @@
 	let {
 		event,
 		choosePlace = false,
-		onchanged
-	}: { event: AgendaEvent; choosePlace?: boolean; onchanged?: (e: AgendaEvent) => void } = $props();
+		onchanged,
+		onreload
+	}: {
+		event: AgendaEvent;
+		choosePlace?: boolean;
+		onchanged?: (e: AgendaEvent) => void;
+		/** After filing a whole series: the other occurrences shown changed too. */
+		onreload?: () => void;
+	} = $props();
 
-	// Once noted or counted, the select shows where the meeting is filed and moves it;
-	// before, it says where the note and the time will go.
+	// The select shows where the meeting is filed (its note or time, else the place chosen for
+	// it or its series) and changing it files it there right away; « Noter » and « Compter » use it.
 	const placeKey = (p: AgendaEvent['place']) => (p ? (p.project_id ? `p:${p.project_id}` : `s:${p.space_id}`) : '');
 	let place = $state('');
 	let placedKey = $derived(placeKey(event.place));
@@ -59,18 +66,32 @@
 		}
 	}
 
-	async function choose() {
-		if (!filed || place === placedKey || !place) return;
+	let asking = $state(false); // a recurring event: this occurrence or the whole series?
+
+	function choose() {
+		if (place === placedKey) return;
+		if (event.recurring) asking = true;
+		else void apply(false);
+	}
+
+	async function apply(series: boolean) {
+		asking = false;
 		busy = true;
 		message = '';
 		try {
-			onchanged?.(await v2.placeEvent(event.id, target()));
+			onchanged?.(await v2.placeEvent(event.id, target(), series));
+			if (series) onreload?.();
 		} catch (err) {
 			message = failure(err, 'Réunion non rangée : ');
 			place = placedKey;
 		} finally {
 			busy = false;
 		}
+	}
+
+	function cancelChoice() {
+		asking = false;
+		place = placedKey;
 	}
 
 	function localDay(): string {
@@ -88,6 +109,15 @@
 			{event.calendar}{#if event.location} · {event.location}{/if}{#if event.attendees.length} · {event.attendees.length} participant{event.attendees.length > 1 ? 's' : ''}{/if}
 			{#if event.status === 'cancelled'} · annulé{/if}{#if event.status === 'removed'} · retiré du calendrier{/if}
 		</small>
+		{#if event.place_source === 'series' || (event.series_filed && event.place_source === 'filed')}<small class="series">↻ rangé avec toute la série</small>{/if}
+		{#if asking}
+			<span class="ask" role="group" aria-label="Ranger quelles occurrences ?">
+				<small>Ranger :</small>
+				<button class="btn" onclick={() => apply(false)}>Cette fois</button>
+				<button class="btn primary" onclick={() => apply(true)}>Toute la série</button>
+				<button class="plain cancel" onclick={cancelChoice} aria-label="Annuler">×</button>
+			</span>
+		{/if}
 		{#if message}<small class="warn">{message}</small>{/if}
 	</span>
 	<span class="actions">
@@ -99,7 +129,7 @@
 				aria-label="Ranger dans"
 				title={filed ? 'Ranger la note et le temps ailleurs' : 'Où ranger la note et le temps'}
 			>
-				{#if !filed}<option value="">{defaultPlace}</option>{/if}
+				{#if !filed}<option value="">{event.place ? `Par défaut (${defaultPlace})` : defaultPlace}</option>{/if}
 				{#each carnet.tree?.spaces ?? [] as s (s.id)}
 					<optgroup label={s.name}>
 						<option value="s:{s.id}">{s.name} (sans projet)</option>
@@ -194,5 +224,22 @@
 			grid-column: 2;
 			justify-content: flex-start;
 		}
+	}
+	.series {
+		color: var(--muted);
+	}
+	.ask {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px;
+		margin-top: 4px;
+	}
+	.cancel {
+		background: none;
+		border: 0;
+		color: var(--muted);
+		font-size: 1rem;
+		cursor: pointer;
 	}
 </style>

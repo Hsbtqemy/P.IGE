@@ -51,6 +51,12 @@ class TargetIn(_In):
     task_id: str | None = Field(default=None, pattern=HEX)
 
 
+class PlaceIn(_In):
+    project_id: str | None = Field(default=None, pattern=HEX)
+    space_id: str | None = Field(default=None, pattern=HEX)
+    series: bool = False  # every occurrence of the recurring event, those to come included
+
+
 def calendar_view(c: Calendar) -> dict[str, Any]:
     """A calendar as the browser sees it: never the address path nor the password."""
     return {
@@ -170,14 +176,44 @@ def build_agenda_router(
         fmt = "%Y-%m-%dT%H:%M:%S.%fZ"
         return start.strftime(fmt), end.strftime(fmt)
 
-    def event_view(e: CalendarEvent, calendars_by_id: dict[str, Calendar]) -> dict[str, Any]:
-        c = calendars_by_id.get(e.calendar_id)
+    class Context:
+        """What the views of several events share (read once per request)."""
+
+        def __init__(self) -> None:
+            self.calendars = {c.id: c for c in store.list_calendars()}
+            self.series = store.series_places()
+            self.recurring = store.recurring_uids()
+
+    def planned(e: CalendarEvent, ctx: Context) -> tuple[dict[str, str | None], str] | None:
+        """Where the meeting was filed before any note: the occurrence itself, else its series."""
+        if e.project_id or e.space_id:
+            return {"project_id": e.project_id, "space_id": e.space_id}, "event"
+        key = store.series_key(e, ctx.recurring)
+        rule = ctx.series.get((e.calendar_id, key)) if key else None
+        if rule is not None:
+            return {"project_id": rule[0], "space_id": rule[1]}, "series"
+        return None
+
+    def event_view(e: CalendarEvent, ctx: Context) -> dict[str, Any]:
+        c = ctx.calendars.get(e.calendar_id)
+        key = store.series_key(e, ctx.recurring)
+        filed = placed(e)
+        plan = None if filed else planned(e, ctx)
+        place: dict[str, str | None] | None = filed or (plan[0] if plan else None)
+        if place is not None and place["project_id"] and not place["space_id"]:
+            try:
+                place = {"project_id": place["project_id"], "space_id": store.get_project(place["project_id"]).space_id}
+            except NotFoundError:
+                place = None
         return {
             "id": e.id, "calendar_id": e.calendar_id, "calendar": c.name if c else "", "color": c.color if c else "",
             "start": e.start_at, "end": e.end_at, "all_day": e.all_day, "title": e.title, "location": e.location,
             "description": e.description, "organizer": e.organizer, "attendees": e.attendees, "status": e.status,
             "entry_id": e.entry_id, "block_id": e.block_id, "project_id": c.project_id if c else None,
-            "place": placed(e),
+            "place": place,
+            "place_source": "filed" if filed else (plan[1] if plan else None),
+            "recurring": key is not None,
+            "series_filed": key is not None and (e.calendar_id, key) in ctx.series,
         }
 
     def placed(e: CalendarEvent) -> dict[str, str | None] | None:
@@ -201,12 +237,15 @@ def build_agenda_router(
     ) -> list[dict[str, Any]]:
         start_utc, end_utc = local_bounds(start, days, zone(tz))
         events = store.events_between(start_utc, end_utc, start.isoformat(), (start + timedelta(days=days)).isoformat())
-        by_id = {c.id: c for c in store.list_calendars()}
-        return [event_view(e, by_id) for e in events]
+        ctx = Context()
+        return [event_view(e, ctx) for e in events]
 
     def where(event: CalendarEvent, body: TargetIn) -> dict[str, str | None]:
         if body.project_id or body.space_id or body.task_id:
             return {"project_id": body.project_id, "space_id": body.space_id, "task_id": body.task_id}
+        plan = planned(event, Context())
+        if plan is not None:
+            return {**plan[0], "task_id": None}
         calendar = store.get_calendar(event.calendar_id)
         if calendar.project_id:
             return {"project_id": calendar.project_id, "space_id": None, "task_id": None}
@@ -253,24 +292,31 @@ def build_agenda_router(
             return {"entry_id": entry.id, "created": True, "event": current(event_id)}
 
     @router.post("/agenda/{event_id}/place")
-    def place_event(event_id: str, body: TargetIn, _auth: str = Depends(require_auth)) -> dict[str, Any]:
-        """File the meeting elsewhere: its note and its counted time move together."""
-        if not (body.project_id or body.space_id):
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Choisis un espace ou un projet")
+    def place_event(event_id: str, body: PlaceIn, _auth: str = Depends(require_auth)) -> dict[str, Any]:
+        """File the meeting: this occurrence, or the whole series (``series``). Its note and its
+        counted time, if already taken, move along. No place: back to the default."""
         target = {"project_id": body.project_id, "space_id": None if body.project_id else body.space_id}
         with store.transaction():
             event = store.get_event(event_id)
-            if event.entry_id is None and event.block_id is None:
-                raise HTTPException(status.HTTP_409_CONFLICT, "Rien à ranger : la réunion n'est ni notée ni comptée")
-            if event.entry_id is not None:
-                store.move_entry(event.entry_id, **target)
-            if event.block_id is not None:
-                store.reassign_block(event.block_id, **target)
+            key = store.series_key(event, store.recurring_uids()) if body.series else None
+            if body.series and key is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cet événement ne fait pas partie d'une série")
+            events = store.series_events(event.calendar_id, key) if key else [event]
+            if key:
+                store.plan_series(event.calendar_id, key, **target)
+            else:
+                store.plan_event(event_id, **target)
+            if target["project_id"] or target["space_id"]:
+                for e in events:
+                    if e.entry_id is not None:
+                        store.move_entry(e.entry_id, **target)
+                    if e.block_id is not None:
+                        store.reassign_block(e.block_id, **target)
             return current(event_id)
 
     def current(event_id: str) -> dict[str, Any]:
         """The event as the agenda shows it (after a note, a count or a move)."""
-        return event_view(store.get_event(event_id), {c.id: c for c in store.list_calendars()})
+        return event_view(store.get_event(event_id), Context())
 
     @router.post("/agenda/{event_id}/count")
     def count_event(event_id: str, body: TargetIn, _auth: str = Depends(require_auth)) -> dict[str, Any]:

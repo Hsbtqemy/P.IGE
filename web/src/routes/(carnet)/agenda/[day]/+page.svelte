@@ -211,7 +211,7 @@
 			<section class="dayview" aria-label={longDate(selected || day)}>
 				<h2><a href="/journal/{selected || day}">{longDate(selected || day)}</a> <small>{listFor(selected || day).length || ''}</small></h2>
 				{#each listFor(selected || day) as e (e.id)}
-					<EventRow event={e} choosePlace onchanged={changed} />
+					<EventRow event={e} choosePlace onchanged={changed} onreload={() => load(range.start, range.days)} />
 				{:else}
 					<p class="muted">Rien ce jour-là.</p>
 				{/each}
@@ -221,7 +221,7 @@
 				<section class:today={d.iso === today} aria-label={longDate(d.iso)}>
 					<h2><a href="/journal/{d.iso}">{longDate(d.iso)}</a> <small>{d.list.length || ''}</small></h2>
 					{#each d.list as e (e.id)}
-						<EventRow event={e} choosePlace onchanged={changed} />
+						<EventRow event={e} choosePlace onchanged={changed} onreload={() => load(range.start, range.days)} />
 					{:else}
 						<p class="muted">—</p>
 					{/each}

@@ -240,8 +240,7 @@ def test_agenda_notes_and_time_from_a_meeting(app):
 def test_a_noted_meeting_is_filed_elsewhere_with_its_time(app):
     c, project, _paul, week = _agenda_with_meeting(app)
     meeting = next(e for e in week if e["title"] == "Point FoReLLIS")
-    assert meeting["place"] is None
-    assert c.post(f"/api/v2/agenda/{meeting['id']}/place", json={"project_id": project["id"]}, headers=WEB).status_code == 409
+    assert meeting["place"] is None and meeting["recurring"] is True
     noted = c.post(f"/api/v2/agenda/{meeting['id']}/note", json={}, headers=WEB).json()  # into « À trier »
     c.post(f"/api/v2/agenda/{meeting['id']}/count", json={}, headers=WEB)
     week = c.get("/api/v2/agenda?start=2026-10-19&days=7&tz=Europe/Paris").json()
@@ -254,7 +253,53 @@ def test_a_noted_meeting_is_filed_elsewhere_with_its_time(app):
     assert block["project_id"] == project["id"]
     back = c.post(f"/api/v2/agenda/{meeting['id']}/place", json={"space_id": inbox["space_id"]}, headers=WEB).json()
     assert back["place"] == inbox
-    assert c.post(f"/api/v2/agenda/{meeting['id']}/place", json={}, headers=WEB).status_code == 400
+
+
+def test_meetings_are_filed_before_any_note_alone_or_as_a_series(app):
+    c, project, _paul, week = _agenda_with_meeting(app)
+    space_id = project["space_id"]
+    first = next(e for e in week if e["title"] == "Point FoReLLIS")
+    # one occurrence: kept, shown, and used by « Noter »
+    planned = c.post(f"/api/v2/agenda/{first['id']}/place", json={"space_id": space_id}, headers=WEB).json()
+    assert planned["place"] == {"project_id": None, "space_id": space_id} and planned["place_source"] == "event"
+    noted = c.post(f"/api/v2/agenda/{first['id']}/note", json={}, headers=WEB).json()
+    assert c.get(f"/api/v2/entries/{noted['entry_id']}").json()["space_id"] == space_id
+    # the whole series: every occurrence, the noted one moves along
+    series = c.post(f"/api/v2/agenda/{first['id']}/place", json={"project_id": project["id"], "series": True},
+                    headers=WEB).json()
+    assert series["place"]["project_id"] == project["id"] and series["series_filed"] is True
+    assert c.get(f"/api/v2/entries/{noted['entry_id']}").json()["project_id"] == project["id"]
+    later = c.get("/api/v2/agenda?start=2026-10-26&days=14&tz=Europe/Paris").json()
+    others = [e for e in later if e["title"] == "Point FoReLLIS"]
+    assert others and all(e["place"]["project_id"] == project["id"] and e["place_source"] == "series" for e in others)
+    loose = c.post(f"/api/v2/agenda/{others[0]['id']}/note", json={}, headers=WEB).json()
+    assert c.get(f"/api/v2/entries/{loose['entry_id']}").json()["project_id"] == project["id"]
+    # one occurrence of the series elsewhere, then the series rule removed
+    alone = c.post(f"/api/v2/agenda/{others[-1]['id']}/place", json={"space_id": space_id}, headers=WEB).json()
+    assert alone["place_source"] == "event"
+    c.post(f"/api/v2/agenda/{first['id']}/place", json={"series": True}, headers=WEB)
+    after = [e for e in c.get("/api/v2/agenda?start=2026-10-26&days=14&tz=Europe/Paris").json() if e["title"] == "Point FoReLLIS"]
+    assert [e["place_source"] for e in after] == ["filed", None]
+
+
+def test_sessions_sent_one_by_one_form_a_series_by_their_title(app):
+    """Timetables (UPplanning…) send each class as its own event: same title, other UID."""
+    c, project, _paul, _week = _agenda_with_meeting(app)
+    sessions = ICS.replace(b"END:VCALENDAR", b"".join(
+        b"BEGIN:VEVENT\nUID:cours-%d@up\nDTSTAMP:20261001T000000Z\nDTSTART:2026102%dT140000Z\n"
+        b"DTEND:2026102%dT153000Z\nSUMMARY:Culture Crit & Arg\nEND:VEVENT\n" % (i, i, i) for i in (2, 3)
+    ) + b"END:VCALENDAR")
+    app.state.feeds["https://cal.univ.fr/hugo.ics"] = sessions
+    cid = c.get("/api/v2/calendars").json()[0]["id"]
+    app.state.agenda.sync(cid, now=NOW)
+    week = c.get("/api/v2/agenda?start=2026-10-19&days=7&tz=Europe/Paris").json()
+    cours = [e for e in week if e["title"] == "Culture Crit & Arg"]
+    assert len(cours) == 2 and all(e["recurring"] for e in cours)
+    c.post(f"/api/v2/agenda/{cours[0]['id']}/place", json={"project_id": project["id"], "series": True}, headers=WEB)
+    week = c.get("/api/v2/agenda?start=2026-10-19&days=7&tz=Europe/Paris").json()
+    assert all(e["place_source"] == "series" for e in week if e["title"] == "Culture Crit & Arg")
+    single = next(e for e in week if not e["recurring"] and not e["all_day"])
+    assert c.post(f"/api/v2/agenda/{single['id']}/place", json={"series": True}, headers=WEB).status_code == 400
 
 
 def test_events_that_disappear_are_removed_unless_used(app):
