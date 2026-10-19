@@ -5,6 +5,8 @@
 	import { v2, type Entry, type Place, type ProjectView, type Task, type TaskStatus, type TaskView } from '#lib/api2.js';
 	import { onMailFiled } from '#lib/carnet/thunderbird.svelte.js';
 	import TaskOrigin from '#lib/carnet/TaskOrigin.svelte';
+	import PersonPicker from '#lib/carnet/PersonPicker.svelte';
+	import ProjectPeople from '#lib/carnet/ProjectPeople.svelte';
 	import { carnet, failure, isDay, projectOf, reload, spaceOf, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let id = $derived(page.params.id ?? '');
@@ -252,6 +254,14 @@
 		if (detail?.id === saved.id) detail = saved;
 	}
 
+	/** The people involved in the open task (shown on their page, « Impliqué·e dans »). */
+	async function setTaskPeople(ids: string[]) {
+		if (!detail) return;
+		const id = detail.id;
+		const updated = await attempt('Personnes non enregistrées', () => v2.updateTask(id, { person_ids: ids }));
+		if (updated && openId === id) detail = updated;
+	}
+
 	async function chooseWaiting(value: string) {
 		if (!detail) return;
 		if (value === '__other') {
@@ -464,6 +474,7 @@
 					</select>
 				</label>
 			</div>
+			<ProjectPeople {project} onchange={(p) => (project = p)} />
 			{#if editingDesc}
 				<textarea
 					id="project-desc"
@@ -574,6 +585,22 @@
 											<span>Échéance</span>
 											<input type="date" bind:value={draft.due} onchange={saveDraft} />
 										</label>
+										<div class="field">
+											<span>Personnes</span>
+											<div class="task-people">
+												{#each detail.people as person (person.id)}
+													<span class="chip">
+														<a href="/personnes/{person.id}">{person.display_name}</a>
+														<button class="x" onclick={() => setTaskPeople(detail?.people.filter((p) => p.id !== person.id).map((p) => p.id) ?? [])} aria-label="Retirer {person.display_name} de la tâche">×</button>
+													</span>
+												{/each}
+												<PersonPicker
+													id="task-person"
+													exclude={detail.people.map((p) => p.id)}
+													onpick={(person) => setTaskPeople([...(detail?.people.map((p) => p.id) ?? []), person.id])}
+												/>
+											</div>
+										</div>
 										<label class="field">
 											<span>Note</span>
 											<textarea bind:value={draft.note} rows="3" onblur={saveDraft}></textarea>
@@ -1056,5 +1083,30 @@
 		.detail {
 			padding-left: 12px;
 		}
+	}
+	.task-people {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		align-items: center;
+	}
+	.task-people .chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 2px 4px 2px 10px;
+		font-size: 0.875rem;
+		background: var(--chip);
+		border-radius: 999px;
+	}
+	.task-people .x {
+		opacity: 1;
+		height: 22px;
+		width: 22px;
+		padding: 0;
+	}
+	.task-people .chip a {
+		text-decoration: none;
+		font-weight: 700;
 	}
 </style>

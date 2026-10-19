@@ -107,6 +107,10 @@ class TaskMove(_In):
     space_id: str | None = OptHexId
 
 
+class ProjectPersonIn(_In):
+    role: str | None = Field(default=None, max_length=120)
+
+
 class StepIn(_In):
     label: str = Field(min_length=1, max_length=500)
 
@@ -317,7 +321,29 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             "links": [{"url": u, "label": label} for u, label in store.project_links(project_id)],
             "last_activity": store.last_activity(project_id),
             "open_tasks": store.open_task_count(project_id),
+            "people": _project_people(project),
         }
+
+    def _project_people(project: Any) -> list[dict[str, Any]]:
+        """The project's people, then (shown, not copied) those of its parent project."""
+        out = [{**_out(p), "project_role": role, "inherited": False} for p, role in store.project_people(project.id)]
+        if project.parent_id:
+            own = {p["id"] for p in out}
+            out += [
+                {**_out(p), "project_role": role, "inherited": True}
+                for p, role in store.project_people(project.parent_id) if p.id not in own
+            ]
+        return out
+
+    @router.put("/projects/{project_id}/people/{person_id}")
+    def set_project_person(project_id: IdPath, person_id: IdPath, body: ProjectPersonIn) -> dict[str, Any]:
+        store.set_project_person(project_id, person_id, body.role)
+        return _project_view(project_id)
+
+    @router.delete("/projects/{project_id}/people/{person_id}")
+    def remove_project_person(project_id: IdPath, person_id: IdPath) -> dict[str, Any]:
+        store.remove_project_person(project_id, person_id)
+        return _project_view(project_id)
 
     @router.post("/projects", status_code=status.HTTP_201_CREATED)
     def create_project(body: ProjectIn) -> dict[str, Any]:
@@ -618,6 +644,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             "last_exchange": store.last_exchange(person_id),
             "waiting_on": _out(store.waiting_on(person_id)),  # « J'attends d'elle »
             "involved_in": _out(store.tasks_for_person(person_id)),
+            "projects": [{**_out(p), "project_role": role} for p, role in store.person_projects(person_id)],
         }
 
     @router.get("/people/{person_id}")

@@ -5,7 +5,7 @@
 	import { v2, type Entry, type PersonPatch, type PersonView } from '#lib/api2.js';
 	import EntryList from '#lib/carnet/EntryList.svelte';
 	import TaskList from '#lib/carnet/TaskList.svelte';
-	import { carnet, failure } from '#lib/carnet/state.svelte.js';
+	import { carnet, failure, spaceOf } from '#lib/carnet/state.svelte.js';
 
 	let id = $derived(page.params.id ?? '');
 	let person = $state<PersonView | null>(null);
@@ -178,6 +178,17 @@
 			</div>
 
 			<div class="links">
+				<section>
+					<h2>Projets <small>{person.projects.length || ''}</small></h2>
+					{#each person.projects as p (p.id)}
+						<a class="project" href="/projets/{p.id}">
+							<b>{p.name}</b>
+							<small>{[p.project_role, spaceOf(p.space_id)?.name, p.state === 'dormant' ? 'en sommeil' : p.state === 'closed' ? 'clos' : ''].filter(Boolean).join(' · ')}</small>
+						</a>
+					{:else}
+						<p class="muted">Dans aucun projet. Ajoute-la ou ajoute-le depuis la page d’un projet.</p>
+					{/each}
+				</section>
 				<section>
 					<h2>J’attends d’elle ou de lui <small>{person.waiting_on.length || ''}</small></h2>
 					<TaskList tasks={person.waiting_on} empty="Rien en attente." />
@@ -361,5 +372,16 @@
 			width: 100%;
 			font-size: 1.5rem;
 		}
+	}
+	.project {
+		display: flex;
+		flex-direction: column;
+		padding: 8px 0;
+		border-bottom: 1px solid var(--line);
+		text-decoration: none;
+	}
+	.project small {
+		color: var(--muted);
+		font-size: 0.875rem;
 	}
 </style>
