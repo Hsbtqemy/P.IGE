@@ -917,21 +917,21 @@ class ModelStore:
         """Open tasks attached to the space itself (no project)."""
         return self._tasks("t.space_id = ? AND t.project_id IS NULL AND t.status <> 'done'", (space_id,))
 
-    def open_tasks(self) -> list[Task]:
-        """Every task not done, in manual order within each project or space."""
-        return self._tasks("t.status <> 'done'", ())
+    # A task in a living place: no archived space, no dormant or closed project (nor parent).
+    _LIVING = (
+        " AND NOT EXISTS (SELECT 1 FROM spaces sp WHERE sp.id = t.space_id AND sp.archived = 1)"
+        " AND NOT EXISTS (SELECT 1 FROM projects p LEFT JOIN projects parent ON parent.id = p.parent_id"
+        "                 WHERE p.id = t.project_id AND (p.state <> 'active' OR coalesce(parent.state, 'active') <> 'active'))"
+    )
+
+    def open_tasks(self, *, living: bool = False) -> list[Task]:
+        """Every task not done, in manual order within each project or space (``living``: only
+        those of active projects and spaces)."""
+        return self._tasks("t.status <> 'done'" + (self._LIVING if living else ""), ())
 
     def in_progress_tasks(self) -> list[Task]:
-        """Tasks in progress in living places (no dormant or closed project, no archived space),
-        the most recently started first."""
-        return self._tasks(
-            "t.status = 'in_progress'"
-            " AND NOT EXISTS (SELECT 1 FROM spaces sp WHERE sp.id = t.space_id AND sp.archived = 1)"
-            " AND NOT EXISTS (SELECT 1 FROM projects p LEFT JOIN projects parent ON parent.id = p.parent_id"
-            "                 WHERE p.id = t.project_id AND (p.state <> 'active' OR coalesce(parent.state, 'active') <> 'active'))",
-            (),
-            order="t.status_since DESC, t.rid DESC",
-        )
+        """Tasks in progress in living places, the most recently started first."""
+        return self._tasks("t.status = 'in_progress'" + self._LIVING, (), order="t.status_since DESC, t.rid DESC")
 
     def update_task(
         self,

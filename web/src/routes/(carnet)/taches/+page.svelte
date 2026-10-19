@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { v2, type Task } from '#lib/api2.js';
 	import { fold } from '#lib/feuillet.js';
-	import { carnet, failure, reload, todayIso } from '#lib/carnet/state.svelte.js';
+	import { carnet, failure, reload, shiftDay, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let tasks = $state<Task[] | null>(null);
 	let message = $state('');
@@ -69,6 +69,22 @@
 			.sort((a, b) => (a.status_since ?? '').localeCompare(b.status_since ?? ''))
 	);
 
+	/** « Par échéance »: one list by date, in blocks, whatever the project. */
+	let dueBlocks = $derived.by(() => {
+		const today = todayIso();
+		const tomorrow = shiftDay(today, 1);
+		const week = shiftDay(today, 7);
+		const dated = shown.filter((t) => t.due_date).sort((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''));
+		const blocks = [
+			{ key: 'late', title: 'En retard', tasks: dated.filter((t) => t.due_date! < today).reverse() },
+			{ key: 'today', title: 'Aujourd’hui', tasks: dated.filter((t) => t.due_date === today) },
+			{ key: 'tomorrow', title: 'Demain', tasks: dated.filter((t) => t.due_date === tomorrow) },
+			{ key: 'week', title: 'Dans les 7 jours', tasks: dated.filter((t) => t.due_date! > tomorrow && t.due_date! <= week) },
+			{ key: 'later', title: 'Plus tard', tasks: dated.filter((t) => t.due_date! > week) }
+		];
+		return blocks.filter((b) => b.tasks.length);
+	});
+
 	interface Group {
 		key: string;
 		title: string;
@@ -129,7 +145,7 @@
 		{ value: 'all', label: 'Toutes' },
 		{ value: 'in_progress', label: 'En cours' },
 		{ value: 'waiting', label: 'En attente' },
-		{ value: 'due', label: 'Avec échéance' }
+		{ value: 'due', label: 'Par échéance' }
 	];
 </script>
 
@@ -174,6 +190,18 @@
 	{#if !tasks}
 		<p class="muted">Chargement…</p>
 	{:else}
+		{#if filter === 'due'}
+			{#each dueBlocks as b (b.key)}
+				<section class:watch={b.key === 'late'} aria-label={b.title}>
+					<h2>{b.title} <small>{b.tasks.length}</small></h2>
+					<ul>
+						{#each b.tasks as task (task.id)}{@render row(task, true)}{/each}
+					</ul>
+				</section>
+			{:else}
+				<p class="muted">Aucune tâche avec une échéance.</p>
+			{/each}
+		{:else}
 		{#if watch.length}
 			<section class="watch" aria-labelledby="w-title">
 				<h2 id="w-title">À surveiller <small>en cours ou en attente depuis plus d’une semaine, échéance passée</small></h2>
@@ -197,6 +225,7 @@
 		{:else}
 			<p class="muted">Aucune tâche ne correspond.</p>
 		{/each}
+		{/if}
 	{/if}
 </div>
 
