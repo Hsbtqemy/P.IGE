@@ -336,6 +336,21 @@ MIGRATIONS: tuple[str, ...] = (
     CREATE INDEX calendar_events_start ON calendar_events(start_at);
     CREATE INDEX calendar_events_calendar ON calendar_events(calendar_id);
     """,
+    # ------------------------------------------------------------------ 3
+    # Filing a meeting before taking a note: on the occurrence itself, or for the whole series
+    # (every occurrence of a recurring event, those to come included).
+    """
+    ALTER TABLE calendar_events ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL;
+    ALTER TABLE calendar_events ADD COLUMN space_id TEXT REFERENCES spaces(id) ON DELETE SET NULL;
+    CREATE TABLE calendar_series (
+        calendar_id TEXT NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+        uid         TEXT NOT NULL,
+        project_id  TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        space_id    TEXT REFERENCES spaces(id) ON DELETE CASCADE,
+        PRIMARY KEY (calendar_id, uid),
+        CHECK ((project_id IS NULL) <> (space_id IS NULL))
+    );
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

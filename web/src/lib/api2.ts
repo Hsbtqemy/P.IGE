@@ -234,6 +234,10 @@ export interface AgendaEvent {
 	project_id: string | null;
 	/** Where the note (else the counted time) is filed, once noted or counted. */
 	place: { project_id: string | null; space_id: string } | null;
+	/** filed: its note or time; event / series: chosen before any note; null: the default. */
+	place_source: 'filed' | 'event' | 'series' | null;
+	recurring: boolean;
+	series_filed: boolean;
 }
 
 export interface Tree {
@@ -322,8 +326,8 @@ export const v2 = {
 		request<AgendaEvent[]>('GET', `/api/v2/agenda?${q({ start, days, tz })}`),
 	noteEvent: (id: string, target: Target, tz: string) =>
 		request<{ entry_id: string; created: boolean; event: AgendaEvent }>('POST', `/api/v2/agenda/${id}/note?${q({ tz })}`, target),
-	placeEvent: (id: string, target: Target) =>
-		request<AgendaEvent>('POST', `/api/v2/agenda/${encodeURIComponent(id)}/place`, target),
+	placeEvent: (id: string, target: Target, series = false) =>
+		request<AgendaEvent>('POST', `/api/v2/agenda/${encodeURIComponent(id)}/place`, { ...target, series }),
 	countEvent: (id: string, target: Target) =>
 		request<{ block_id: string; created: boolean; event: AgendaEvent }>('POST', `/api/v2/agenda/${id}/count`, target),
 	tasksInProgress: () => request<Task[]>('GET', '/api/v2/tasks/in-progress'),
