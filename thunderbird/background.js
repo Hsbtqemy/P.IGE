@@ -143,21 +143,40 @@ async function* selectedMessages(info) {
   }
 }
 
+/** The mail's text: its plain part, else its HTML part turned into text, else ''. */
+async function mailText(messageId) {
+  try {
+    const parts = await browser.messages.listInlineTextParts(messageId);
+    const plain = parts.find((p) => p.contentType === 'text/plain' && p.content?.trim());
+    if (plain) return plain.content;
+    const html = parts.find((p) => p.contentType === 'text/html' && p.content?.trim());
+    if (html) return await browser.messengerUtilities.convertToPlainText(html.content);
+  } catch {
+    /* older API or unreadable part: try the raw structure */
+  }
+  try {
+    return plainBody(await browser.messages.getFull(messageId));
+  } catch {
+    return ''; // body unreadable (encrypted…): subject and author are enough
+  }
+}
+
 async function fileMail(header, action, target, people) {
   const msgId = header.headerMessageId || '';
   const author = parseAuthor(header.author);
   const known = author.email ? people.find((p) => (p.email || '').toLowerCase() === author.email) : null;
-  let text = '';
+  const text = await mailText(header.id);
+  let attachments = [];
   try {
-    text = plainBody(await browser.messages.getFull(header.id));
+    attachments = await browser.messages.listAttachments(header.id);
   } catch {
-    /* body unreadable (encrypted…): subject and author are enough */
+    /* no list: the text is enough */
   }
   const entryId = msgId ? await stableId(msgId, 'entry') : crypto.randomUUID().replaceAll('-', '');
   const entry = await api(
     'POST',
     '/api/v2/entries',
-    entryForMail({ id: entryId, header, text, target, personIds: known ? [known.id] : [] })
+    entryForMail({ id: entryId, header, text, attachments, target, personIds: known ? [known.id] : [] })
   );
   if (action === 'task') {
     const taskId = msgId ? await stableId(msgId, 'task') : crypto.randomUUID().replaceAll('-', '');

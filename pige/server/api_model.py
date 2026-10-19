@@ -518,6 +518,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             with store.transaction():
                 if store.entry_exists(body.id):
                     response.status_code = status.HTTP_200_OK  # a resend after a lost reply
+                    _complete_mail(body.id, body)
                     return _entry_view(body.id)
                 if not body.mail_message_id:
                     return _entry_view(_create_entry(body).id)
@@ -528,9 +529,24 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
                 existing = store.entry_by_mail(body.mail_message_id)
                 if existing is not None:
                     response.status_code = status.HTTP_200_OK
+                    _complete_mail(existing.id, body)
                     return _entry_view(existing.id)
                 return _entry_view(_create_entry(body).id)
         return _entry_view(_create_entry(body).id)
+
+    def _complete_mail(entry_id: str, body: EntryIn) -> None:
+        """A mail filed again by a newer extension brings its full text: it replaces the short
+        excerpt of the first filing, unless the entry's text was edited since (then the old text
+        is no longer contained in the new one)."""
+        if body.source != "mail":
+            return
+        current = store.get_entry(entry_id)
+        if current.source != "mail" or len(body.body) <= len(current.body):
+            return
+        old = " ".join(current.body.rstrip().removesuffix("…").split())
+        if old not in " ".join(body.body.split()):
+            return
+        store.update_entry(entry_id, body=body.body, expected_revision=current.revision)
 
     def _create_entry(body: EntryIn) -> Entry:
         data = body.model_dump()

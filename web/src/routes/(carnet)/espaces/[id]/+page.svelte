@@ -5,6 +5,7 @@
 	import { v2, type Entry, type Task } from '#lib/api2.js';
 	import { onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
 	import { carnet, failure, longDate, reload } from '#lib/carnet/state.svelte.js';
+	import TaskOrigin from '#lib/carnet/TaskOrigin.svelte';
 
 	let id = $derived(page.params.id ?? '');
 	let space = $derived(carnet.tree?.spaces.find((s) => s.id === id));
@@ -17,6 +18,7 @@
 	let newTitle = $state('');
 	let renaming = $state(false);
 	let nameDraft = $state('');
+	let opened = $state<string | null>(null); // the task whose mail is shown
 
 	let isInbox = $derived(space?.name.toLocaleLowerCase('fr') === 'à trier');
 
@@ -34,6 +36,8 @@
 			const [t, e] = await Promise.all([v2.spaceTasks(current), v2.timeline({ space_id: current, limit: 200 })]);
 			if (current !== id) return;
 			tasks = t;
+			const wanted = page.url.searchParams.get('tache');
+			if (wanted && t.some((task) => task.id === wanted)) opened = wanted;
 			// The space's own paragraphs: those of its projects are on the project pages.
 			entries = e.filter((x) => !x.project_id);
 			loaded = true;
@@ -168,7 +172,13 @@
 					{#each tasks as task (task.id)}
 						<div class="row">
 							<input type="checkbox" class="check" onchange={() => done(task)} aria-label="Terminer « {task.title} »" />
-							<span class="title">{task.title}</span>
+							{#if task.origin_entry_id}
+								<button class="title plain open" onclick={() => (opened = opened === task.id ? null : task.id)} aria-expanded={opened === task.id}>
+									{task.title} <small aria-label="vient d’un mail ou d’un paragraphe">{opened === task.id ? '▴' : '✉'}</small>
+								</button>
+							{:else}
+								<span class="title">{task.title}</span>
+							{/if}
 							<span class="tools">
 								<select aria-label="Ranger « {task.title} »" onchange={(e) => moveTask(task, (e.currentTarget as HTMLSelectElement).value)}>
 									{@render places(`s:${id}`)}
@@ -176,6 +186,9 @@
 								<button class="x" onclick={() => removeTask(task)} aria-label="Supprimer « {task.title} »">×</button>
 							</span>
 						</div>
+						{#if opened === task.id && task.origin_entry_id}
+							<div class="origin"><TaskOrigin entryId={task.origin_entry_id} /></div>
+						{/if}
 					{:else}
 						<p class="muted">Aucune tâche.</p>
 					{/each}
@@ -324,6 +337,24 @@
 		font-weight: 700;
 		min-width: 0;
 		overflow-wrap: anywhere;
+	}
+	button.open {
+		text-align: left;
+		padding: 0;
+		background: none;
+		border: 0;
+		font: inherit;
+		font-weight: 700;
+		color: inherit;
+		cursor: pointer;
+	}
+	button.open small {
+		color: var(--muted);
+		font-weight: 400;
+	}
+	.origin {
+		padding: 0 0 10px 30px;
+		border-bottom: 1px solid var(--line);
 	}
 	.what {
 		flex: 1 1 200px;

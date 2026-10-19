@@ -3,7 +3,8 @@
 	import { page } from '$app/state';
 	import { ApiError } from '#lib/api.js';
 	import { v2, type Entry, type Place, type ProjectView, type Task, type TaskStatus, type TaskView } from '#lib/api2.js';
-	import { onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
+	import { onMailFiled } from '#lib/carnet/thunderbird.svelte.js';
+	import TaskOrigin from '#lib/carnet/TaskOrigin.svelte';
 	import { carnet, failure, isDay, projectOf, reload, spaceOf, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let id = $derived(page.params.id ?? '');
@@ -29,7 +30,6 @@
 	let detail = $state<TaskView | null>(null);
 	let draft = $state({ title: '', note: '', due: '' });
 	let newStep = $state('');
-	let origin = $state<Entry | null>(null); // the paragraph (often a mail) the task came from
 	let waitingOther = $state(false);
 	let waitingName = $state('');
 
@@ -57,6 +57,9 @@
 				project = p;
 				tasks = t;
 				entries = e;
+				// /taches and Ma journée link here with ?tache=<id>: open that task right away.
+				const wanted = t.find((task) => task.id === page.url.searchParams.get('tache'));
+				if (wanted) void openTask(wanted);
 			})
 			.catch((err) => {
 				if (current !== id) return;
@@ -223,14 +226,6 @@
 		if (!loaded || openId !== task.id) return;
 		detail = loaded;
 		draft = { title: loaded.title, note: loaded.note ?? '', due: loaded.due_date ?? '' };
-		origin = null;
-		if (loaded.origin_entry_id) {
-			v2.entry(loaded.origin_entry_id)
-				.then((e) => {
-					if (openId === task.id) origin = e;
-				})
-				.catch(() => {});
-		}
 		await tick();
 		document.getElementById('task-title')?.focus();
 	}
@@ -605,15 +600,7 @@
 												<input bind:value={newStep} placeholder="Nouvelle étape" aria-label="Nouvelle étape" />
 											</form>
 										</div>
-										{#if origin}
-											<p class="origin">
-												Vient {origin.mail_message_id ? 'du mail' : 'du paragraphe'} « {origin.title || origin.body.slice(0, 60)} » du
-												<a href="/journal/{origin.entry_date}">{new Date(`${origin.entry_date}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</a>
-												{#if origin.mail_message_id && thunderbird.available}
-													<button class="btn" onclick={() => origin?.mail_message_id && openMail(origin.mail_message_id)}>✉ Ouvrir le mail</button>
-												{/if}
-											</p>
-										{/if}
+										{#if detail.origin_entry_id}<TaskOrigin entryId={detail.origin_entry_id} />{/if}
 										<div class="actions">
 											<button class="btn" onclick={closeTask}>Fermer</button>
 											{#if carnet.timers.some((t) => t.task_id === detail?.id)}
@@ -970,15 +957,6 @@
 		flex: 1;
 		font-weight: 400;
 		padding: 6px 8px;
-	}
-	.origin {
-		margin: 0;
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 4px 8px;
-		font-size: 0.875rem;
-		color: var(--muted);
 	}
 	.actions {
 		display: flex;

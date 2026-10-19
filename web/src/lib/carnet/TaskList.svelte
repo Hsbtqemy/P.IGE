@@ -17,7 +17,7 @@
 </script>
 
 {#each tasks as task (task.id)}
-	<svelte:element this={task.project_id ? 'a' : 'div'} class="task" href={task.project_id ? `/projets/${task.project_id}` : undefined}>
+	<a class="task" href="{task.project_id ? `/projets/${task.project_id}` : `/espaces/${task.space_id}`}?tache={task.id}">
 		<span class="title">{task.title}</span>
 		<small>
 			{placeName(task)}
@@ -25,7 +25,7 @@
 			{#if task.status === 'waiting'} · attend {waitingName(task)} {since(task)}{/if}
 			{#if task.due_date} · pour le {new Date(`${task.due_date}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}{/if}
 		</small>
-	</svelte:element>
+	</a>
 {:else}
 	<p class="muted">{empty}</p>
 {/each}
