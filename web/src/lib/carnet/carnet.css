@@ -27,8 +27,9 @@
 	min-height: 100dvh;
 }
 
+/* Dark: follows the device, unless a theme is chosen in Réglages (data-theme on <html>). */
 @media (prefers-color-scheme: dark) {
-	.carnet {
+	:root:not([data-theme='light']) .carnet {
 		--bg: #161a17;
 		--surface: #1f2420;
 		--ink: #e5e9e4;
@@ -45,6 +46,24 @@
 		--decision-soft: #24303d;
 		color-scheme: dark;
 	}
+}
+
+:root[data-theme='dark'] .carnet {
+	--bg: #161a17;
+	--surface: #1f2420;
+	--ink: #e5e9e4;
+	--muted: #a2aba3;
+	--line: #333a34;
+	--chip: #2a302b;
+	--accent: #d98a97;
+	--accent-ink: #2a0f14;
+	--soft: #3a2629;
+	--softer: #2a2123;
+	--warn: #e3b25e;
+	--warn-soft: #3b3020;
+	--decision: #9fb6d1;
+	--decision-soft: #24303d;
+	color-scheme: dark;
 }
 
 .carnet h1,
@@ -71,6 +90,12 @@
 	background: transparent;
 	border: 1px solid var(--line);
 	border-radius: 8px;
+}
+
+.carnet a.btn {
+	display: inline-flex;
+	align-items: center;
+	text-decoration: none;
 }
 
 .carnet .btn.primary {

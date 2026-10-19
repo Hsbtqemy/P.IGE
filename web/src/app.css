@@ -23,8 +23,13 @@
 	color-scheme: light dark;
 }
 
+:root[data-theme='light'] {
+	color-scheme: light;
+}
+
+/* Dark: follows the device, unless a theme is chosen in Réglages (data-theme on <html>). */
 @media (prefers-color-scheme: dark) {
-	:root {
+	:root:not([data-theme='light']) {
 		--ground: #14181d;
 		--surface: #1c2128;
 		--ink: #e6eaf0;
@@ -37,6 +42,21 @@
 		--pending: #f0a35e;
 		--danger: #ff8a80;
 	}
+}
+
+:root[data-theme='dark'] {
+	color-scheme: dark;
+	--ground: #14181d;
+	--surface: #1c2128;
+	--ink: #e6eaf0;
+	--muted: #9aa4b2;
+	--line: #2c333d;
+	--accent: #8ea2ff;
+	--accent-ink: #10142a;
+	--tape: #e0b12a;
+	--tape-tick: #14181d;
+	--pending: #f0a35e;
+	--danger: #ff8a80;
 }
 
 *,

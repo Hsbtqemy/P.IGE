@@ -4,6 +4,7 @@
 	import { cache } from '#lib/carnet/capture.js';
 	import { addPasskey, passkeysSupported, security, suggestedName, type Devices } from '#lib/carnet/passkeys.js';
 	import { failure } from '#lib/carnet/state.svelte.js';
+	import { getTheme, setTheme, type Theme } from '#lib/theme.js';
 
 	let devices = $state<Devices | null>(null);
 	let message = $state('');
@@ -12,6 +13,12 @@
 	let newName = $state(passkeysSupported() ? suggestedName() : '');
 	let renaming = $state<string | null>(null);
 	let renameDraft = $state('');
+	let theme = $state<Theme>(typeof window === 'undefined' ? 'auto' : getTheme());
+	const THEMES: { value: Theme; label: string }[] = [
+		{ value: 'auto', label: 'Comme l’appareil' },
+		{ value: 'light', label: 'Clair' },
+		{ value: 'dark', label: 'Sombre' }
+	];
 
 	async function load() {
 		try {
@@ -102,6 +109,19 @@
 	<h1>Réglages</h1>
 	{#if message}<p class="message" role="alert">{message}</p>{/if}
 	{#if info}<p class="info" role="status">{info}</p>{/if}
+
+	<section aria-labelledby="look-title">
+		<h2 id="look-title">Apparence</h2>
+		<div class="choices" role="radiogroup" aria-labelledby="look-title">
+			{#each THEMES as t (t.value)}
+				<label class="choice" class:on={theme === t.value}>
+					<input type="radio" name="theme" value={t.value} checked={theme === t.value} onchange={() => setTheme((theme = t.value))} />
+					{t.label}
+				</label>
+			{/each}
+		</div>
+		<p class="hint">Gardé sur cet appareil seulement : le téléphone peut rester sombre et l’ordinateur clair.</p>
+	</section>
 
 	{#if !devices}
 		<p class="muted">Chargement…</p>
@@ -291,5 +311,34 @@
 		.wrap {
 			padding: 16px;
 		}
+	}
+	.choices {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+	.choice {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		min-height: 36px;
+		padding: 0 12px;
+		font-size: 0.875rem;
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		cursor: pointer;
+	}
+	.choice.on {
+		border-color: var(--accent);
+		background: var(--soft);
+		font-weight: 700;
+	}
+	.choice input {
+		accent-color: var(--accent);
+		margin: 0;
+	}
+	.choice:has(input:focus-visible) {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
 	}
 </style>

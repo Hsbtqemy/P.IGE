@@ -3,7 +3,8 @@
 	import { page } from '$app/state';
 	import { ApiError } from '#lib/api.js';
 	import { v2, type Entry, type Task } from '#lib/api2.js';
-	import { onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
+	import { onMailFiled } from '#lib/carnet/thunderbird.svelte.js';
+	import MailOpen from '#lib/carnet/MailOpen.svelte';
 	import { carnet, failure, longDate, reload } from '#lib/carnet/state.svelte.js';
 	import TaskOrigin from '#lib/carnet/TaskOrigin.svelte';
 
@@ -208,9 +209,7 @@
 								<small>{longDate(entry.entry_date).toLocaleLowerCase('fr')}{entry.mail_message_id ? ' · mail' : ''}{entry.people.length ? ` · ${entry.people.map((p) => p.display_name).join(', ')}` : ''}</small>
 							</a>
 							<span class="tools">
-								{#if entry.mail_message_id && thunderbird.available}
-									<button class="btn" onclick={() => entry.mail_message_id && openMail(entry.mail_message_id)}>✉</button>
-								{/if}
+								{#if entry.mail_message_id}<MailOpen messageId={entry.mail_message_id} label="✉" />{/if}
 								<select aria-label="Ranger « {entry.title} »" onchange={(e) => moveEntry(entry, (e.currentTarget as HTMLSelectElement).value)}>
 									{@render places(`s:${id}`)}
 								</select>
