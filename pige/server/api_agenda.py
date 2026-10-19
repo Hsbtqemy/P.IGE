@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from pige.model import ModelStore
-from pige.model.store import Calendar, CalendarEvent
+from pige.model.store import Calendar, CalendarEvent, NotFoundError
 from pige.server.agenda import Agenda, CalendarError, Source, Vault, normalize_url, shown_host
 
 HEX = r"^[0-9a-f]{32}$"
@@ -177,7 +177,20 @@ def build_agenda_router(
             "start": e.start_at, "end": e.end_at, "all_day": e.all_day, "title": e.title, "location": e.location,
             "description": e.description, "organizer": e.organizer, "attendees": e.attendees, "status": e.status,
             "entry_id": e.entry_id, "block_id": e.block_id, "project_id": c.project_id if c else None,
+            "place": placed(e),
         }
+
+    def placed(e: CalendarEvent) -> dict[str, str | None] | None:
+        """Where the meeting's note (else its time) is filed, once noted or counted."""
+        for get, item_id in ((store.get_entry, e.entry_id), (store.get_block, e.block_id)):
+            if item_id is None:
+                continue
+            try:
+                item = get(item_id)
+            except NotFoundError:
+                continue
+            return {"project_id": item.project_id, "space_id": item.space_id}
+        return None
 
     @router.get("/agenda")
     def agenda_days(
@@ -220,7 +233,7 @@ def build_agenda_router(
         with store.transaction():
             event = store.get_event(event_id)
             if event.entry_id is not None:
-                return {"entry_id": event.entry_id, "created": False}
+                return {"entry_id": event.entry_id, "created": False, "event": current(event_id)}
             day, start_time, end_time = local_times(event, zone(tz))
             emails = {a["email"] for a in event.attendees if a.get("email")} | ({event.organizer} if event.organizer else set())
             known = [p for p in store.list_people() if p.email and p.email.lower() in emails]
@@ -237,7 +250,27 @@ def build_agenda_router(
                 end_time=end_time, source="journal", person_ids=[p.id for p in known],
             )
             store.link_event(event_id, entry_id=entry.id)
-            return {"entry_id": entry.id, "created": True}
+            return {"entry_id": entry.id, "created": True, "event": current(event_id)}
+
+    @router.post("/agenda/{event_id}/place")
+    def place_event(event_id: str, body: TargetIn, _auth: str = Depends(require_auth)) -> dict[str, Any]:
+        """File the meeting elsewhere: its note and its counted time move together."""
+        if not (body.project_id or body.space_id):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Choisis un espace ou un projet")
+        target = {"project_id": body.project_id, "space_id": None if body.project_id else body.space_id}
+        with store.transaction():
+            event = store.get_event(event_id)
+            if event.entry_id is None and event.block_id is None:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Rien à ranger : la réunion n'est ni notée ni comptée")
+            if event.entry_id is not None:
+                store.move_entry(event.entry_id, **target)
+            if event.block_id is not None:
+                store.reassign_block(event.block_id, **target)
+            return current(event_id)
+
+    def current(event_id: str) -> dict[str, Any]:
+        """The event as the agenda shows it (after a note, a count or a move)."""
+        return event_view(store.get_event(event_id), {c.id: c for c in store.list_calendars()})
 
     @router.post("/agenda/{event_id}/count")
     def count_event(event_id: str, body: TargetIn, _auth: str = Depends(require_auth)) -> dict[str, Any]:
@@ -247,7 +280,7 @@ def build_agenda_router(
             if event.all_day:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "Un événement sur la journée entière ne se compte pas")
             if event.block_id is not None:
-                return {"block_id": event.block_id, "created": False}
+                return {"block_id": event.block_id, "created": False, "event": current(event_id)}
             target = where(event, body)
             begin = datetime.strptime(event.start_at, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
             end = datetime.strptime(event.end_at, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
@@ -256,7 +289,7 @@ def build_agenda_router(
                 entry_id=event.entry_id, source="agenda", overlap_mode="exclusive", note=event.title[:200],
             )
             store.link_event(event_id, block_id=block.id)
-            return {"block_id": block.id, "created": True}
+            return {"block_id": block.id, "created": True, "event": current(event_id)}
 
     return router
 

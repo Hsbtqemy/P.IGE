@@ -220,7 +220,8 @@ def test_agenda_notes_and_time_from_a_meeting(app):
     assert entry["project_id"] == project["id"] and [p["id"] for p in entry["people"]] == [paul["id"]]
     assert "Lieu : MSHS salle 2" in entry["body"]
     again = c.post(f"/api/v2/agenda/{meeting['id']}/note", json={}, headers=WEB).json()
-    assert again == {"entry_id": noted["entry_id"], "created": False}
+    assert (again["entry_id"], again["created"]) == (noted["entry_id"], False)
+    assert again["event"]["place"] == {"project_id": project["id"], "space_id": project["space_id"]}
 
     counted = c.post(f"/api/v2/agenda/{meeting['id']}/count", json={"project_id": project["id"]}, headers=WEB).json()
     assert counted["created"] is True
@@ -234,6 +235,26 @@ def test_agenda_notes_and_time_from_a_meeting(app):
     other = c.get("/api/v2/agenda?start=2026-10-26&days=1&tz=Europe/Paris").json()[0]
     loose = c.post(f"/api/v2/agenda/{other['id']}/note", json={}, headers=WEB).json()
     assert c.get(f"/api/v2/entries/{loose['entry_id']}").json()["project_id"] is None
+
+
+def test_a_noted_meeting_is_filed_elsewhere_with_its_time(app):
+    c, project, _paul, week = _agenda_with_meeting(app)
+    meeting = next(e for e in week if e["title"] == "Point FoReLLIS")
+    assert meeting["place"] is None
+    assert c.post(f"/api/v2/agenda/{meeting['id']}/place", json={"project_id": project["id"]}, headers=WEB).status_code == 409
+    noted = c.post(f"/api/v2/agenda/{meeting['id']}/note", json={}, headers=WEB).json()  # into « À trier »
+    c.post(f"/api/v2/agenda/{meeting['id']}/count", json={}, headers=WEB)
+    week = c.get("/api/v2/agenda?start=2026-10-19&days=7&tz=Europe/Paris").json()
+    inbox = next(e for e in week if e["id"] == meeting["id"])["place"]
+    assert inbox["project_id"] is None and inbox["space_id"]
+    moved = c.post(f"/api/v2/agenda/{meeting['id']}/place", json={"project_id": project["id"]}, headers=WEB).json()
+    assert moved["place"] == {"project_id": project["id"], "space_id": project["space_id"]}
+    assert c.get(f"/api/v2/entries/{noted['entry_id']}").json()["project_id"] == project["id"]
+    block = c.get("/api/v2/days/2026-10-19?tz=Europe/Paris").json()["blocks"][0]["block"]
+    assert block["project_id"] == project["id"]
+    back = c.post(f"/api/v2/agenda/{meeting['id']}/place", json={"space_id": inbox["space_id"]}, headers=WEB).json()
+    assert back["place"] == inbox
+    assert c.post(f"/api/v2/agenda/{meeting['id']}/place", json={}, headers=WEB).status_code == 400
 
 
 def test_events_that_disappear_are_removed_unless_used(app):

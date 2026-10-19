@@ -8,7 +8,15 @@
 		onchanged
 	}: { event: AgendaEvent; choosePlace?: boolean; onchanged?: (e: AgendaEvent) => void } = $props();
 
+	// Once noted or counted, the select shows where the meeting is filed and moves it;
+	// before, it says where the note and the time will go.
+	const placeKey = (p: AgendaEvent['place']) => (p ? (p.project_id ? `p:${p.project_id}` : `s:${p.space_id}`) : '');
 	let place = $state('');
+	let placedKey = $derived(placeKey(event.place));
+	$effect(() => {
+		place = placedKey;
+	});
+	let filed = $derived(!!(event.entry_id || event.block_id));
 	let busy = $state(false);
 	let message = $state('');
 
@@ -30,7 +38,7 @@
 		message = '';
 		try {
 			const r = await v2.noteEvent(event.id, target(), timeZone());
-			onchanged?.({ ...event, entry_id: r.entry_id });
+			onchanged?.(r.event);
 		} catch (err) {
 			message = failure(err, 'Note non créée : ');
 		} finally {
@@ -43,9 +51,23 @@
 		message = '';
 		try {
 			const r = await v2.countEvent(event.id, target());
-			onchanged?.({ ...event, block_id: r.block_id });
+			onchanged?.(r.event);
 		} catch (err) {
 			message = failure(err, 'Temps non compté : ');
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function choose() {
+		if (!filed || place === placedKey || !place) return;
+		busy = true;
+		message = '';
+		try {
+			onchanged?.(await v2.placeEvent(event.id, target()));
+		} catch (err) {
+			message = failure(err, 'Réunion non rangée : ');
+			place = placedKey;
 		} finally {
 			busy = false;
 		}
@@ -69,9 +91,15 @@
 		{#if message}<small class="warn">{message}</small>{/if}
 	</span>
 	<span class="actions">
-		{#if choosePlace && !(event.entry_id && (event.block_id || event.all_day))}
-			<select bind:value={place} aria-label="Ranger dans" title="Où ranger la note et le temps">
-				<option value="">{defaultPlace}</option>
+		{#if choosePlace}
+			<select
+				bind:value={place}
+				onchange={choose}
+				disabled={busy}
+				aria-label="Ranger dans"
+				title={filed ? 'Ranger la note et le temps ailleurs' : 'Où ranger la note et le temps'}
+			>
+				{#if !filed}<option value="">{defaultPlace}</option>{/if}
 				{#each carnet.tree?.spaces ?? [] as s (s.id)}
 					<optgroup label={s.name}>
 						<option value="s:{s.id}">{s.name} (sans projet)</option>
