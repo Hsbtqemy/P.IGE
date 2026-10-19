@@ -23,9 +23,23 @@
 
 	let isInbox = $derived(space?.name.toLocaleLowerCase('fr') === 'à trier');
 
+	// The space's journal: « À trier » is a queue to empty, oldest first; another space shows
+	// its last RECENT_DAYS days, the rest on demand.
+	const LIMIT = 200;
+	const RECENT_DAYS = 30;
+	let showAll = $state(false);
+	let since = $derived.by(() => {
+		const d = new Date();
+		d.setDate(d.getDate() - RECENT_DAYS);
+		return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+	});
+	let older = $derived(isInbox ? 0 : entries.filter((e) => e.entry_date < since).length);
+	let shown = $derived(isInbox ? [...entries].reverse() : showAll ? entries : entries.filter((e) => e.entry_date >= since));
+
 	$effect(() => {
 		const current = id;
 		loaded = false;
+		showAll = false;
 		loadError = '';
 		message = '';
 		info = '';
@@ -34,13 +48,16 @@
 
 	async function load(current = id) {
 		try {
-			const [t, e] = await Promise.all([v2.spaceTasks(current), v2.timeline({ space_id: current, limit: 200 })]);
+			const [t, e] = await Promise.all([
+				v2.spaceTasks(current),
+				v2.timeline({ space_id: current, without_project: true, limit: LIMIT })
+			]);
 			if (current !== id) return;
 			tasks = t;
 			const wanted = page.url.searchParams.get('tache');
 			if (wanted && t.some((task) => task.id === wanted)) opened = wanted;
 			// The space's own paragraphs: those of its projects are on the project pages.
-			entries = e.filter((x) => !x.project_id);
+			entries = e;
 			loaded = true;
 		} catch (err) {
 			if (current !== id) return;
@@ -200,9 +217,19 @@
 			</section>
 
 			<section aria-labelledby="j-title">
-				<h2 id="j-title">Journal de l’espace <small>{entries.length || ''}</small></h2>
+				{#if isInbox}
+					<h2 id="j-title">À ranger <small>{entries.length ? `${entries.length}${entries.length === LIMIT ? '+' : ''}` : ''}</small></h2>
+					{#if loaded && entries.length}
+						<p class="hint">Du plus ancien au plus récent : range chaque élément dans un projet, la liste se vide au fur et à mesure.</p>
+					{/if}
+				{:else}
+					<h2 id="j-title">Journal de l’espace <small>{showAll ? entries.length || '' : shown.length || ''}</small></h2>
+					{#if loaded && entries.length}
+						<p class="hint">Ce qui concerne l’espace sans projet précis{showAll ? '' : `, ces ${RECENT_DAYS} derniers jours`}.</p>
+					{/if}
+				{/if}
 				{#if loaded}
-					{#each entries as entry (entry.id)}
+					{#each shown as entry (entry.id)}
 						<div class="entry">
 							<a class="what" href={entry.source === 'writing' ? `/ecrire/${entry.id}` : `/journal/${entry.entry_date}`}>
 								<b>{entry.title || entry.body.slice(0, 80)}</b>
@@ -217,8 +244,20 @@
 							</span>
 						</div>
 					{:else}
-						<p class="muted">Rien d’écrit hors des projets.</p>
+						<p class="muted">
+							{#if isInbox}Rien à ranger.{:else if older}Rien ces {RECENT_DAYS} derniers jours.{:else}Rien d’écrit hors des projets.{/if}
+						</p>
 					{/each}
+					{#if !isInbox && older && !showAll}
+						<button class="plain more" onclick={() => (showAll = true)}>
+							Tout afficher ({older} plus ancien{older > 1 ? 's' : ''}{entries.length === LIMIT ? ', au-delà dans le journal' : ''})
+						</button>
+					{:else if !isInbox && showAll && older}
+						<button class="plain more" onclick={() => (showAll = false)}>Seulement les {RECENT_DAYS} derniers jours</button>
+					{/if}
+					{#if isInbox && entries.length === LIMIT}
+						<p class="muted">Les {LIMIT} plus récents sont listés ; les plus anciens apparaîtront à mesure que tu ranges.</p>
+					{/if}
 				{/if}
 			</section>
 		</div>
@@ -415,5 +454,16 @@
 		.wrap {
 			padding: 16px;
 		}
+	}
+	.more {
+		align-self: flex-start;
+		padding: 6px 0;
+		background: none;
+		border: 0;
+		color: var(--accent);
+		text-decoration: underline;
+		cursor: pointer;
+		font: inherit;
+		font-size: 0.875rem;
 	}
 </style>

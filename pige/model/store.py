@@ -1234,6 +1234,7 @@ class ModelStore:
         tag_id: str | None = None,
         day: str | None = None,
         source: str | None = None,
+        without_project: bool = False,
         limit: int = 200,
         offset: int = 0,
     ) -> list[Entry]:
@@ -1273,6 +1274,8 @@ class ModelStore:
         if source is not None:
             where.append("e.source = ?")
             params.append(source)
+        if without_project:
+            where.append("e.project_id IS NULL")
         sql = "SELECT e.* FROM entries e"
         if where:
             sql += " WHERE " + " AND ".join(where)
