@@ -187,6 +187,19 @@ def test_status_since_only_moves_when_status_changes(store, tree):
     assert [t.id for t in store.in_progress_tasks()] == [task.id]
 
 
+def test_in_progress_skips_sleeping_places_newest_first(store, tree):
+    old = store.set_task_status(store.create_task("ancienne", project_id=tree["dico"].id).id, "in_progress")
+    new = store.set_task_status(store.create_task("récente", space_id=tree["mimmoc"].id).id, "in_progress")
+    asleep = store.set_task_status(store.create_task("dort", project_id=tree["porfavor"].id).id, "in_progress")
+    ids = [t.id for t in store.in_progress_tasks()]
+    assert set(ids) == {old.id, new.id, asleep.id} and ids.index(new.id) < ids.index(old.id)
+    store.update_project(tree["portail"].id, state="dormant")  # the parent sleeps: its sub-project too
+    store.update_project(tree["dico"].id, state="closed")
+    assert [t.id for t in store.in_progress_tasks()] == [new.id]
+    store.set_space_archived(tree["mimmoc"].id, True)
+    assert store.in_progress_tasks() == []
+
+
 def test_steps_progress(store, tree):
     task = store.create_task("Site Por Favor", project_id=tree["porfavor"].id,
                              steps=["Métadonnées", "Migrer vers Quarto", "Relier les notices"])
