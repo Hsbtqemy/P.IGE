@@ -5,6 +5,7 @@
 	import { v2, type AgendaEvent, type Entry, type EntryPatch } from '#lib/api2.js';
 	import EventRow from '#lib/carnet/EventRow.svelte';
 	import DoneToday from '#lib/carnet/DoneToday.svelte';
+	import TodayCompact from '#lib/carnet/TodayCompact.svelte';
 	import { newId, prepare } from '#lib/carnet/capture.js';
 	import { outbox, queue } from '#lib/carnet/outbox.svelte.js';
 	import { appleMail, appleMailHref, onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
@@ -26,6 +27,7 @@
 
 	let day = $derived(isDay(page.params.day ?? '') ? (page.params.day as string) : '');
 	let entries = $state<Entry[]>([]);
+	let doneKey = $state(0); // a task ticked in the side column: refresh « Fait ce jour-là »
 	let writtenDays = $state<string[]>([]);
 	let loading = $state(true);
 	let message = $state('');
@@ -419,7 +421,7 @@
 				{/if}
 			</div>
 
-			<div class="done-box"><DoneToday {day} /></div>
+			<div class="done-box"><DoneToday {day} refreshKey={doneKey} /></div>
 
 			{#if meetings.length}
 				<section class="meetings" aria-label="Agenda du jour">
@@ -528,7 +530,7 @@
 							bind:this={composer}
 							bind:value={draft}
 							rows={Math.max(3, draft.split('\n').length + 1)}
-							placeholder="Écrire… Un nom de projet le range, @personne, #étiquette, [ ] tâche, Décision :"
+							placeholder="Écrire…"
 							onkeydown={(ev) => keys(ev, add)}
 						></textarea>
 						{#if draft.trim()}
@@ -553,7 +555,18 @@
 							</div>
 						{/if}
 						<div class="row">
-							<span class="hint">{place ? 'Ctrl + Entrée pour ajouter' : 'Crée d’abord un espace pour pouvoir écrire.'}</span>
+							{#if place}
+								<span class="hint syntax">
+									<span>Ctrl + Entrée pour ajouter</span>
+									<span>nom de projet : le range</span>
+									<span><b>@</b>personne</span>
+									<span><b>#</b>étiquette</span>
+									<span><b>[ ]</b> tâche</span>
+									<span><b>Décision :</b></span>
+								</span>
+							{:else}
+								<span class="hint">Crée d’abord un espace pour pouvoir écrire.</span>
+							{/if}
 							<span class="grow"></span>
 							<button class="btn primary" disabled={!draft.trim() || saving || !place} onclick={add}>Ajouter au feuillet</button>
 						</div>
@@ -562,7 +575,8 @@
 			</article>
 		</section>
 
-		<aside class="side" aria-label="Ce que le feuillet a relié">
+		<aside class="side" aria-label="À faire et ce que le feuillet a relié">
+			<TodayCompact {day} isToday={day === todayIso()} ondone={() => doneKey++} />
 			<div class="block">
 				<span class="label">Rangé dans</span>
 				{#each filedIn as item (item.key)}
@@ -580,10 +594,6 @@
 					<p>{peopleOfDay.join(' · ')}</p>
 				</div>
 			{/if}
-			<div class="help">
-				<b>Écrire sans formulaire</b>
-				<span>Un nom de projet range le paragraphe, <b>@</b> cite une personne, <b>#</b> pose une étiquette, une ligne <b>[ ]</b> crée une tâche, <b>Décision :</b> en fait une décision.</span>
-			</div>
 			<div class="block">
 				<span class="label">{monthName}</span>
 				<div class="cal">
@@ -813,6 +823,20 @@
 		font-size: 0.8125rem;
 		color: var(--muted);
 	}
+	.row .btn {
+		white-space: nowrap;
+	}
+	.syntax {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 2px 14px;
+		font-size: 0.75rem;
+		opacity: 0.75;
+	}
+	.syntax b {
+		color: var(--ink);
+		font-weight: 700;
+	}
 	select {
 		max-width: 260px;
 		min-height: 32px;
@@ -871,15 +895,6 @@
 	.muted {
 		color: var(--muted);
 		margin: 0;
-	}
-	.help {
-		padding: 10px 12px;
-		background: var(--softer);
-		border-radius: 8px;
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		font-size: 0.8125rem;
 	}
 	.cal {
 		display: grid;
