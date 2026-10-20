@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { v2, type Task } from '#lib/api2.js';
 	import { fold } from '#lib/feuillet.js';
-	import { carnet, failure, reload, shiftDay, todayIso } from '#lib/carnet/state.svelte.js';
+	import { carnet, failure, longDate, reload, shiftDay, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let tasks = $state<Task[] | null>(null);
 	let message = $state('');
-	let filter = $state<'all' | 'in_progress' | 'waiting' | 'due'>('all');
+	let filter = $state<'all' | 'recent' | 'in_progress' | 'waiting' | 'due'>('all');
 	let team = $state('');
 	let query = $state('');
 	let undo = $state<{ task: Task; timer: ReturnType<typeof setTimeout> } | null>(null);
@@ -68,6 +68,30 @@
 			)
 			.sort((a, b) => (a.status_since ?? '').localeCompare(b.status_since ?? ''))
 	);
+
+	/** « Récentes »: the last added first, by day of creation, whatever the project. */
+	const RECENT_MAX = 60;
+	let recentBlocks = $derived.by(() => {
+		const local = (iso: string) => {
+			const d = new Date(iso);
+			return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+		};
+		const today = todayIso();
+		const yesterday = shiftDay(today, -1);
+		const sorted = shown
+			.filter((t) => t.created_at)
+			.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+			.slice(0, RECENT_MAX);
+		const blocks: { key: string; title: string; tasks: Task[] }[] = [];
+		for (const t of sorted) {
+			const day = local(t.created_at!);
+			const title = day === today ? 'Ajoutées aujourd’hui' : day === yesterday ? 'Hier' : longDate(day);
+			const last = blocks.at(-1);
+			if (last?.key === day) last.tasks.push(t);
+			else blocks.push({ key: day, title, tasks: [t] });
+		}
+		return blocks;
+	});
 
 	/** « Par échéance »: one list by date, in blocks, whatever the project. */
 	let dueBlocks = $derived.by(() => {
@@ -143,6 +167,7 @@
 
 	const FILTERS: { value: typeof filter; label: string }[] = [
 		{ value: 'all', label: 'Toutes' },
+		{ value: 'recent', label: 'Récentes' },
 		{ value: 'in_progress', label: 'En cours' },
 		{ value: 'waiting', label: 'En attente' },
 		{ value: 'due', label: 'Par échéance' }
@@ -190,7 +215,19 @@
 	{#if !tasks}
 		<p class="muted">Chargement…</p>
 	{:else}
-		{#if filter === 'due'}
+		{#if filter === 'recent'}
+			{#each recentBlocks as b (b.key)}
+				<section aria-label={b.title}>
+					<h2>{b.title} <small>{b.tasks.length}</small></h2>
+					<ul>
+						{#each b.tasks as task (task.id)}{@render row(task, true)}{/each}
+					</ul>
+				</section>
+			{:else}
+				<p class="muted">Aucune tâche ne correspond.</p>
+			{/each}
+			{#if shown.length > RECENT_MAX}<p class="muted">Les {RECENT_MAX} dernières ajoutées ; la recherche trouve les autres.</p>{/if}
+		{:else if filter === 'due'}
 			{#each dueBlocks as b (b.key)}
 				<section class:watch={b.key === 'late'} aria-label={b.title}>
 					<h2>{b.title} <small>{b.tasks.length}</small></h2>
