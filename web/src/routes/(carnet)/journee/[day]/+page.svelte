@@ -3,6 +3,7 @@
 	import { page } from '$app/state';
 	import EventRow from '#lib/carnet/EventRow.svelte';
 	import DayPlan from '#lib/carnet/DayPlan.svelte';
+	import DoneToday from '#lib/carnet/DoneToday.svelte';
 	import { v2, type AgendaEvent, type CountedBlock, type DayReport, type OverlapMode, type Target, type Task, type TimeBlock } from '#lib/api2.js';
 	import {
 		carnet,
@@ -20,7 +21,7 @@
 	let report = $state<DayReport | null>(null);
 	let meetings = $state<AgendaEvent[]>([]);
 	let openTasks = $state<Task[]>([]); // open tasks of active projects: the day's plan
-	let finished = $state<Task[]>([]); // ticked that day
+	let doneKey = $state(0); // reloads « Fait aujourd'hui » after a change in the plan
 	let message = $state('');
 	let info = $state('');
 	let taskTitles = $state<Record<string, string>>({});
@@ -63,16 +64,13 @@
 
 	async function load(current = day) {
 		try {
-			const start = new Date(`${current}T00:00:00`);
-			const end = new Date(`${shiftDay(current, 1)}T00:00:00`);
-			const [r, timers, doing, agenda, ticked] = await Promise.all([
+			const [r, timers, doing, agenda] = await Promise.all([
 				v2.day(current, timeZone()),
 				v2.timers(),
 				v2.openTasks(true),
-				v2.agenda(current, 1, timeZone()).catch(() => [] as AgendaEvent[]),
-				v2.doneTasks(start.toISOString()).catch(() => [] as Task[])
+				v2.agenda(current, 1, timeZone()).catch(() => [] as AgendaEvent[])
 			]);
-			finished = ticked.filter((t) => t.done_at && new Date(t.done_at) < end);
+			doneKey += 1;
 			if (current !== day) return;
 			report = r;
 			meetings = agenda.filter((m) => !m.all_day);
@@ -321,7 +319,7 @@
 					{/each}
 				</section>
 			{/if}
-			<DayPlan tasks={openTasks} {finished} {day} isToday={day === todayIso()} onchanged={() => void load()} onstart={startOnTask} />
+			<DayPlan tasks={openTasks} {day} isToday={day === todayIso()} onchanged={() => void load()} onstart={startOnTask} />
 		</div>
 
 		<h2 class="time-title">Temps</h2>
@@ -454,6 +452,7 @@
 						</button>
 					{/if}
 				{/if}
+				<DoneToday {day} title={day === todayIso() ? 'Fait aujourd’hui' : 'Fait ce jour-là'} refreshKey={doneKey} onreopen={() => void load()} />
 			</aside>
 		</div>
 	{/if}
