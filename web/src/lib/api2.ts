@@ -190,6 +190,7 @@ export interface SearchHit {
 	project_id: string | null;
 	entry_date: string | null;
 	status: TaskStatus | null;
+	done_at?: string | null;
 }
 
 export interface CalendarInfo {
@@ -317,7 +318,8 @@ export const v2 = {
 	day: (day: string, tz: string) => request<DayReport>('GET', `/api/v2/days/${day}?tz=${encodeURIComponent(tz)}`),
 	validateDay: (day: string, tz: string) =>
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),
-	search: (text: string, limit = 20) => request<SearchHit[]>('GET', `/api/v2/search?${q({ q: text, limit })}`),
+	search: (text: string, limit = 20) => request<SearchHit[]>('GET', `/api/v2/search?${q({ q: text, limit, include_done: true })}`),
+	doneTasks: (since: string) => request<Task[]>('GET', `/api/v2/tasks/done?${q({ since })}`),
 	openTasks: (living = false) => request<Task[]>('GET', `/api/v2/tasks${living ? '?living=true' : ''}`),
 	calendars: () => request<CalendarInfo[]>('GET', '/api/v2/calendars'),
 	addCalendar: (input: CalendarInput & { name: string; url: string }) =>

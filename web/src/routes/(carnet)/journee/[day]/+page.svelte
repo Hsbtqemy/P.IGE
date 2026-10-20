@@ -20,6 +20,7 @@
 	let report = $state<DayReport | null>(null);
 	let meetings = $state<AgendaEvent[]>([]);
 	let openTasks = $state<Task[]>([]); // open tasks of active projects: the day's plan
+	let finished = $state<Task[]>([]); // ticked that day
 	let message = $state('');
 	let info = $state('');
 	let taskTitles = $state<Record<string, string>>({});
@@ -62,12 +63,16 @@
 
 	async function load(current = day) {
 		try {
-			const [r, timers, doing, agenda] = await Promise.all([
+			const start = new Date(`${current}T00:00:00`);
+			const end = new Date(`${shiftDay(current, 1)}T00:00:00`);
+			const [r, timers, doing, agenda, ticked] = await Promise.all([
 				v2.day(current, timeZone()),
 				v2.timers(),
 				v2.openTasks(true),
-				v2.agenda(current, 1, timeZone()).catch(() => [] as AgendaEvent[])
+				v2.agenda(current, 1, timeZone()).catch(() => [] as AgendaEvent[]),
+				v2.doneTasks(start.toISOString()).catch(() => [] as Task[])
 			]);
+			finished = ticked.filter((t) => t.done_at && new Date(t.done_at) < end);
 			if (current !== day) return;
 			report = r;
 			meetings = agenda.filter((m) => !m.all_day);
@@ -316,7 +321,7 @@
 					{/each}
 				</section>
 			{/if}
-			<DayPlan tasks={openTasks} {day} isToday={day === todayIso()} onchanged={() => void load()} onstart={startOnTask} />
+			<DayPlan tasks={openTasks} {finished} {day} isToday={day === todayIso()} onchanged={() => void load()} onstart={startOnTask} />
 		</div>
 
 		<h2 class="time-title">Temps</h2>
