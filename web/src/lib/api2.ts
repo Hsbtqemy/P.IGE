@@ -82,6 +82,7 @@ export interface Task {
 	done_at?: string | null;
 	status_since?: string;
 	origin_entry_id?: string | null;
+	created_at?: string;
 	steps_done: number;
 	steps_total: number;
 }
