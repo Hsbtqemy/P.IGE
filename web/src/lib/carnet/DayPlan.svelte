@@ -7,15 +7,12 @@
 
 	let {
 		tasks,
-		finished = [],
 		day,
 		isToday,
 		onchanged,
 		onstart
 	}: {
 		tasks: Task[];
-		/** Ticked that day: listed, to undo a click. */
-		finished?: Task[];
 		day: string;
 		isToday: boolean;
 		onchanged: () => void;
@@ -25,7 +22,6 @@
 	let plan = $derived(planDay(tasks, day));
 	let showOld = $state(false);
 	let showWaiting = $state(false);
-	let showFinished = $state(false);
 	let undo = $state<Task | null>(null); // the task just ticked, for « Annuler »
 	let message = $state('');
 	let info = $state('');
@@ -188,24 +184,6 @@
 			{showWaiting ? 'Replier' : `En attente des autres : ${plan.waiting.length}`}
 		</button>
 		{#if showWaiting}{@render grouped(plan.waiting)}{/if}
-	{/if}
-
-	{#if finished.length}
-		<button class="plain more" onclick={() => (showFinished = !showFinished)} aria-expanded={showFinished}>
-			{showFinished ? 'Replier' : `Terminées ${isToday ? 'aujourd’hui' : 'ce jour-là'} : ${finished.length}`}
-		</button>
-		{#if showFinished}
-			<ul class="finished">
-				{#each finished as t (t.id)}
-					<li>
-						<input type="checkbox" checked class="check" onchange={() => reopen(t)} aria-label="Rouvrir « {t.title} »" />
-						<span class="struck">{t.title}</span>
-						<small>{placeName(t)}</small>
-						<button class="plain undo" onclick={() => reopen(t)}>Rouvrir</button>
-					</li>
-				{/each}
-			</ul>
-		{/if}
 	{/if}
 </section>
 
@@ -378,17 +356,5 @@
 		color: var(--accent);
 		text-decoration: underline;
 		cursor: pointer;
-	}
-	.finished li {
-		display: grid;
-		grid-template-columns: 24px minmax(0, 1fr) auto auto;
-		gap: 8px;
-		align-items: center;
-		padding: 4px 0;
-	}
-	.struck {
-		text-decoration: line-through;
-		color: var(--muted);
-		overflow-wrap: anywhere;
 	}
 </style>

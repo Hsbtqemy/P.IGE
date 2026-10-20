@@ -4,6 +4,7 @@
 	import { ApiError } from '#lib/api.js';
 	import { v2, type AgendaEvent, type Entry, type EntryPatch } from '#lib/api2.js';
 	import EventRow from '#lib/carnet/EventRow.svelte';
+	import DoneToday from '#lib/carnet/DoneToday.svelte';
 	import { newId, prepare } from '#lib/carnet/capture.js';
 	import { outbox, queue } from '#lib/carnet/outbox.svelte.js';
 	import { appleMail, appleMailHref, onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
@@ -417,6 +418,8 @@
 					</p>
 				{/if}
 			</div>
+
+			<div class="done-box"><DoneToday {day} /></div>
 
 			{#if meetings.length}
 				<section class="meetings" aria-label="Agenda du jour">
@@ -947,5 +950,12 @@
 		cursor: pointer;
 		font: inherit;
 		font-size: 0.875rem;
+	}
+	.done-box:not(:empty) {
+		padding: 10px 14px;
+		background: var(--surface);
+		border: 1px solid var(--line);
+		border-left: 3px solid var(--accent);
+		border-radius: 8px;
 	}
 </style>
