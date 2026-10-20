@@ -441,6 +441,13 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         of active projects and spaces (the day's plan)."""
         return _out(store.open_tasks(living=living))
 
+    @router.get("/tasks/done")
+    def done_tasks(since: datetime, limit: int = Query(default=100, ge=1, le=500)) -> list[dict[str, Any]]:
+        """Tasks finished since a moment (« Terminées aujourd'hui » in Ma journée)."""
+        if since.tzinfo is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "since: a time with its offset is expected")
+        return _out(store.done_tasks_since(since, limit=limit))
+
     @router.get("/tasks/in-progress")
     def tasks_in_progress() -> list[dict[str, Any]]:
         return _out(store.in_progress_tasks())

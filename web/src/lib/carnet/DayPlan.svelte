@@ -7,12 +7,15 @@
 
 	let {
 		tasks,
+		finished = [],
 		day,
 		isToday,
 		onchanged,
 		onstart
 	}: {
 		tasks: Task[];
+		/** Ticked that day: listed, to undo a click. */
+		finished?: Task[];
 		day: string;
 		isToday: boolean;
 		onchanged: () => void;
@@ -22,6 +25,8 @@
 	let plan = $derived(planDay(tasks, day));
 	let showOld = $state(false);
 	let showWaiting = $state(false);
+	let showFinished = $state(false);
+	let undo = $state<Task | null>(null); // the task just ticked, for « Annuler »
 	let message = $state('');
 	let info = $state('');
 
@@ -63,6 +68,7 @@
 	async function act(what: string, action: () => Promise<unknown>, done: string) {
 		message = '';
 		info = '';
+		undo = null;
 		try {
 			await action();
 			info = done;
@@ -73,8 +79,17 @@
 		}
 	}
 
-	function finish(t: Task) {
-		void act('Tâche non terminée', () => v2.updateTask(t.id, { status: 'done' }), `« ${t.title} » terminée.`);
+	async function finish(t: Task) {
+		await act('Tâche non terminée', () => v2.updateTask(t.id, { status: 'done' }), `« ${t.title} » terminée.`);
+		if (!message) undo = t;
+	}
+
+	/** Back to how it was before the click (in progress, waiting on someone, or to do). */
+	function reopen(t: Task) {
+		const previous = t.status === 'done' ? 'open' : t.status;
+		const patch = previous === 'waiting' && t.waiting_on ? { status: previous, waiting_on: t.waiting_on } : { status: previous };
+		undo = null;
+		void act('Tâche non rouverte', () => v2.updateTask(t.id, patch), `« ${t.title} » rouverte.`);
 	}
 
 	function postpone(t: Task, value: string) {
@@ -130,7 +145,12 @@
 <section class="plan" aria-labelledby="plan-title">
 	<h2 id="plan-title">{isToday ? 'À faire aujourd’hui' : 'À faire ce jour-là'} <small>{plan.today.length || ''}</small></h2>
 	{#if message}<p class="warn" role="alert">{message}</p>{/if}
-	{#if info}<p class="info" role="status">{info}</p>{/if}
+	{#if info}
+		<p class="info" role="status">
+			{info}
+			{#if undo}<button class="plain undo" onclick={() => undo && reopen(undo)}>Annuler</button>{/if}
+		</p>
+	{/if}
 	{#if plan.today.length}
 		{@render grouped(plan.today)}
 	{:else}
@@ -168,6 +188,24 @@
 			{showWaiting ? 'Replier' : `En attente des autres : ${plan.waiting.length}`}
 		</button>
 		{#if showWaiting}{@render grouped(plan.waiting)}{/if}
+	{/if}
+
+	{#if finished.length}
+		<button class="plain more" onclick={() => (showFinished = !showFinished)} aria-expanded={showFinished}>
+			{showFinished ? 'Replier' : `Terminées ${isToday ? 'aujourd’hui' : 'ce jour-là'} : ${finished.length}`}
+		</button>
+		{#if showFinished}
+			<ul class="finished">
+				{#each finished as t (t.id)}
+					<li>
+						<input type="checkbox" checked class="check" onchange={() => reopen(t)} aria-label="Rouvrir « {t.title} »" />
+						<span class="struck">{t.title}</span>
+						<small>{placeName(t)}</small>
+						<button class="plain undo" onclick={() => reopen(t)}>Rouvrir</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
 	{/if}
 </section>
 
@@ -329,5 +367,28 @@
 		.ahead small {
 			grid-column: 2;
 		}
+	}
+	.undo {
+		margin-left: 8px;
+		padding: 0;
+		background: none;
+		border: 0;
+		font: inherit;
+		font-weight: 700;
+		color: var(--accent);
+		text-decoration: underline;
+		cursor: pointer;
+	}
+	.finished li {
+		display: grid;
+		grid-template-columns: 24px minmax(0, 1fr) auto auto;
+		gap: 8px;
+		align-items: center;
+		padding: 4px 0;
+	}
+	.struck {
+		text-decoration: line-through;
+		color: var(--muted);
+		overflow-wrap: anywhere;
 	}
 </style>

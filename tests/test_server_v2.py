@@ -414,3 +414,14 @@ def test_people_of_projects_and_tasks(client, tree):
     ok(web.post("/api/login", json={"password": PASSWORD}))
     ok(web.delete(f"/api/v2/projects/{portail}/people/{anne['id']}", headers={CSRF_HEADER: "web"}))
     assert ok(client.get(f"/api/v2/people/{anne['id']}"))["projects"] == []
+
+
+def test_tasks_done_since_a_moment(client, tree):
+    task = ok(client.post("/api/v2/tasks", json={"title": "Cochée par erreur", "project_id": tree["dico"]["id"]}), 201)
+    ok(client.patch(f"/api/v2/tasks/{task['id']}", json={"status": "done"}))
+    done = ok(client.get("/api/v2/tasks/done?since=2000-01-01T00:00:00%2B02:00"))
+    assert [t["id"] for t in done] == [task["id"]]
+    assert ok(client.get("/api/v2/tasks/done?since=2090-01-01T00:00:00Z")) == []
+    assert client.get("/api/v2/tasks/done?since=2026-01-01T00:00:00").status_code == 400
+    ok(client.patch(f"/api/v2/tasks/{task['id']}", json={"status": "open"}))
+    assert ok(client.get("/api/v2/tasks/done?since=2000-01-01T00:00:00Z")) == []

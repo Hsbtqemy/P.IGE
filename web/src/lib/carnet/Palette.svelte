@@ -141,9 +141,15 @@
 					key: `task:${h.id}`,
 					group: 'Tâches',
 					label: h.title,
-					detail: where + (h.status === 'done' ? ' · faite' : ''),
+					detail: where + (h.status === 'done' ? ' · terminée' : ''),
 					snippet: same(h.snippet, h.title) ? undefined : h.snippet,
-					run: () => go(h.project_id ? `/projets/${h.project_id}` : `/journal/${todayIso()}`)
+					// Finished: Ma journée of the day it was ticked lists it with « Rouvrir ».
+					run: () =>
+						go(
+							h.status === 'done' && h.done_at
+								? `/journee/${localDay(h.done_at)}`
+								: `${h.project_id ? `/projets/${h.project_id}` : `/espaces/${h.space_id}`}?tache=${h.id}`
+						)
 				});
 			} else {
 				out.push({
@@ -174,6 +180,11 @@
 		} else if (event.key === 'Tab') {
 			event.preventDefault(); // focus stays in the dialog
 		}
+	}
+
+	function localDay(iso: string): string {
+		const d = new Date(iso);
+		return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
 	}
 </script>
 

@@ -321,6 +321,7 @@ class SearchHit:
     project_id: str | None = None
     entry_date: str | None = None  # entries only
     status: str | None = None  # tasks only
+    done_at: str | None = None  # finished tasks only
 
 
 def _row_to(cls: Any, row: sqlite3.Row, **overrides: Any) -> Any:
@@ -928,6 +929,11 @@ class ModelStore:
         """Every task not done, in manual order within each project or space (``living``: only
         those of active projects and spaces)."""
         return self._tasks("t.status <> 'done'" + (self._LIVING if living else ""), ())
+
+    def done_tasks_since(self, since: datetime, *, limit: int = 100) -> list[Task]:
+        """Tasks finished since ``since``, the most recent first (to undo a click)."""
+        return self._tasks("t.status = 'done' AND t.done_at >= ?", (_utc(since),),
+                           order=f"t.done_at DESC LIMIT {int(limit)}")
 
     def in_progress_tasks(self) -> list[Task]:
         """Tasks in progress in living places, the most recently started first."""
@@ -1720,14 +1726,14 @@ class ModelStore:
                                                  r["project_id"], entry_date=r["entry_date"])))
         task_sql = space_sql.replace("e.", "t.") + ("" if include_done_tasks else " AND t.status <> 'done'")
         for r in self.conn.execute(
-            "SELECT t.id, t.title, t.space_id, t.project_id, t.status,"
+            "SELECT t.id, t.title, t.space_id, t.project_id, t.status, t.done_at,"
             " snippet(tasks_fts, -1, '[', ']', '…', 12) AS snip, bm25(tasks_fts) AS score"
             f" FROM tasks_fts JOIN tasks t ON t.rid = tasks_fts.rowid WHERE tasks_fts MATCH ?{task_sql}"
             " ORDER BY score LIMIT ?",
             (query, *([space_id] if space_id else []), limit),
         ):
             scored.append((r["score"], SearchHit("task", r["id"], r["title"], r["snip"], r["space_id"],
-                                                 r["project_id"], status=r["status"])))
+                                                 r["project_id"], status=r["status"], done_at=r["done_at"])))
         scored.sort(key=lambda item: item[0])
         return [hit for _, hit in scored[:limit]]
 
