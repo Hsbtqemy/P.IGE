@@ -91,13 +91,19 @@ function repoName() {
 /** pilote's journal.json for this repository (the local pilote if installed, else npx). */
 function exportJournal() {
   const dir = mkdtempSync(join(tmpdir(), "pige-"));
-  const shell = process.platform === "win32";
   const tries = [
-    ["npx", ["--no-install", "pilote", "exporter", dir]],
-    ["npx", ["--yes", "github:Hsbtqemy/pilote", "exporter", dir]],
+    ["--no-install", "pilote", "exporter", dir],
+    ["--yes", "github:Hsbtqemy/pilote", "exporter", dir],
   ];
-  for (const [cmd, argv] of tries) {
-    const run = spawnSync(cmd, argv, { encoding: "utf8", shell, stdio: ["ignore", "pipe", "pipe"] });
+  for (const argv of tries) {
+    // Windows runs npx through cmd (npx.cmd): one command line, the temporary folder quoted
+    // (the only argument that is not a fixed word). Elsewhere, no shell at all.
+    const run =
+      process.platform === "win32"
+        ? spawnSync(["npx", ...argv.map((a) => (a === dir ? `"${a}"` : a))].join(" "), {
+            encoding: "utf8", shell: true, stdio: ["ignore", "pipe", "pipe"],
+          })
+        : spawnSync("npx", argv, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     const file = join(dir, "journal.json");
     if (run.status === 0 && existsSync(file)) {
       const text = readFileSync(file, "utf8");
@@ -133,5 +139,6 @@ if (!response.ok) {
 }
 for (const p of body.projects || []) {
   const days = p.days ? `${p.days} jour${p.days > 1 ? "s" : ""} mis à jour` : "rien de nouveau";
-  console.log(`Envoyé à P.IGE · ${repo} → « ${p.project} » : ${days}, ${p.fiches} chantier${p.fiches > 1 ? "s" : ""}.`);
+  const open = typeof p.open === "number" ? `${p.open} ouvert${p.open > 1 ? "s" : ""} sur ` : "";
+  console.log(`Envoyé à P.IGE · ${repo} → « ${p.project} » : ${days}, ${open}${p.fiches} chantier${p.fiches > 1 ? "s" : ""}.`);
 }
