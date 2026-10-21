@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "P.IGE",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Ouvre P.IGE dans la barre des espaces, transforme un mail en tâche ou le note dans le journal, et garde le suivi des réponses.",
   "author": "Hsbtqemy",
   "browser_specific_settings": {
     "gecko": {
       "id": "pige@hsbtqemy.github",
-      "strict_min_version": "153.0"
+      "strict_min_version": "153.0",
+      "update_url": "https://github.com/Hsbtqemy/P.IGE/releases/download/thunderbird-updates/updates.json"
     }
   },
   "icons": {

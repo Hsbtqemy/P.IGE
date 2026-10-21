@@ -65,7 +65,7 @@ jobs:
             tests/test_agenda.py
 
       - name: Thunderbird extension (helpers)
-        run: node --test thunderbird/test/lib.test.mjs
+        run: node --test thunderbird/test/lib.test.mjs thunderbird/test/updates.test.mjs
 
   web:
     runs-on: ubuntu-latest

@@ -1,0 +1,62 @@
+# Publishes the Thunderbird extension for self-hosted updates.
+#
+# Push a tag « thunderbird-vX.Y.Z » (X.Y.Z = the version in thunderbird/manifest.json):
+# the .xpi is built and attached, with updates.json, to the fixed release
+# « thunderbird-updates ». The manifest's update_url points there, so Thunderbird
+# finds new versions by itself (once a day, or « Rechercher des mises à jour »).
+name: Thunderbird extension
+
+on:
+  push:
+    tags: ["thunderbird-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload its assets
+    env:
+      RELEASE: thunderbird-updates
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Check the tag matches the manifest
+        id: version
+        run: |
+          VERSION=$(node -p "require('./thunderbird/manifest.json').version")
+          MIN=$(node -p "require('./thunderbird/manifest.json').browser_specific_settings.gecko.strict_min_version")
+          TAG="${GITHUB_REF_NAME}"
+          if [ "$TAG" != "thunderbird-v$VERSION" ]; then
+            echo "::error::Tag $TAG but manifest version $VERSION"; exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "min=$MIN" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: node --test thunderbird/test/lib.test.mjs thunderbird/test/updates.test.mjs
+
+      - name: Package
+        working-directory: thunderbird
+        run: zip -r "../pige-thunderbird-${{ steps.version.outputs.version }}.xpi" . -x '*.DS_Store' -x 'test/*' -x 'scripts/*' -x package.json
+
+      - name: Release and update manifest
+        run: |
+          set -euo pipefail
+          XPI="pige-thunderbird-${{ steps.version.outputs.version }}.xpi"
+          HASH=$(sha256sum "$XPI" | cut -d' ' -f1)
+          if ! gh release view "$RELEASE" >/dev/null 2>&1; then
+            gh release create "$RELEASE" --title "Extension Thunderbird (mises à jour)" --prerelease \
+              --notes "Mises à jour automatiques de l'extension P.IGE pour Thunderbird. Ne pas supprimer : l'extension lit updates.json ici."
+          fi
+          gh release download "$RELEASE" --pattern updates.json --dir . 2>/dev/null || true
+          node thunderbird/scripts/updates.mjs updates.json "${{ steps.version.outputs.version }}" \
+            "https://github.com/${GH_REPO}/releases/download/${RELEASE}/${XPI}" "$HASH" "${{ steps.version.outputs.min }}"
+          gh release upload "$RELEASE" "$XPI" updates.json --clobber
+          echo "Published $XPI ($HASH)"

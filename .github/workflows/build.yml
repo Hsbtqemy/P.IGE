@@ -117,7 +117,7 @@ jobs:
 
       - name: Package the extension
         working-directory: thunderbird
-        run: zip -r ../pige-thunderbird.xpi . -x '*.DS_Store' -x 'test/*' -x package.json
+        run: zip -r ../pige-thunderbird.xpi . -x '*.DS_Store' -x 'test/*' -x 'scripts/*' -x package.json
 
       - name: Upload extension
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
