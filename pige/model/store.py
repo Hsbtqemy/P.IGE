@@ -1511,7 +1511,10 @@ class ModelStore:
             existing = self._one("SELECT * FROM task_mails WHERE task_id = ? AND message_id = ?", (task_id, message_id))
             if existing is not None:
                 return _row_to(TaskMail, existing), False
-            day = _check_date(day, "day")
+            checked_day = _check_date(day, "day")
+            if checked_day is None:
+                raise InvalidOperationError("day is required")
+            day = checked_day
             row = self._one(
                 "SELECT entry_id FROM task_mails WHERE task_id = ? AND day = ? AND entry_id IS NOT NULL LIMIT 1",
                 (task_id, day),
@@ -1531,13 +1534,13 @@ class ModelStore:
                  recipients[:2000], subject[:500], body[:20_000], attachments[:2000]),
             )
             self._retitle_exchange(entry_id, day)
-            return _row_to(TaskMail, self._one("SELECT * FROM task_mails WHERE id = ?", (mail_id,))), True
+            return _row_to(TaskMail, self._require("task_mails", mail_id)), True
 
     def _retitle_exchange(self, entry_id: str, day: str) -> None:
-        counts = self._one(
+        counts = self.conn.execute(
             "SELECT sum(direction = 'sent') AS s, sum(direction = 'received') AS r FROM task_mails WHERE entry_id = ?",
             (entry_id,),
-        )
+        ).fetchone()
         title = _exchange_title(day, int(counts["s"] or 0), int(counts["r"] or 0))
         # The title only: the revision protects what the user writes (the synthesis).
         self.conn.execute("UPDATE entries SET title = ? WHERE id = ?", (title, entry_id))
@@ -1554,7 +1557,7 @@ class ModelStore:
             entry_id = row["entry_id"]
             if entry_id is None:
                 return
-            left = self._one("SELECT count(*) AS n FROM task_mails WHERE entry_id = ?", (entry_id,))
+            left = self.conn.execute("SELECT count(*) AS n FROM task_mails WHERE entry_id = ?", (entry_id,)).fetchone()
             entry = self._one("SELECT body FROM entries WHERE id = ?", (entry_id,))
             if left["n"] == 0 and entry is not None and not (entry["body"] or "").strip():
                 self.conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
