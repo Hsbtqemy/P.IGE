@@ -18,7 +18,7 @@
 {#each entries as entry (entry.id)}
 	{@const d = shortDate(entry.entry_date)}
 	{@const line = [showPlace ? placeName(entry) : '', entry.people.map((p) => p.display_name).join(', ')].filter(Boolean).join(' · ')}
-	<a class="entry" href={entry.source === 'writing' ? `/ecrire/${entry.id}` : `/journal/${entry.entry_date}`}>
+	<a class="entry" href={entry.source === 'writing' ? `/ecrire/${entry.id}` : `/journal/${entry.entry_date}#e-${entry.id}`}>
 		<span class="date"><b>{d.day}</b><small>{d.month} {d.year}</small></span>
 		<span class="text">
 			<b>{entry.title || entry.body.slice(0, 80)}</b>
