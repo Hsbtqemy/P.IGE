@@ -4,7 +4,7 @@
 	import { ApiError } from '#lib/api.js';
 	import { v2, type Entry, type Place, type ProjectView, type Task, type TaskStatus, type TaskView } from '#lib/api2.js';
 	import { onMailFiled } from '#lib/carnet/thunderbird.svelte.js';
-	import TaskOrigin from '#lib/carnet/TaskOrigin.svelte';
+	import TaskThread from '#lib/carnet/TaskThread.svelte';
 	import PersonPicker from '#lib/carnet/PersonPicker.svelte';
 	import ProjectPeople from '#lib/carnet/ProjectPeople.svelte';
 	import { carnet, failure, isDay, projectOf, reload, spaceOf, todayIso } from '#lib/carnet/state.svelte.js';
@@ -627,7 +627,7 @@
 												<input bind:value={newStep} placeholder="Nouvelle étape" aria-label="Nouvelle étape" />
 											</form>
 										</div>
-										{#if detail.origin_entry_id}<TaskOrigin entryId={detail.origin_entry_id} />{/if}
+										<TaskThread taskId={detail.id} originEntryId={detail.origin_entry_id} />
 										<div class="actions">
 											<button class="btn" onclick={closeTask}>Fermer</button>
 											{#if carnet.timers.some((t) => t.task_id === detail?.id)}

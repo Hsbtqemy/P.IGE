@@ -8,6 +8,8 @@
       label { display: block; font-weight: 600; margin-top: 16px; }
       input { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; font: inherit; }
       p.help { color: GrayText; margin: 4px 0 0; }
+      label.check { display: flex; gap: 8px; align-items: center; font-weight: 600; }
+      label.check input { width: auto; margin: 0; }
       button { margin-top: 20px; padding: 8px 16px; font: inherit; }
       #result { margin-top: 12px; }
     </style>
@@ -19,6 +21,8 @@
       <label for="token">Jeton d’accès</label>
       <input id="token" type="password" autocomplete="off" required />
       <p class="help">Créé sur le serveur avec <code>python -m pige.server new-token</code>.</p>
+      <label class="check"><input id="followReplies" type="checkbox" checked /> Ajouter mes réponses au suivi des tâches</label>
+      <p class="help">Quand tu réponds à un mail dont tu as fait une tâche, ta réponse s’ajoute au « Suivi » de la tâche (une entrée par jour).</p>
       <button type="submit">Enregistrer et tester</button>
     </form>
     <p id="result" role="status"></p>

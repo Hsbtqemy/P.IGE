@@ -110,6 +110,21 @@ export interface TagView extends Tag {
 	tasks: Task[];
 }
 
+export interface TaskMail {
+	id: string;
+	task_id: string;
+	entry_id: string | null;
+	day: string;
+	message_id: string;
+	direction: 'sent' | 'received';
+	sent_at: string;
+	author: string;
+	recipients: string;
+	subject: string;
+	body: string;
+	attachments: string;
+}
+
 export interface Step {
 	id: string;
 	task_id: string;
@@ -320,6 +335,10 @@ export const v2 = {
 	validateDay: (day: string, tz: string) =>
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),
 	search: (text: string, limit = 20) => request<SearchHit[]>('GET', `/api/v2/search?${q({ q: text, limit, include_done: true })}`),
+	taskMails: (taskId: string) => request<TaskMail[]>('GET', `/api/v2/tasks/${encodeURIComponent(taskId)}/mails`),
+	addFollowUp: (taskId: string, entry_date: string, body: string) =>
+		request<Entry>('POST', `/api/v2/tasks/${encodeURIComponent(taskId)}/followups`, { entry_date, body }),
+	deleteTaskMail: (id: string) => request<void>('DELETE', `/api/v2/task-mails/${encodeURIComponent(id)}`),
 	doneTasks: (since: string) => request<Task[]>('GET', `/api/v2/tasks/done?${q({ since })}`),
 	openTasks: (living = false) => request<Task[]>('GET', `/api/v2/tasks${living ? '?living=true' : ''}`),
 	calendars: () => request<CalendarInfo[]>('GET', '/api/v2/calendars'),
@@ -369,6 +388,7 @@ export const v2 = {
 		project_id?: string;
 		person_id?: string;
 		tag_id?: string;
+		task_id?: string;
 		source?: Entry['source'];
 		without_project?: boolean;
 		limit?: number;

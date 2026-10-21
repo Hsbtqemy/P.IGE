@@ -363,6 +363,28 @@ MIGRATIONS: tuple[str, ...] = (
     );
     CREATE INDEX project_people_person ON project_people(person_id);
     """,
+    # ------------------------------------------------------------------ 5
+    # The mails of a task's follow-up (« Suivi »): replies sent, mails received that were kept.
+    # Those of one day are grouped under one journal entry, « Échange du … ».
+    """
+    CREATE TABLE task_mails (
+        id          TEXT PRIMARY KEY,
+        task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        entry_id    TEXT REFERENCES entries(id) ON DELETE SET NULL,
+        day         TEXT NOT NULL,
+        message_id  TEXT NOT NULL,
+        direction   TEXT NOT NULL CHECK (direction IN ('sent', 'received')),
+        sent_at     TEXT NOT NULL,
+        author      TEXT NOT NULL DEFAULT '',
+        recipients  TEXT NOT NULL DEFAULT '',
+        subject     TEXT NOT NULL DEFAULT '',
+        body        TEXT NOT NULL DEFAULT '',
+        attachments TEXT NOT NULL DEFAULT '',
+        UNIQUE (task_id, message_id)
+    );
+    CREATE INDEX task_mails_message ON task_mails(message_id);
+    CREATE INDEX task_mails_entry ON task_mails(entry_id);
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

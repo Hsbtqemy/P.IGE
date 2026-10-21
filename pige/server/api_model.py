@@ -111,6 +111,26 @@ class ProjectPersonIn(_In):
     role: str | None = Field(default=None, max_length=120)
 
 
+class FollowUpIn(_In):
+    entry_date: str = Date
+    body: str = Field(min_length=1, max_length=20_000)
+
+
+class MailFollowUpIn(_In):
+    """A mail for a task's follow-up, sent by the Thunderbird extension."""
+
+    message_id: str = Field(min_length=3, max_length=998)
+    references: list[Annotated[str, Field(max_length=998)]] = Field(default_factory=list, max_length=100)
+    direction: Literal["sent", "received"]
+    sent_at: datetime
+    day: str = Date  # the local day of sent_at, for the « Échange du … » entry
+    author: str = Field(default="", max_length=500)
+    recipients: str = Field(default="", max_length=2000)
+    subject: str = Field(default="", max_length=500)
+    body: str = Field(default="", max_length=20_000)
+    attachments: str = Field(default="", max_length=2000)
+
+
 class StepIn(_In):
     label: str = Field(min_length=1, max_length=500)
 
@@ -447,6 +467,43 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         if since.tzinfo is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "since: a time with its offset is expected")
         return _out(store.done_tasks_since(since, limit=limit))
+
+    @router.get("/tasks/{task_id}/mails")
+    def task_mails(task_id: IdPath) -> list[dict[str, Any]]:
+        store.get_task(task_id)
+        return _out(store.task_mails(task_id))
+
+    @router.post("/tasks/{task_id}/followups", status_code=status.HTTP_201_CREATED)
+    def add_followup(task_id: IdPath, body: FollowUpIn) -> dict[str, Any]:
+        """« Ajouter un suivi »: a dated note of the task, in the journal too."""
+        task = store.get_task(task_id)
+        entry = store.create_entry(
+            entry_date=body.entry_date, project_id=task.project_id,
+            space_id=None if task.project_id else task.space_id, task_id=task_id, body=body.body, source="journal",
+        )
+        return _entry_view(entry.id)
+
+    @router.post("/mail-followups")
+    def add_mail_followup(body: MailFollowUpIn, response: Response) -> dict[str, Any]:
+        """A reply sent (or a mail kept) about a mail a task came from: into that task's follow-up."""
+        if body.sent_at.tzinfo is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "sent_at: a time with its offset is expected")
+        with store.transaction():
+            task_id = store.task_for_mail([*body.references, body.message_id])
+            if task_id is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Aucune tâche ne vient de cet échange")
+            mail, created = store.add_task_mail(
+                task_id, message_id=body.message_id, direction=body.direction, sent_at=body.sent_at, day=body.day,
+                author=body.author, recipients=body.recipients, subject=body.subject, body=body.body,
+                attachments=body.attachments,
+            )
+            response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+            return {"task": _out(store.get_task(task_id)), "mail": _out(mail), "created": created}
+
+    @router.delete("/task-mails/{mail_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def delete_task_mail(mail_id: IdPath) -> Response:
+        store.delete_task_mail(mail_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.get("/tasks/in-progress")
     def tasks_in_progress() -> list[dict[str, Any]]:

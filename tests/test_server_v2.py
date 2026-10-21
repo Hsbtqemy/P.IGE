@@ -425,3 +425,44 @@ def test_tasks_done_since_a_moment(client, tree):
     assert client.get("/api/v2/tasks/done?since=2026-01-01T00:00:00").status_code == 400
     ok(client.patch(f"/api/v2/tasks/{task['id']}", json={"status": "open"}))
     assert ok(client.get("/api/v2/tasks/done?since=2000-01-01T00:00:00Z")) == []
+
+
+def test_task_follow_up_from_thunderbird_and_by_hand(client, tree):
+    """Replies sent about a mail a task came from go into its follow-up, one entry per day."""
+    pid = tree["dico"]["id"]
+    entry = ok(client.post("/api/v2/entries", json={"entry_date": "2026-10-20", "project_id": pid, "source": "mail",
+                                                     "mail_message_id": "<orig@univ>", "title": "Devis"}), 201)
+    task = ok(client.post("/api/v2/tasks", json={"title": "Devis", "project_id": pid, "origin_entry_id": entry["id"]}), 201)
+
+    def mail(mid, refs, direction="sent", at="2026-10-21T09:00:00+02:00", day="2026-10-21"):
+        return client.post("/api/v2/mail-followups", json={
+            "message_id": mid, "references": refs, "direction": direction, "sent_at": at, "day": day,
+            "author": "moi", "recipients": "Anne Martin", "subject": "Re: Devis", "body": f"texte {mid}"})
+
+    first = ok(mail("<r1@me>", ["<orig@univ>"]), 201)
+    assert first["task"]["id"] == task["id"] and first["created"]
+    assert ok(mail("<r1@me>", ["<orig@univ>"]), 200)["created"] is False  # sent twice: once
+    ok(mail("<in2@univ>", ["<orig@univ>", "<r1@me>"], "received", "2026-10-21T10:00:00+02:00"), 201)
+    ok(mail("<r3@me>", ["<in2@univ>"], at="2026-10-21T11:00:00+02:00"), 201)  # found through the follow-up
+    ok(mail("<r4@me>", ["<r3@me>"], at="2026-10-22T08:00:00+02:00", day="2026-10-22"), 201)
+    assert mail("<x@me>", ["<unknown@nowhere>"]).status_code == 404
+
+    mails = ok(client.get(f"/api/v2/tasks/{task['id']}/mails"))
+    assert [m["message_id"] for m in mails] == ["<r1@me>", "<in2@univ>", "<r3@me>", "<r4@me>"]
+    thread = ok(client.get(f"/api/v2/timeline?task_id={task['id']}"))
+    titles = sorted(e["title"] for e in thread)
+    assert titles == ["Échange du 21 oct. — 2 réponses envoyées, 1 mail reçu", "Échange du 22 oct. — 1 réponse envoyée"]
+    assert all(e["project_id"] == pid for e in thread)
+
+    # by hand
+    note = ok(client.post(f"/api/v2/tasks/{task['id']}/followups", json={"entry_date": "2026-10-22", "body": "Accord trouvé"}), 201)
+    assert note["task_id"] == task["id"]
+
+    # removing a useless mail; the last one of a day takes its empty entry along
+    web = TestClient(client.app)
+    ok(web.post("/api/login", json={"password": PASSWORD}))
+    h = {CSRF_HEADER: "web"}
+    assert web.delete(f"/api/v2/task-mails/{mails[1]['id']}", headers=h).status_code == 204
+    assert web.delete(f"/api/v2/task-mails/{mails[3]['id']}", headers=h).status_code == 204
+    titles = sorted(e["title"] for e in ok(client.get(f"/api/v2/timeline?task_id={task['id']}")))
+    assert titles == ["", "Échange du 21 oct. — 2 réponses envoyées"]

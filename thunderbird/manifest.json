@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "P.IGE",
-  "version": "0.2.2",
-  "description": "Ouvre P.IGE dans la barre des espaces, transforme un mail en tâche ou le note dans le journal.",
+  "version": "0.3.0",
+  "description": "Ouvre P.IGE dans la barre des espaces, transforme un mail en tâche ou le note dans le journal, et garde le suivi des réponses.",
   "author": "Hsbtqemy",
   "browser_specific_settings": {
     "gecko": {
@@ -23,6 +23,8 @@
     "type": "module"
   },
   "permissions": [
+    "accountsRead",
+    "compose",
     "menus",
     "messagesRead",
     "notifications",
