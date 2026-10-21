@@ -72,6 +72,8 @@ export interface Chantier {
 	stopped_label: string;
 	open: number;
 	path: string;
+	/** Date of its last commit (AAAA-MM-JJ), when known. */
+	last?: string;
 }
 
 /** A day of pushed code, summed up by work item (« chantier » of pilote). */

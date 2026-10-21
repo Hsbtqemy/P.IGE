@@ -245,7 +245,7 @@ def test_reading_the_pilote_export_instead_of_the_api(app):
         normalize_export("http://moi.github.io/depot/")
     fiches, commits, branch = parse_export(EXPORT)
     assert fiches[1] == {"code": "P-8", "title": "paragraphes manuels", "status": "interrompu", "stopped": "geste ¶",
-                         "stopped_label": "Arrêté sur", "open": 1, "path": "pilotage/P-8.md"}
+                         "stopped_label": "Arrêté sur", "open": 1, "path": "pilotage/P-8.md", "last": ""}
     assert branch == "dev" and len(commits) == 3
 
     asked: list[str] = []

@@ -153,6 +153,8 @@ def parse_export(data: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]],
             "stopped": str(c.get("arrete") or "")[:300], "stopped_label": str(c.get("arreteLibelle") or ""),
             "open": sum(1 for r in reste if isinstance(r, dict) and not r.get("fait")),
             "path": str(c.get("file") or f"pilotage/{code}.md"),
+            # Date of the work item's last commit (pilote's own reckoning), for the order.
+            "last": str((c.get("dernier") or {}).get("date") or "") if isinstance(c.get("dernier"), dict) else "",
         })
     commits = []
     for c in data.get("commits") or []:

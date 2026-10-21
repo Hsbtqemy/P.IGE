@@ -12,6 +12,19 @@
 	let exportDraft = $state('');
 	let busy = $state(false);
 	let message = $state('');
+	let showAll = $state(false);
+	let unfolded = $state(new Set<string>());
+	const FIRST = 3;
+	let shown = $derived(showAll ? (code?.chantiers ?? []) : (code?.chantiers ?? []).slice(0, FIRST));
+
+	/** pilote writes Markdown: `code` and **bold** rendered, the rest plain (escaped). */
+	function inline(text: string): string {
+		const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+		return esc.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/\*\*/g, '');
+	}
+
+	const toggle = (c: string) =>
+		(unfolded = unfolded.has(c) ? new Set([...unfolded].filter((x) => x !== c)) : new Set([...unfolded, c]));
 
 	$effect(() => {
 		const current = projectId;
@@ -97,17 +110,30 @@
 			{#if code.last_error}<p class="warn">{code.last_error}</p>{/if}
 			{#if code.chantiers?.length}
 				<ul>
-					{#each code.chantiers as c (c.code)}
+					{#each shown as c (c.code)}
 						<li>
-							<a class="title" href={file(c.path)} target="_blank" rel="noopener"><b>{c.code}</b> {c.title}</a>
-							<small>
-								<span class="status">{c.status}</span>{c.open ? ` · ${c.open} à faire` : ''}
-								{#if c.stopped} · {c.stopped_label.toLocaleLowerCase('fr')} : {c.stopped}{/if}
-							</small>
+							<span class="line">
+								<a class="title" href={file(c.path)} target="_blank" rel="noopener"><b>{c.code}</b> {c.title}</a>
+								<small><span class="status">{c.status}</span>{c.open ? ` · ${c.open} à faire` : ''}{c.last ? ` · ${new Date(`${c.last}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}` : ''}</small>
+							</span>
+							{#if c.stopped}
+								<button class="stopped" class:open={unfolded.has(c.code)} onclick={() => toggle(c.code)} aria-expanded={unfolded.has(c.code)}>
+									<span class="lbl">{c.stopped_label.toLocaleLowerCase('fr')} :</span>
+									<!-- eslint-disable-next-line svelte/no-at-html-tags -- escaped above, only code and bold added -->
+									{@html inline(c.stopped)}
+								</button>
+							{/if}
 						</li>
 					{/each}
 				</ul>
-				{#if code.closed}<small class="muted">et {code.closed} chantier{code.closed > 1 ? 's' : ''} clos, livré{code.closed > 1 ? 's' : ''} ou abandonné{code.closed > 1 ? 's' : ''}</small>{/if}
+				<small class="muted">
+					{#if code.chantiers.length > FIRST}
+						<button class="link" onclick={() => (showAll = !showAll)} aria-expanded={showAll}>
+							{showAll ? 'Seulement les plus récents' : `Voir les ${code.chantiers.length} chantiers ouverts`}
+						</button>
+					{/if}
+					{#if code.closed}{code.chantiers.length > FIRST ? ' · ' : ''}{code.closed} clos, livré{code.closed > 1 ? 's' : ''} ou abandonné{code.closed > 1 ? 's' : ''}{/if}
+				</small>
 			{:else if !code.last_error}
 				<small class="muted">Pas de chantier ouvert dans pilotage/.</small>
 			{/if}
@@ -160,8 +186,45 @@
 	li {
 		display: flex;
 		flex-direction: column;
+		gap: 1px;
 		padding: 5px 0;
 		border-bottom: 1px solid var(--line);
+	}
+	.line {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 2px 10px;
+		align-items: baseline;
+	}
+	.stopped {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 1;
+		line-clamp: 1;
+		overflow: hidden;
+		padding: 0;
+		background: none;
+		border: 0;
+		font: inherit;
+		font-size: 0.8125rem;
+		color: var(--muted);
+		text-align: left;
+		cursor: pointer;
+		overflow-wrap: anywhere;
+	}
+	.stopped.open {
+		-webkit-line-clamp: unset;
+		line-clamp: unset;
+		display: block;
+	}
+	.stopped .lbl {
+		font-style: italic;
+	}
+	.stopped :global(code) {
+		font-size: 0.75rem;
+		padding: 0 3px;
+		border-radius: 3px;
+		background: var(--chip);
 	}
 	.title {
 		text-decoration: none;
