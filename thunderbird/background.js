@@ -13,6 +13,9 @@ const SPACE_NAME = 'pige';
 const ROOT_MENU = 'pige';
 const BRIDGE_ID = 'pige-bridge';
 const TREE_MAX_AGE = 60_000;
+// Where « P.IGE » appears: the message list (any folder, saved search or quick filter),
+// and a displayed mail (its own tab or window, or opened from search results).
+const CONTEXTS = ['message_list', 'page', 'selection'];
 
 let cache = { at: 0, tree: null, people: [] };
 
@@ -114,36 +117,55 @@ async function openMail(message, sender) {
 
 async function buildMenu() {
   await browser.menus.removeAll();
-  browser.menus.create({ id: ROOT_MENU, title: 'P.IGE', contexts: ['message_list'] });
+  browser.menus.create({ id: ROOT_MENU, title: 'P.IGE', contexts: CONTEXTS });
   const { serverUrl, token } = await settings();
   if (!serverUrl || !token) {
-    browser.menus.create({ id: 'configure', parentId: ROOT_MENU, title: 'Configurer l’extension…', contexts: ['message_list'] });
+    browser.menus.create({ id: 'configure', parentId: ROOT_MENU, title: 'Configurer l’extension…', contexts: CONTEXTS });
     return;
   }
-  browser.menus.create({ id: 'task', parentId: ROOT_MENU, title: 'Créer une tâche', contexts: ['message_list'] });
-  browser.menus.create({ id: 'note', parentId: ROOT_MENU, title: 'Noter dans le journal', contexts: ['message_list'] });
-  browser.menus.create({ id: 'follow', parentId: ROOT_MENU, title: 'Ajouter au suivi de la tâche', contexts: ['message_list'] });
+  browser.menus.create({ id: 'task', parentId: ROOT_MENU, title: 'Créer une tâche', contexts: CONTEXTS });
+  browser.menus.create({ id: 'note', parentId: ROOT_MENU, title: 'Noter dans le journal', contexts: CONTEXTS });
+  browser.menus.create({ id: 'follow', parentId: ROOT_MENU, title: 'Ajouter au suivi de la tâche', contexts: CONTEXTS });
   let tree = null;
   try {
     tree = (await knowledge()).tree;
   } catch {
-    browser.menus.create({ id: 'offline', parentId: ROOT_MENU, title: 'Serveur injoignable', enabled: false, contexts: ['message_list'] });
+    browser.menus.create({ id: 'offline', parentId: ROOT_MENU, title: 'Serveur injoignable', enabled: false, contexts: CONTEXTS });
     return;
   }
   for (const action of ['task', 'note']) {
-    for (const item of menuItems(tree, action, action)) browser.menus.create({ ...item, contexts: ['message_list'] });
+    for (const item of menuItems(tree, action, action)) browser.menus.create({ ...item, contexts: CONTEXTS });
   }
 }
 
 // The project list follows the server: rebuilt when the menu opens if it is over a minute old.
-browser.menus.onShown.addListener(async (info) => {
-  if (!info.contexts.includes('message_list') || Date.now() - cache.at < TREE_MAX_AGE) return;
-  await buildMenu();
+browser.menus.onShown.addListener(async (info, tab) => {
+  // In a page, only when it shows a mail (not in the P.IGE tab or another web page).
+  const inList = info.contexts.includes('message_list');
+  const onMail = inList || (await displayedMessages(tab)).length > 0;
+  await browser.menus.update(ROOT_MENU, { visible: onMail });
+  if (onMail && Date.now() - cache.at >= TREE_MAX_AGE) await buildMenu();
   browser.menus.refresh();
 });
 
-async function* selectedMessages(info) {
+/** The mails shown in a tab (a message tab or window, or the preview pane). */
+async function displayedMessages(tab) {
+  if (!tab?.id) return [];
+  try {
+    const shown = await browser.messageDisplay.getDisplayedMessages(tab.id);
+    return Array.isArray(shown) ? shown : shown?.messages || [];
+  } catch {
+    return [];
+  }
+}
+
+async function* selectedMessages(info, tab) {
   let page = info.selectedMessages;
+  if (!page) {
+    // Right-click in a displayed mail: that mail.
+    for (const message of await displayedMessages(tab)) yield message;
+    return;
+  }
   while (page) {
     for (const message of page.messages) yield message;
     page = page.id ? await browser.messages.continueList(page.id) : null;
@@ -207,13 +229,13 @@ function placeName(tree, target) {
   return 'P.IGE';
 }
 
-browser.menus.onClicked.addListener(async (info) => {
+browser.menus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'configure') {
     browser.runtime.openOptionsPage();
     return;
   }
   if (info.menuItemId === 'follow') {
-    await followSelected(info);
+    await followSelected(info, tab);
     return;
   }
   const choice = parseMenuId(info.menuItemId);
@@ -227,7 +249,7 @@ browser.menus.onClicked.addListener(async (info) => {
   }
   let done = 0;
   const failures = [];
-  for await (const header of selectedMessages(info)) {
+  for await (const header of selectedMessages(info, tab)) {
     try {
       await fileMail(header, choice.action, choice.target, known.people);
       done += 1;
@@ -288,12 +310,12 @@ function isSentFolder(folder) {
 }
 
 /** « Ajouter au suivi de la tâche »: the selected mails, sent or received, into their task. */
-async function followSelected(info) {
+async function followSelected(info, tab) {
   let added = 0;
   let unknown = 0;
   const failures = [];
   let taskTitle = '';
-  for await (const header of selectedMessages(info)) {
+  for await (const header of selectedMessages(info, tab)) {
     if (!header.headerMessageId) continue;
     try {
       const references = await referencesOf(header.id);
