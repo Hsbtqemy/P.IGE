@@ -409,6 +409,12 @@ MIGRATIONS: tuple[str, ...] = (
     );
     CREATE INDEX code_days_entry ON code_days(entry_id);
     """,
+    # ------------------------------------------------------------------ 7
+    # The last commit seen on each branch: a branch that did not move is not read again
+    # (GitHub limits requests, 60 an hour without a token).
+    """
+    ALTER TABLE project_repos ADD COLUMN heads TEXT NOT NULL DEFAULT '{}';
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)
