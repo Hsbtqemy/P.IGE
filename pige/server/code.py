@@ -33,7 +33,9 @@ MAX_PAGES = 10  # 100 commits a page, per branch
 # Read on its own twice a day (local time), else when asked (« Récupérer le code »).
 SYNC_TIMES = ((12, 30), (19, 30))
 RETRY_AFTER = timedelta(hours=1)  # a failed scheduled read is tried again an hour later, once
-OPEN_STATUSES = {"à venir", "interrompu", "différé"}  # pilote: closed are clos, livré, abandonné
+OPEN_STATUSES = {"à venir", "interrompu", "différé"}
+# export_url of a repository that sends its journal itself (« pilote envoyer »).
+PUSHED = "push:"  # pilote: closed are clos, livré, abandonné
 
 
 class CodeError(Exception):
@@ -334,10 +336,31 @@ class CodeJournal:
             self.store.repo_synced(project_id, branch=branch, fiches=fiches, fiche_shas=shas, heads=heads, at=moment)
             return {"commits": len(commits), "days": written, "fiches": len(fiches)}
 
+    def receive(self, project_id: str, data: Any, *, now: datetime | None = None) -> dict[str, Any]:
+        """pilote's journal.json sent by the repository itself (« pilote envoyer »): the link
+        switches to that mode, and the scheduled readings leave it alone."""
+        moment = now or datetime.now(timezone.utc)
+        with self._lock:
+            link = self.store.project_repo(project_id)
+            if link is None:
+                raise CodeError("Ce projet n'est relié à aucun dépôt.")
+            if link.get("export_url") != PUSHED:
+                self.store.set_project_repo(project_id, link["repo"], PUSHED)
+                link = self.store.project_repo(project_id) or link
+            last = (datetime.strptime(link["last_sync"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+                    if link["last_sync"] else None)
+            since = (last - OVERLAP) if last else (moment - FIRST_WINDOW)
+            return self._apply_export(project_id, link["repo"], data, since, moment)
+
     def _sync_export(self, project_id: str, repo: str, url: str, since: datetime, moment: datetime) -> dict[str, Any]:
         """One static file (pilote's journal.json on GitHub Pages): no API, no limit, no token."""
+        if url == PUSHED:
+            raise CodeError("Ce dépôt envoie lui-même son journal : lance « npm run pige » (pilote envoyer) dans le dépôt.")
+        return self._apply_export(project_id, repo, self.export(url), since, moment)
+
+    def _apply_export(self, project_id: str, repo: str, data: Any, since: datetime, moment: datetime) -> dict[str, Any]:
         try:
-            fiches, commits, branch = parse_export(self.export(url))
+            fiches, commits, branch = parse_export(data)
             first_day = since.astimezone(self.zone).date().isoformat()
             recent = [c for c in commits if c["day"] >= first_day]
             written = self._write_days(project_id, repo, recent, fiches, moment)
@@ -399,6 +422,8 @@ class CodeJournal:
         moment = now or datetime.now(timezone.utc)
         slot = self.last_slot(moment)
         for link in self.store.project_repos():
+            if link.get("export_url") == PUSHED:
+                continue  # it sends its journal itself
             last = link["last_sync"]
             if last and datetime.strptime(last, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc) >= slot:
                 continue
@@ -414,15 +439,18 @@ class CodeJournal:
     def sync_all(self, now: datetime | None = None) -> dict[str, Any]:
         """« Récupérer le code »: every linked repository, now."""
         moment = now or datetime.now(timezone.utc)
-        read, days, errors = 0, 0, []
+        read, days, errors, pushed = 0, 0, [], 0
         for link in self.store.project_repos():
+            if link.get("export_url") == PUSHED:
+                pushed += 1
+                continue
             try:
                 result = self.sync(link["project_id"], now=moment)
                 read += 1
                 days += result["days"]
             except CodeError as exc:
                 errors.append({"repo": link["repo"], "error": str(exc)})
-        return {"repos": read, "days": days, "errors": errors}
+        return {"repos": read, "days": days, "errors": errors, "pushed": pushed}
 
     def start(self) -> None:
         def loop() -> None:
