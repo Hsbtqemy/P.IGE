@@ -373,7 +373,8 @@ class CodeJournal:
             self.store.repo_synced(project_id, error=str(error))
             raise error from None
         self.store.repo_synced(project_id, branch=branch, fiches=fiches, fiche_shas={}, at=moment)
-        return {"commits": len(recent), "days": written, "fiches": len(fiches)}
+        return {"commits": len(recent), "days": written, "fiches": len(fiches),
+                "open": sum(1 for f in fiches if f["status"] in OPEN_STATUSES)}
 
     def _write_days(self, project_id: str, repo: str, commits: list[dict[str, Any]],
                     fiches: list[dict[str, Any]], moment: datetime) -> int:
