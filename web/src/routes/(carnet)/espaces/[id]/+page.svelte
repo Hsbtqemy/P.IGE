@@ -6,7 +6,7 @@
 	import { onMailFiled } from '#lib/carnet/thunderbird.svelte.js';
 	import MailOpen from '#lib/carnet/MailOpen.svelte';
 	import { carnet, failure, longDate, reload } from '#lib/carnet/state.svelte.js';
-	import TaskOrigin from '#lib/carnet/TaskOrigin.svelte';
+	import TaskThread from '#lib/carnet/TaskThread.svelte';
 
 	let id = $derived(page.params.id ?? '');
 	let space = $derived(carnet.tree?.spaces.find((s) => s.id === id));
@@ -190,13 +190,9 @@
 					{#each tasks as task (task.id)}
 						<div class="row">
 							<input type="checkbox" class="check" onchange={() => done(task)} aria-label="Terminer « {task.title} »" />
-							{#if task.origin_entry_id}
-								<button class="title plain open" onclick={() => (opened = opened === task.id ? null : task.id)} aria-expanded={opened === task.id}>
-									{task.title} <small aria-label="vient d’un mail ou d’un paragraphe">{opened === task.id ? '▴' : '✉'}</small>
-								</button>
-							{:else}
-								<span class="title">{task.title}</span>
-							{/if}
+							<button class="title plain open" onclick={() => (opened = opened === task.id ? null : task.id)} aria-expanded={opened === task.id}>
+								{task.title} <small aria-hidden="true">{opened === task.id ? '▴' : task.origin_entry_id ? '✉' : '▾'}</small>
+							</button>
 							<span class="tools">
 								<select aria-label="Ranger « {task.title} »" onchange={(e) => moveTask(task, (e.currentTarget as HTMLSelectElement).value)}>
 									{@render places(`s:${id}`)}
@@ -204,8 +200,8 @@
 								<button class="x" onclick={() => removeTask(task)} aria-label="Supprimer « {task.title} »">×</button>
 							</span>
 						</div>
-						{#if opened === task.id && task.origin_entry_id}
-							<div class="origin"><TaskOrigin entryId={task.origin_entry_id} /></div>
+						{#if opened === task.id}
+							<div class="origin"><TaskThread taskId={task.id} originEntryId={task.origin_entry_id} /></div>
 						{/if}
 					{:else}
 						<p class="muted">Aucune tâche.</p>

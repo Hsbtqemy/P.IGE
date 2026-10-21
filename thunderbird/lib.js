@@ -146,3 +146,30 @@ export function entryForMail({ id, header, text, attachments, target, personIds 
     person_ids: personIds
   };
 }
+
+/** Message-IDs named in References / In-Reply-To header values: ["<a@b>", …]. */
+export function parseReferences(...values) {
+  const out = [];
+  for (const value of values.flat()) {
+    for (const id of String(value || '').match(/<[^<>\s]+>/g) || []) if (!out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+/** The follow-up payload of a mail (a reply sent, or a mail kept by hand). */
+export function followUpFor({ messageId, references, direction, date, author, recipients, subject, text, attachments }) {
+  const when = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const files = (attachments || []).filter((a) => a && a.name);
+  return {
+    message_id: messageId.startsWith('<') ? messageId : `<${messageId}>`,
+    references,
+    direction,
+    sent_at: when.toISOString(),
+    day: localDay(when),
+    author: String(author || '').slice(0, 500),
+    recipients: names(recipients, 6).slice(0, 2000),
+    subject: String(subject || '').trim().slice(0, 500),
+    body: excerpt(text, MAIL_TEXT_MAX),
+    attachments: files.map((a) => `${a.name} (${formatSize(a.size)})`).join(', ').slice(0, 2000)
+  };
+}

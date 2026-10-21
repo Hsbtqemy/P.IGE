@@ -4,8 +4,10 @@
 //   in « À trier » or in a chosen project. Linked by the Message-ID header (stable across
 //   restarts and folder moves); the same mail never creates the same thing twice.
 // - Bridge: the web app asks, through bridge.js, to reopen the email behind an entry.
+// - Follow-up: a reply sent to a mail a task came from goes into that task's « Suivi »
+//   (option, on by default); « Ajouter au suivi de la tâche » does it by hand for any mail.
 
-import { entryForMail, menuItems, parseAuthor, parseMenuId, plainBody, stableId } from './lib.js';
+import { entryForMail, followUpFor, menuItems, parseAuthor, parseMenuId, parseReferences, plainBody, stableId } from './lib.js';
 
 const SPACE_NAME = 'pige';
 const ROOT_MENU = 'pige';
@@ -15,8 +17,12 @@ const TREE_MAX_AGE = 60_000;
 let cache = { at: 0, tree: null, people: [] };
 
 async function settings() {
-  const { serverUrl = '', token = '' } = await browser.storage.local.get(['serverUrl', 'token']);
-  return { serverUrl: serverUrl.replace(/\/+$/, ''), token };
+  const { serverUrl = '', token = '', followReplies = true } = await browser.storage.local.get([
+    'serverUrl',
+    'token',
+    'followReplies'
+  ]);
+  return { serverUrl: serverUrl.replace(/\/+$/, ''), token, followReplies };
 }
 
 function originOf(url) {
@@ -116,6 +122,7 @@ async function buildMenu() {
   }
   browser.menus.create({ id: 'task', parentId: ROOT_MENU, title: 'Créer une tâche', contexts: ['message_list'] });
   browser.menus.create({ id: 'note', parentId: ROOT_MENU, title: 'Noter dans le journal', contexts: ['message_list'] });
+  browser.menus.create({ id: 'follow', parentId: ROOT_MENU, title: 'Ajouter au suivi de la tâche', contexts: ['message_list'] });
   let tree = null;
   try {
     tree = (await knowledge()).tree;
@@ -205,6 +212,10 @@ browser.menus.onClicked.addListener(async (info) => {
     browser.runtime.openOptionsPage();
     return;
   }
+  if (info.menuItemId === 'follow') {
+    await followSelected(info);
+    return;
+  }
   const choice = parseMenuId(info.menuItemId);
   if (!choice) return;
   let known;
@@ -249,6 +260,127 @@ async function refreshOpenTabs() {
 function notify(title, message) {
   browser.notifications.create({ type: 'basic', iconUrl: 'icons/icon-64.png', title, message });
 }
+
+// ------------------------------------------------------------------ follow-up
+
+/** The References of a message (its In-Reply-To and References headers). */
+async function referencesOf(messageId) {
+  try {
+    const full = await browser.messages.getFull(messageId);
+    const h = full.headers || {};
+    return parseReferences(h['in-reply-to'] || [], h.references || []);
+  } catch {
+    return [];
+  }
+}
+
+async function attachmentsOf(messageId) {
+  try {
+    return await browser.messages.listAttachments(messageId);
+  } catch {
+    return [];
+  }
+}
+
+function isSentFolder(folder) {
+  if (!folder) return false;
+  return folder.type === 'sent' || (Array.isArray(folder.specialUse) && folder.specialUse.includes('sent'));
+}
+
+/** « Ajouter au suivi de la tâche »: the selected mails, sent or received, into their task. */
+async function followSelected(info) {
+  let added = 0;
+  let unknown = 0;
+  const failures = [];
+  let taskTitle = '';
+  for await (const header of selectedMessages(info)) {
+    if (!header.headerMessageId) continue;
+    try {
+      const references = await referencesOf(header.id);
+      const sent = isSentFolder(header.folder);
+      const result = await api(
+        'POST',
+        '/api/v2/mail-followups',
+        followUpFor({
+          messageId: header.headerMessageId,
+          references,
+          direction: sent ? 'sent' : 'received',
+          date: header.date ? new Date(header.date) : new Date(),
+          author: parseAuthor(header.author).name || parseAuthor(header.author).email,
+          recipients: header.recipients,
+          subject: header.subject,
+          text: await mailText(header.id),
+          attachments: await attachmentsOf(header.id)
+        })
+      );
+      added += 1;
+      taskTitle = result.task.title;
+    } catch (err) {
+      if (String(err?.message || '').startsWith('HTTP 404')) unknown += 1;
+      else failures.push(String(err?.message || err));
+    }
+  }
+  if (added) await refreshOpenTabs();
+  if (failures.length) notify('Suivi incomplet', `${failures.length} mail(s) non ajouté(s) (${failures[0]}).`);
+  else if (added) notify('Ajouté au suivi', added > 1 ? `${added} mails, tâche « ${taskTitle} ».` : `Tâche « ${taskTitle} ».`);
+  if (unknown) notify('Pas de tâche liée', 'Ce mail ne répond à aucun mail dont tu as fait une tâche.');
+}
+
+// Replies being sent: what they answer and their text, kept until the send succeeds.
+const sending = new Map();
+
+browser.compose.onBeforeSend.addListener(async (tab, details) => {
+  if (!details.relatedMessageId || !String(details.type || '').startsWith('reply')) return;
+  const { followReplies, serverUrl, token } = await settings();
+  if (!followReplies || !serverUrl || !token) return;
+  let text = details.isPlainText ? details.plainTextBody || '' : '';
+  if (!text && details.body) {
+    try {
+      text = await browser.messengerUtilities.convertToPlainText(details.body);
+    } catch {
+      text = '';
+    }
+  }
+  let attachments = [];
+  try {
+    attachments = await browser.compose.listAttachments(tab.id);
+  } catch {
+    /* no list */
+  }
+  const to = (Array.isArray(details.to) ? details.to : [details.to]).filter((x) => typeof x === 'string');
+  sending.set(tab.id, { relatedMessageId: details.relatedMessageId, to, subject: details.subject, text, attachments });
+});
+
+browser.compose.onAfterSend.addListener(async (tab, sendInfo) => {
+  const pending = sending.get(tab.id);
+  sending.delete(tab.id);
+  if (!pending || sendInfo.error) return;
+  try {
+    const related = await browser.messages.get(pending.relatedMessageId);
+    if (!related?.headerMessageId) return;
+    const references = [`<${related.headerMessageId}>`, ...(await referencesOf(related.id))];
+    const sentId = sendInfo.headerMessageId || sendInfo.messages?.[0]?.headerMessageId || `${crypto.randomUUID()}@pige.local`;
+    const result = await api(
+      'POST',
+      '/api/v2/mail-followups',
+      followUpFor({
+        messageId: sentId,
+        references,
+        direction: 'sent',
+        date: new Date(),
+        author: '',
+        recipients: pending.to,
+        subject: pending.subject,
+        text: pending.text,
+        attachments: pending.attachments
+      })
+    );
+    await refreshOpenTabs();
+    notify('Réponse ajoutée au suivi', `Tâche « ${result.task.title} ».`);
+  } catch {
+    /* no task behind this mail (404), or server unreachable: nothing to say */
+  }
+});
 
 // ------------------------------------------------------------------ lifecycle
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { defaultSpace, entryForMail, excerpt, formatSize, localDay, mailFooter, menuItems, parseAuthor, parseMenuId, plainBody, stableId } from '../lib.js';
+import { defaultSpace, entryForMail, excerpt, followUpFor, formatSize, localDay, mailFooter, parseReferences, menuItems, parseAuthor, parseMenuId, plainBody, stableId } from '../lib.js';
 
 const tree = {
   spaces: [
@@ -96,4 +96,25 @@ test('footer and sizes', () => {
   assert.equal(formatSize(3 * 1024 * 1024 + 400_000), '3,4 Mo');
   const many = Array.from({ length: 10 }, (_, i) => `p${i}@x.fr`);
   assert.equal(mailFooter({ recipients: many }, null), `À : ${many.slice(0, 8).join(', ')} et 2 autres`);
+});
+
+test('references and follow-up payload', () => {
+  assert.deepEqual(parseReferences('<a@x> <b@y>', ['<b@y>', '<c@z>'], undefined), ['<a@x>', '<b@y>', '<c@z>']);
+  const p = followUpFor({
+    messageId: 'r1@me',
+    references: ['<orig@univ>'],
+    direction: 'sent',
+    date: new Date(2026, 9, 21, 9, 5),
+    author: 'Hugo',
+    recipients: ['Anne Martin <anne@univ.fr>', 'paul@univ.fr'],
+    subject: ' Re: Devis ',
+    text: 'Bonjour,\nci-joint le devis.\n\nLe 20 oct. 2026, Anne a écrit :\n> question',
+    attachments: [{ name: 'devis.pdf', size: 2048 }]
+  });
+  assert.equal(p.message_id, '<r1@me>');
+  assert.equal(p.day, '2026-10-21');
+  assert.equal(p.recipients, 'Anne Martin, paul@univ.fr');
+  assert.equal(p.subject, 'Re: Devis');
+  assert.equal(p.body, 'Bonjour,\nci-joint le devis.');
+  assert.equal(p.attachments, 'devis.pdf (2 Ko)');
 });

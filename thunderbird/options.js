@@ -2,10 +2,17 @@ const form = document.getElementById('form');
 const serverInput = document.getElementById('serverUrl');
 const tokenInput = document.getElementById('token');
 const result = document.getElementById('result');
+const followInput = document.getElementById('followReplies');
 
-browser.storage.local.get(['serverUrl', 'token']).then(({ serverUrl = '', token = '' }) => {
+browser.storage.local.get(['serverUrl', 'token', 'followReplies']).then(({ serverUrl = '', token = '', followReplies = true }) => {
   serverInput.value = serverUrl;
   tokenInput.value = token;
+  followInput.checked = followReplies;
+});
+
+// The follow-up option is saved at once, without testing the server again.
+followInput.addEventListener('change', () => {
+  void browser.storage.local.set({ followReplies: followInput.checked });
 });
 
 form.addEventListener('submit', async (event) => {
@@ -41,6 +48,6 @@ form.addEventListener('submit', async (event) => {
     result.textContent = 'Serveur injoignable. Vérifie l’adresse.';
     return;
   }
-  await browser.storage.local.set({ serverUrl: url.origin, token });
+  await browser.storage.local.set({ serverUrl: url.origin, token, followReplies: followInput.checked });
   result.textContent = 'Enregistré. Le bouton P.IGE est dans la barre des espaces, à gauche ; clic droit sur un mail › P.IGE.';
 });

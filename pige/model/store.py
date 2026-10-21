@@ -211,6 +211,36 @@ class Step:
 
 
 @dataclass(frozen=True)
+class TaskMail:
+    id: str
+    task_id: str
+    entry_id: str | None
+    day: str
+    message_id: str
+    direction: Literal["sent", "received"]
+    sent_at: str
+    author: str
+    recipients: str
+    subject: str
+    body: str
+    attachments: str
+
+
+_MONTHS = ("janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc.")
+
+
+def _exchange_title(day: str, sent: int, received: int) -> str:
+    """« Échange du 21 oct. — 2 réponses envoyées, 1 mail reçu »."""
+    d = date.fromisoformat(day)
+    parts = []
+    if sent:
+        parts.append(f"{sent} réponse{'s' if sent > 1 else ''} envoyée{'s' if sent > 1 else ''}")
+    if received:
+        parts.append(f"{received} mail{'s' if received > 1 else ''} reçu{'s' if received > 1 else ''}")
+    return f"Échange du {d.day} {_MONTHS[d.month - 1]}" + (f" — {', '.join(parts)}" if parts else "")
+
+
+@dataclass(frozen=True)
 class Entry:
     id: str
     space_id: str
@@ -1437,6 +1467,102 @@ class ModelStore:
             "t.status <> 'done' AND EXISTS (SELECT 1 FROM task_people tp WHERE tp.task_id = t.id AND tp.person_id = ?)",
             (person_id,),
         )
+
+    # ------------------------------------------------------------ task follow-up mails
+
+    def task_for_mail(self, references: Iterable[str]) -> str | None:
+        """The task a mail belongs to, from its References / In-Reply-To: a mail already in a
+        task's follow-up, else the mail a task was created from."""
+        refs = [r.strip() for r in references if r and r.strip()][:100]
+        if not refs:
+            return None
+        marks = ", ".join("?" for _ in refs)
+        row = self._one(
+            f"SELECT task_id FROM task_mails WHERE message_id IN ({marks}) ORDER BY sent_at DESC LIMIT 1", tuple(refs)
+        )
+        if row is not None:
+            return str(row["task_id"])
+        row = self._one(
+            f"SELECT t.id FROM tasks t JOIN entries e ON e.id = t.origin_entry_id"
+            f" WHERE e.mail_message_id IN ({marks}) ORDER BY t.status = 'done', t.created_at DESC LIMIT 1",
+            tuple(refs),
+        )
+        return str(row["id"]) if row is not None else None
+
+    def add_task_mail(
+        self,
+        task_id: str,
+        *,
+        message_id: str,
+        direction: Literal["sent", "received"],
+        sent_at: datetime,
+        day: str,
+        author: str = "",
+        recipients: str = "",
+        subject: str = "",
+        body: str = "",
+        attachments: str = "",
+    ) -> tuple[TaskMail, bool]:
+        """Add a mail to the task's follow-up, under the day's « Échange du … » entry (created if
+        needed). The same mail twice is recognised: ``(mail, False)``."""
+        with self._tx():
+            task = self.get_task(task_id)
+            message_id = message_id.strip()
+            existing = self._one("SELECT * FROM task_mails WHERE task_id = ? AND message_id = ?", (task_id, message_id))
+            if existing is not None:
+                return _row_to(TaskMail, existing), False
+            checked_day = _check_date(day, "day")
+            if checked_day is None:
+                raise InvalidOperationError("day is required")
+            day = checked_day
+            row = self._one(
+                "SELECT entry_id FROM task_mails WHERE task_id = ? AND day = ? AND entry_id IS NOT NULL LIMIT 1",
+                (task_id, day),
+            )
+            if row is not None:
+                entry_id = row["entry_id"]
+            else:
+                entry_id = self.create_entry(
+                    entry_date=day, project_id=task.project_id, space_id=None if task.project_id else task.space_id,
+                    task_id=task_id, title=_exchange_title(day, 0, 0), source="mail",
+                ).id
+            mail_id = _new_id()
+            self.conn.execute(
+                "INSERT INTO task_mails(id, task_id, entry_id, day, message_id, direction, sent_at, author, recipients,"
+                " subject, body, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (mail_id, task_id, entry_id, day, message_id, direction, _utc(sent_at), author[:500],
+                 recipients[:2000], subject[:500], body[:20_000], attachments[:2000]),
+            )
+            self._retitle_exchange(entry_id, day)
+            return _row_to(TaskMail, self._require("task_mails", mail_id)), True
+
+    def _retitle_exchange(self, entry_id: str, day: str) -> None:
+        counts = self.conn.execute(
+            "SELECT sum(direction = 'sent') AS s, sum(direction = 'received') AS r FROM task_mails WHERE entry_id = ?",
+            (entry_id,),
+        ).fetchone()
+        title = _exchange_title(day, int(counts["s"] or 0), int(counts["r"] or 0))
+        # The title only: the revision protects what the user writes (the synthesis).
+        self.conn.execute("UPDATE entries SET title = ? WHERE id = ?", (title, entry_id))
+
+    def task_mails(self, task_id: str) -> list[TaskMail]:
+        rows = self.conn.execute("SELECT * FROM task_mails WHERE task_id = ? ORDER BY sent_at", (task_id,)).fetchall()
+        return [_row_to(TaskMail, r) for r in rows]
+
+    def delete_task_mail(self, mail_id: str) -> None:
+        """Remove a mail from the follow-up; its day's entry goes too if nothing else is in it."""
+        with self._tx():
+            row = self._require("task_mails", mail_id)
+            self.conn.execute("DELETE FROM task_mails WHERE id = ?", (mail_id,))
+            entry_id = row["entry_id"]
+            if entry_id is None:
+                return
+            left = self.conn.execute("SELECT count(*) AS n FROM task_mails WHERE entry_id = ?", (entry_id,)).fetchone()
+            entry = self._one("SELECT body FROM entries WHERE id = ?", (entry_id,))
+            if left["n"] == 0 and entry is not None and not (entry["body"] or "").strip():
+                self.conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+            elif entry is not None:
+                self._retitle_exchange(entry_id, row["day"])
 
     # ------------------------------------------------------------ project people
 
