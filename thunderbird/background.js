@@ -310,14 +310,18 @@ async function fileMails(choice, headers) {
   }
 }
 
+/** Ask open P.IGE pages to reload what changed. Filtering tabs by address would need the
+ * « tabs » permission: every tab is asked, and only those running the bridge (P.IGE pages)
+ * answer. Never fails: what was sent has been sent. */
 async function refreshOpenTabs() {
-  const { serverUrl } = await settings();
-  const origin = originOf(serverUrl);
-  if (!origin) return;
-  for (const tab of await browser.tabs.query({ url: `${origin}/*` })) {
-    browser.tabs.sendMessage(tab.id, { type: 'refresh' }).catch(() => {
-      /* tab without the bridge (still loading): it refreshes when shown */
-    });
+  try {
+    for (const tab of await browser.tabs.query({})) {
+      browser.tabs.sendMessage(tab.id, { type: 'refresh' }).catch(() => {
+        /* not a P.IGE page, or still loading: nothing to do */
+      });
+    }
+  } catch {
+    /* no tab list: the pages refresh when shown */
   }
 }
 
