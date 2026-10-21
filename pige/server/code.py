@@ -107,6 +107,60 @@ def github_fetcher(token: str) -> Fetcher:
     return get
 
 
+def normalize_export(text: str) -> str:
+    """The journal.json address of a pilote export (« https://…/ » or « …/journal.json »)."""
+    value = text.strip()
+    parts = urllib.parse.urlsplit(value)
+    if parts.scheme != "https" or not parts.netloc or any(ch in value for ch in "\r\n\t "):
+        raise CodeError("L'adresse de l'export pilote doit commencer par https:// (ex. https://moi.github.io/depot/).")
+    if not parts.path.endswith("journal.json"):
+        value = value.rstrip("/") + "/journal.json"
+    return value
+
+
+def fetch_export(url: str) -> Any:
+    request = urllib.request.Request(url, headers={"User-Agent": "pige", "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+            data = response.read(MAX_BYTES * 4 + 1)
+    except urllib.error.HTTPError as exc:
+        raise CodeError(f"Export pilote introuvable ({exc.code}) : vérifie l'adresse.") from exc
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        raise CodeError("Export pilote injoignable.") from exc
+    if len(data) > MAX_BYTES * 4:
+        raise CodeError("Export pilote trop volumineux.")
+    try:
+        return json.loads(data.decode("utf-8"))
+    except ValueError as exc:
+        raise CodeError("Ce n'est pas un export pilote (journal.json illisible).") from exc
+
+
+def parse_export(data: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
+    """(work items, commits, branch) from pilote's journal.json."""
+    if not isinstance(data, dict) or not isinstance(data.get("chantiers"), list):
+        raise CodeError("Ce n'est pas un export pilote (pas de chantiers).")
+    fiches: list[dict[str, Any]] = []
+    for c in data["chantiers"]:
+        code = str(c.get("code") or "")
+        if not code:
+            continue
+        title = re.sub(rf"^{re.escape(code)}\s*[—–:-]\s*", "", str(c.get("titre") or code))
+        reste = c.get("reste") if isinstance(c.get("reste"), list) else []
+        fiches.append({
+            "code": code, "title": title[:200], "status": str(c.get("statut") or "interrompu"),
+            "stopped": str(c.get("arrete") or "")[:300], "stopped_label": str(c.get("arreteLibelle") or ""),
+            "open": sum(1 for r in reste if isinstance(r, dict) and not r.get("fait")),
+            "path": str(c.get("file") or f"pilotage/{code}.md"),
+        })
+    commits = []
+    for c in data.get("commits") or []:
+        sha, day = c.get("full") or c.get("hash"), str(c.get("date") or "")
+        if sha and re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            commits.append({"sha": sha, "at": f"{day}T12:00:00Z", "day": day, "subject": str(c.get("sujet") or "")[:200]})
+    branch = data.get("branche") if isinstance(data.get("branche"), str) else None
+    return sorted(fiches, key=lambda f: f["code"]), commits, branch
+
+
 # ---------------------------------------------------------------- pilote's work items
 
 _FRONT = re.compile(r"\A---\n(.*?)\n---\n", re.S)
@@ -182,10 +236,12 @@ def day_title(repo: str, summary: dict[str, Any]) -> str:
 class CodeJournal:
     """Reads the linked repositories (all pushed branches) and keeps one entry per day."""
 
-    def __init__(self, store: ModelStore, zone: ZoneInfo, fetcher: Fetcher) -> None:
+    def __init__(self, store: ModelStore, zone: ZoneInfo, fetcher: Fetcher,
+                 export: Callable[[str], Any] = fetch_export) -> None:
         self.store = store
         self.zone = zone
         self.get = fetcher
+        self.export = export
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._attempts: dict[str, datetime] = {}  # last scheduled attempt per project
@@ -241,6 +297,8 @@ class CodeJournal:
                 last = (datetime.strptime(link["last_sync"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
                         if link["last_sync"] else None)
                 since = (last - OVERLAP) if last else (moment - FIRST_WINDOW)
+                if link.get("export_url"):
+                    return self._sync_export(project_id, repo, link["export_url"], since, moment)
                 listed = self._pages(f"/repos/{repo}/branches", {})
                 heads = {b["name"]: (b.get("commit") or {}).get("sha", "") for b in listed if "name" in b}
                 branches = list(heads)
@@ -264,30 +322,7 @@ class CodeJournal:
                     fiches, shas = self._fiches(repo, branch, link["fiche_shas"], link["fiches"])
                 else:
                     fiches, shas = link["fiches"], link["fiche_shas"]  # nothing moved: work items unchanged
-                days: dict[str, list[dict[str, Any]]] = {}
-                for c in commits.values():
-                    when = datetime.strptime(c["at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-                    days.setdefault(when.astimezone(self.zone).date().isoformat(), []).append(c)
-                written = 0
-                for day, found in sorted(days.items()):
-                    previous = self.store.code_day(project_id, day)
-                    merged = {c["sha"]: c for c in (previous["commits"] if previous else [])}
-                    merged.update({c["sha"]: c for c in found})
-                    all_commits = sorted(merged.values(), key=lambda c: c["at"])
-                    recent = day >= (moment.astimezone(self.zone).date() - timedelta(days=1)).isoformat()
-                    if previous and not recent:
-                        # An older day read again: keep the stopping points it was written with.
-                        stopped = {c["code"]: c["stopped"] for c in previous["summary"].get("chantiers", [])}
-                        summary = summarize(all_commits, fiches, recent=False)
-                        for item in summary["chantiers"]:
-                            item["stopped"] = stopped.get(item["code"], "")
-                    else:
-                        summary = summarize(all_commits, fiches, recent=recent)
-                    if previous and previous["summary"] == summary and previous["entry_id"]:
-                        continue
-                    self.store.save_code_day(project_id, day, commits=all_commits, summary=summary,
-                                             title=day_title(repo, summary))
-                    written += 1
+                written = self._write_days(project_id, repo, list(commits.values()), fiches, moment)
             except CodeError as exc:
                 self.store.repo_synced(project_id, error=str(exc))
                 raise
@@ -298,6 +333,55 @@ class CodeJournal:
                 raise error from None
             self.store.repo_synced(project_id, branch=branch, fiches=fiches, fiche_shas=shas, heads=heads, at=moment)
             return {"commits": len(commits), "days": written, "fiches": len(fiches)}
+
+    def _sync_export(self, project_id: str, repo: str, url: str, since: datetime, moment: datetime) -> dict[str, Any]:
+        """One static file (pilote's journal.json on GitHub Pages): no API, no limit, no token."""
+        try:
+            fiches, commits, branch = parse_export(self.export(url))
+            first_day = since.astimezone(self.zone).date().isoformat()
+            recent = [c for c in commits if c["day"] >= first_day]
+            written = self._write_days(project_id, repo, recent, fiches, moment)
+        except CodeError as exc:
+            self.store.repo_synced(project_id, error=str(exc))
+            raise
+        except Exception as exc:
+            logger.warning("Code export %s: unexpected %s", repo, type(exc).__name__)
+            error = CodeError(f"Lecture de l'export impossible ({type(exc).__name__}).")
+            self.store.repo_synced(project_id, error=str(error))
+            raise error from None
+        self.store.repo_synced(project_id, branch=branch, fiches=fiches, fiche_shas={}, at=moment)
+        return {"commits": len(recent), "days": written, "fiches": len(fiches)}
+
+    def _write_days(self, project_id: str, repo: str, commits: list[dict[str, Any]],
+                    fiches: list[dict[str, Any]], moment: datetime) -> int:
+        days: dict[str, list[dict[str, Any]]] = {}
+        for c in commits:
+            day = c.get("day")
+            if not day:
+                when = datetime.strptime(c["at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                day = when.astimezone(self.zone).date().isoformat()
+            days.setdefault(day, []).append(c)
+        written = 0
+        for day, found in sorted(days.items()):
+            previous = self.store.code_day(project_id, day)
+            merged = {c["sha"]: c for c in (previous["commits"] if previous else [])}
+            merged.update({c["sha"]: c for c in found})
+            all_commits = sorted(merged.values(), key=lambda c: c["at"])
+            recent = day >= (moment.astimezone(self.zone).date() - timedelta(days=1)).isoformat()
+            if previous and not recent:
+                # An older day read again: keep the stopping points it was written with.
+                stopped = {c["code"]: c["stopped"] for c in previous["summary"].get("chantiers", [])}
+                summary = summarize(all_commits, fiches, recent=False)
+                for item in summary["chantiers"]:
+                    item["stopped"] = stopped.get(item["code"], "")
+            else:
+                summary = summarize(all_commits, fiches, recent=recent)
+            if previous and previous["summary"] == summary and previous["entry_id"]:
+                continue
+            self.store.save_code_day(project_id, day, commits=all_commits, summary=summary,
+                                     title=day_title(repo, summary))
+            written += 1
+        return written
 
     def last_slot(self, moment: datetime) -> datetime:
         """The latest scheduled reading time (12:30 or 19:30 local) at or before ``moment``."""

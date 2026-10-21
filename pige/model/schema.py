@@ -415,6 +415,12 @@ MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE project_repos ADD COLUMN heads TEXT NOT NULL DEFAULT '{}';
     """,
+    # ------------------------------------------------------------------ 8
+    # The address of the repository's pilote export (journal.json on GitHub Pages): read
+    # instead of the GitHub API when given — one static file, no limit, no token.
+    """
+    ALTER TABLE project_repos ADD COLUMN export_url TEXT;
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

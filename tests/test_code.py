@@ -217,3 +217,52 @@ def test_read_twice_a_day_or_when_asked(app):
     assert [r["repo"] for r in c.get("/api/v2/code").json()] == ["Hsbtqemy/pilote"]
     result = c.post("/api/v2/code/sync", headers=WEB).json()
     assert result["repos"] == 1 and result["errors"] == []
+
+
+EXPORT = {
+    "repo": "pilote", "branche": "dev",
+    "chantiers": [
+        {"code": "P-8", "titre": "P-8 — paragraphes manuels", "statut": "interrompu", "arrete": "geste ¶",
+         "arreteLibelle": "Arrêté sur", "file": "pilotage/P-8.md", "reste": [{"texte": "a", "fait": False}, {"texte": "b", "fait": True}]},
+        {"code": "P-1", "titre": "P-1 — fini", "statut": "livré", "reste": []},
+    ],
+    "commits": [
+        {"full": "c1", "date": "2026-10-21", "sujet": "P-8 : geste"},
+        {"full": "c2", "date": "2026-10-21", "sujet": "ménage"},
+        {"full": "old", "date": "2025-01-01", "sujet": "P-8 très ancien"},
+    ],
+}
+
+
+def test_reading_the_pilote_export_instead_of_the_api(app):
+    from datetime import datetime, timezone
+
+    from pige.server.code import normalize_export, parse_export
+
+    assert normalize_export("https://moi.github.io/depot/") == "https://moi.github.io/depot/journal.json"
+    assert normalize_export("https://moi.github.io/depot/journal.json") == "https://moi.github.io/depot/journal.json"
+    with pytest.raises(CodeError):
+        normalize_export("http://moi.github.io/depot/")
+    fiches, commits, branch = parse_export(EXPORT)
+    assert fiches[1] == {"code": "P-8", "title": "paragraphes manuels", "status": "interrompu", "stopped": "geste ¶",
+                         "stopped_label": "Arrêté sur", "open": 1, "path": "pilotage/P-8.md"}
+    assert branch == "dev" and len(commits) == 3
+
+    asked: list[str] = []
+    app.state.code_journal.export = lambda url: asked.append(url) or EXPORT
+    api_calls = len(app.state.github.calls)
+    c = TestClient(app)
+    c.post("/api/login", json={"password": PASSWORD})
+    space = c.post("/api/v2/spaces", json={"name": "DEV"}, headers=WEB).json()
+    pid = c.post("/api/v2/projects", json={"space_id": space["id"], "name": "pilote"}, headers=WEB).json()["id"]
+    view = c.put(f"/api/v2/projects/{pid}/repo",
+                 json={"repo": "Hsbtqemy/pilote", "export_url": "https://hsbtqemy.github.io/pilote/"}, headers=WEB).json()
+    assert view["export_url"] == "https://hsbtqemy.github.io/pilote/journal.json" and view["branch"] == "dev"
+    assert [f["code"] for f in view["chantiers"]] == ["P-8"] and view["closed"] == 1
+    assert asked == ["https://hsbtqemy.github.io/pilote/journal.json"]
+    assert len(app.state.github.calls) == api_calls  # the GitHub API is not used at all
+    store = app.state.code_journal.store
+    app.state.code_journal.sync(pid, now=datetime(2026, 10, 21, 20, 0, tzinfo=timezone.utc))
+    day = store.code_day(pid, "2026-10-21")
+    assert day["summary"]["total"] == 2 and day["summary"]["chantiers"][0]["code"] == "P-8"
+    assert store.code_day(pid, "2025-01-01") is None

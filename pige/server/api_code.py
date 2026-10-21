@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from pige.model import ModelStore
-from pige.server.code import OPEN_STATUSES, CodeError, CodeJournal, normalize_repo
+from pige.server.code import OPEN_STATUSES, CodeError, CodeJournal, normalize_export, normalize_repo
 
 HEX = r"^[0-9a-f]{32}$"
 
@@ -16,6 +16,7 @@ HEX = r"^[0-9a-f]{32}$"
 class RepoIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     repo: str | None = Field(default=None, max_length=300)  # None or "": unlink
+    export_url: str | None = Field(default=None, max_length=500)  # pilote's export on GitHub Pages
 
 
 def build_code_router(
@@ -31,7 +32,7 @@ def build_code_router(
             return {"repo": None, "token": has_token}
         fiches = link["fiches"]
         return {
-            "repo": link["repo"], "branch": link["branch"], "last_sync": link["last_sync"],
+            "repo": link["repo"], "export_url": link["export_url"], "branch": link["branch"], "last_sync": link["last_sync"],
             "last_error": link["last_error"], "token": has_token,
             "chantiers": [f for f in fiches if f["status"] in OPEN_STATUSES],
             "closed": sum(1 for f in fiches if f["status"] not in OPEN_STATUSES),
@@ -41,7 +42,8 @@ def build_code_router(
     def linked() -> list[dict[str, Any]]:
         """The linked repositories and when they were read (for « Récupérer le code »)."""
         return [
-            {"project_id": r["project_id"], "repo": r["repo"], "last_sync": r["last_sync"], "last_error": r["last_error"]}
+            {"project_id": r["project_id"], "repo": r["repo"], "export_url": r["export_url"], "last_sync": r["last_sync"],
+             "last_error": r["last_error"]}
             for r in store.project_repos()
         ]
 
@@ -60,9 +62,10 @@ def build_code_router(
             return view(project_id)
         try:
             repo = normalize_repo(body.repo)
+            export = normalize_export(body.export_url) if body.export_url and body.export_url.strip() else None
         except CodeError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
-        store.set_project_repo(project_id, repo)
+        store.set_project_repo(project_id, repo, export)
         try:
             journal.sync(project_id)
         except CodeError:
