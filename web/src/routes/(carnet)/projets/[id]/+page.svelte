@@ -7,6 +7,7 @@
 	import TaskThread from '#lib/carnet/TaskThread.svelte';
 	import PersonPicker from '#lib/carnet/PersonPicker.svelte';
 	import ProjectPeople from '#lib/carnet/ProjectPeople.svelte';
+	import CodePanel from '#lib/carnet/CodePanel.svelte';
 	import { carnet, failure, isDay, projectOf, reload, spaceOf, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let id = $derived(page.params.id ?? '');
@@ -475,6 +476,7 @@
 				</label>
 			</div>
 			<ProjectPeople {project} onchange={(p) => (project = p)} />
+			<CodePanel projectId={project.id} />
 			{#if editingDesc}
 				<textarea
 					id="project-desc"

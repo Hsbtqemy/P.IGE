@@ -6,6 +6,8 @@
 	import EventRow from '#lib/carnet/EventRow.svelte';
 	import DoneToday from '#lib/carnet/DoneToday.svelte';
 	import TodayCompact from '#lib/carnet/TodayCompact.svelte';
+	import CodeDayView from '#lib/carnet/CodeDayView.svelte';
+	import CodeFetch from '#lib/carnet/CodeFetch.svelte';
 	import { newId, prepare } from '#lib/carnet/capture.js';
 	import { outbox, queue } from '#lib/carnet/outbox.svelte.js';
 	import { appleMail, appleMailHref, onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
@@ -502,6 +504,10 @@
 						{:else}
 							<div class="body">
 								{#if entry.kind === 'meeting'}<span class="kind">Réunion</span>{/if}
+								{#if entry.code}
+									<p class="code-title"><b>{entry.title}</b></p>
+									<CodeDayView code={entry.code} day={entry.entry_date} />
+								{/if}
 								{#if entry.source === 'mail' && entry.task_id}
 									<a class="to-task" href="{entry.project_id ? `/projets/${entry.project_id}` : `/espaces/${entry.space_id}`}?tache={entry.task_id}"
 										>Voir l’échange dans la tâche →</a
@@ -591,6 +597,7 @@
 
 		<aside class="side" aria-label="À faire et ce que le feuillet a relié">
 			<TodayCompact {day} isToday={day === todayIso()} ondone={() => doneKey++} />
+			<CodeFetch onfetched={() => void refresh()} />
 			<div class="block">
 				<span class="label">Rangé dans</span>
 				{#each filedIn as item (item.key)}
@@ -998,5 +1005,9 @@
 		font-family: var(--sans);
 		font-size: 0.8125rem;
 		color: var(--accent);
+	}
+	.code-title {
+		margin: 0 0 2px;
+		font-family: var(--sans);
 	}
 </style>

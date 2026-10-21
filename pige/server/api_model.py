@@ -581,7 +581,12 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         ids = [e.id for e in entries]
         people = store.people_for_entries(ids)
         tags = store.tags_for_entries(ids)
-        return [{**_out(e), "people": _out(people[e.id]), "tags": _out(tags[e.id])} for e in entries]
+        code = store.code_summaries([e.id for e in entries if e.source == "import"])
+        return [
+            {**_out(e), "people": _out(people[e.id]), "tags": _out(tags[e.id]),
+             **({"code": code[e.id]} if e.id in code else {})}
+            for e in entries
+        ]
 
     def _entry_view(entry_id: str) -> dict[str, Any]:
         return _entry_views([store.get_entry(entry_id)])[0]

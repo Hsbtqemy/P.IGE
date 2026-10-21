@@ -136,6 +136,25 @@ Dans Thunderbird : Outils, Modules complémentaires et thèmes, roue dentée,
 de l'extension, saisis `https://pige.example.org` et le jeton, puis accepte l'accès au site.
 Le bouton P.IGE apparaît dans la barre des espaces, à gauche.
 
+## 9 bis. Journal du code (facultatif)
+
+Un projet peut être relié à un dépôt GitHub (page du projet › « Relier un dépôt de
+code ») : chaque jour où du code est poussé, sur n'importe quelle branche, une entrée le
+résume dans le journal du projet, par chantier de `pilotage/` (pilote) ; les chantiers
+ouverts s'affichent sur la page du projet. Rien n'est écrit dans le dépôt.
+
+Pour un dépôt **privé** (et conseillé pour les publics : GitHub limite à 60 requêtes par
+heure sans jeton), crée un jeton en lecture seule : GitHub › Settings › Developer
+settings › Personal access tokens › *Fine-grained tokens* › Generate new token ;
+« Repository access » : les dépôts voulus ; « Permissions » : *Contents* en lecture seule
+(*Metadata* suit). Puis, sur le serveur, sans que le jeton s'affiche ni reste dans
+l'historique :
+
+```sh
+read -rs -p "Jeton GitHub : " T && echo && echo "PIGE_GITHUB_TOKEN=$T" | sudo tee -a /etc/pige/pige.env >/dev/null; unset T
+sudo systemctl restart pige
+```
+
 ## 10. Vérifier les critères de réussite
 
 1. Sur le téléphone en mode avion, crée une tâche : elle s'affiche « En attente d'envoi ».
