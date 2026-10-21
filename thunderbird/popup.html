@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <title>P.IGE</title>
+    <style>
+      body { font: 14px/1.4 system-ui, sans-serif; margin: 0; padding: 12px; width: 260px; }
+      label { display: block; font-weight: 600; font-size: 12px; color: GrayText; margin-bottom: 4px; }
+      select { width: 100%; padding: 4px; font: inherit; }
+      .actions { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+      button { padding: 6px 10px; font: inherit; text-align: left; cursor: pointer; }
+      #status { margin: 8px 0 0; font-size: 12px; min-height: 1em; }
+    </style>
+  </head>
+  <body>
+    <div id="form" hidden>
+      <label for="place">Ranger dans</label>
+      <select id="place"></select>
+      <div class="actions">
+        <button data-action="task">Créer une tâche</button>
+        <button data-action="note">Noter dans le journal</button>
+        <button data-action="follow">Ajouter au suivi de la tâche</button>
+      </div>
+    </div>
+    <p id="status" role="status">Chargement…</p>
+    <script src="popup.js"></script>
+  </body>
+</html>

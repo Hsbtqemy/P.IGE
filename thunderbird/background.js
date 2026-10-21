@@ -96,9 +96,37 @@ async function registerBridge() {
 }
 
 browser.runtime.onMessage.addListener((message, sender) => {
-  if (message?.type !== 'open-mail') return undefined;
-  return openMail(message, sender);
+  if (message?.type === 'open-mail') return openMail(message, sender);
+  // The button on a displayed mail (popup.html, inside the extension only).
+  if (sender.id !== browser.runtime.id || !String(sender.url || '').startsWith(browser.runtime.getURL(''))) return undefined;
+  if (message?.type === 'popup-init') return popupInit();
+  if (message?.type === 'popup-action') return popupAction(message);
+  return undefined;
 });
+
+async function popupInit() {
+  const { serverUrl, token } = await settings();
+  if (!serverUrl || !token) return { configured: false };
+  try {
+    const { tree } = await knowledge();
+    return { configured: true, tree };
+  } catch {
+    return { configured: true, offline: true };
+  }
+}
+
+async function* listOf(messages) {
+  for (const m of messages) yield m;
+}
+
+async function popupAction({ action, target, tabId }) {
+  const shown = await displayedMessages({ id: tabId });
+  if (!shown.length) return { ok: false, error: 'Aucun mail affiché.' };
+  if (action === 'follow') await followMails(listOf(shown));
+  else if (action === 'task' || action === 'note') await fileMails({ action, target }, listOf(shown));
+  else return { ok: false };
+  return { ok: true };
+}
 
 async function openMail(message, sender) {
   // Only the P.IGE page itself may ask to open an email.
@@ -140,11 +168,11 @@ async function buildMenu() {
 
 // The project list follows the server: rebuilt when the menu opens if it is over a minute old.
 browser.menus.onShown.addListener(async (info, tab) => {
-  // In a page, only when it shows a mail (not in the P.IGE tab or another web page).
-  const inList = info.contexts.includes('message_list');
-  const onMail = inList || (await displayedMessages(tab)).length > 0;
-  await browser.menus.update(ROOT_MENU, { visible: onMail });
+  // Hidden only in web pages (the P.IGE tab or any site): everywhere mails are shown,
+  // including search results, it is there.
+  const onMail = info.contexts.includes('message_list') || tab?.type !== 'content';
   if (onMail && Date.now() - cache.at >= TREE_MAX_AGE) await buildMenu();
+  await browser.menus.update(ROOT_MENU, { visible: onMail });
   browser.menus.refresh();
 });
 
@@ -162,9 +190,17 @@ async function displayedMessages(tab) {
 async function* selectedMessages(info, tab) {
   let page = info.selectedMessages;
   if (!page) {
-    // Right-click in a displayed mail: that mail.
-    for (const message of await displayedMessages(tab)) yield message;
-    return;
+    // Right-click in a displayed mail: that mail; else what the tab has selected.
+    const shown = await displayedMessages(tab);
+    if (shown.length) {
+      for (const message of shown) yield message;
+      return;
+    }
+    try {
+      page = await browser.mailTabs.getSelectedMessages(tab.id);
+    } catch {
+      return;
+    }
   }
   while (page) {
     for (const message of page.messages) yield message;
@@ -240,6 +276,11 @@ browser.menus.onClicked.addListener(async (info, tab) => {
   }
   const choice = parseMenuId(info.menuItemId);
   if (!choice) return;
+  await fileMails(choice, selectedMessages(info, tab));
+});
+
+/** « Créer une tâche » / « Noter dans le journal » for some mails (an async iterable). */
+async function fileMails(choice, headers) {
   let known;
   try {
     known = await knowledge();
@@ -249,7 +290,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
   }
   let done = 0;
   const failures = [];
-  for await (const header of selectedMessages(info, tab)) {
+  for await (const header of headers) {
     try {
       await fileMail(header, choice.action, choice.target, known.people);
       done += 1;
@@ -266,7 +307,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
   } else {
     notify(done > 1 ? `${done} mails notés` : 'Mail noté', `Dans le journal, ${where}.`);
   }
-});
+}
 
 async function refreshOpenTabs() {
   const { serverUrl } = await settings();
@@ -311,11 +352,15 @@ function isSentFolder(folder) {
 
 /** « Ajouter au suivi de la tâche »: the selected mails, sent or received, into their task. */
 async function followSelected(info, tab) {
+  await followMails(selectedMessages(info, tab));
+}
+
+async function followMails(headers) {
   let added = 0;
   let unknown = 0;
   const failures = [];
   let taskTitle = '';
-  for await (const header of selectedMessages(info, tab)) {
+  for await (const header of headers) {
     if (!header.headerMessageId) continue;
     try {
       const references = await referencesOf(header.id);
