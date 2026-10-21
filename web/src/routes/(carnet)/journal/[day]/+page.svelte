@@ -502,6 +502,11 @@
 						{:else}
 							<div class="body">
 								{#if entry.kind === 'meeting'}<span class="kind">Réunion</span>{/if}
+								{#if entry.source === 'mail' && entry.task_id}
+									<a class="to-task" href="{entry.project_id ? `/projets/${entry.project_id}` : `/espaces/${entry.space_id}`}?tache={entry.task_id}"
+										>Voir l’échange dans la tâche →</a
+									>
+								{/if}
 								{#each bodyLines(entry) as line, i (i)}
 									{#if line.trim()}
 										<p>
@@ -986,5 +991,12 @@
 		background: var(--softer);
 		border-radius: 8px;
 		transition: background 1.5s;
+	}
+	.to-task {
+		display: inline-block;
+		margin: 2px 0 4px;
+		font-family: var(--sans);
+		font-size: 0.8125rem;
+		color: var(--accent);
 	}
 </style>

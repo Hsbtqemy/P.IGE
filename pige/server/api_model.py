@@ -492,6 +492,12 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             task_id = store.task_for_mail([*body.references, body.message_id])
             if task_id is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Aucune tâche ne vient de cet échange")
+            task = store.get_task(task_id)
+            if task.origin_entry_id is not None:
+                origin = store.get_entry(task.origin_entry_id)
+                if (origin.mail_message_id or "").strip() == body.message_id.strip():
+                    # The mail the task came from is already shown above the follow-up.
+                    raise HTTPException(status.HTTP_409_CONFLICT, "C'est le mail dont la tâche est issue")
             mail, created = store.add_task_mail(
                 task_id, message_id=body.message_id, direction=body.direction, sent_at=body.sent_at, day=body.day,
                 author=body.author, recipients=body.recipients, subject=body.subject, body=body.body,

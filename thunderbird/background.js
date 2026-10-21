@@ -122,9 +122,10 @@ async function* listOf(messages) {
 async function popupAction({ action, target, tabId }) {
   const shown = await displayedMessages({ id: tabId });
   if (!shown.length) return { ok: false, error: 'Aucun mail affiché.' };
-  if (action === 'follow') await followMails(listOf(shown));
-  else if (action === 'task' || action === 'note') await fileMails({ action, target }, listOf(shown));
-  else return { ok: false };
+  if (!['task', 'note', 'follow'].includes(action)) return { ok: false };
+  // Answer at once so the popup closes; the outcome comes as a notification.
+  const work = action === 'follow' ? followMails(listOf(shown)) : fileMails({ action, target }, listOf(shown));
+  work.catch((err) => notify('Rien n’a été envoyé', String(err?.message || err)));
   return { ok: true };
 }
 
@@ -358,6 +359,7 @@ async function followSelected(info, tab) {
 async function followMails(headers) {
   let added = 0;
   let unknown = 0;
+  let origin = 0;
   const failures = [];
   let taskTitle = '';
   for await (const header of headers) {
@@ -383,14 +385,22 @@ async function followMails(headers) {
       added += 1;
       taskTitle = result.task.title;
     } catch (err) {
-      if (String(err?.message || '').startsWith('HTTP 404')) unknown += 1;
-      else failures.push(String(err?.message || err));
+      const text = String(err?.message || err);
+      if (text.startsWith('HTTP 404')) unknown += 1;
+      else if (text.startsWith('HTTP 409')) origin += 1;
+      else failures.push(text);
     }
   }
   if (added) await refreshOpenTabs();
   if (failures.length) notify('Suivi incomplet', `${failures.length} mail(s) non ajouté(s) (${failures[0]}).`);
   else if (added) notify('Ajouté au suivi', added > 1 ? `${added} mails, tâche « ${taskTitle} ».` : `Tâche « ${taskTitle} ».`);
   if (unknown) notify('Pas de tâche liée', 'Ce mail ne répond à aucun mail dont tu as fait une tâche.');
+  if (origin) {
+    notify(
+      'C’est le mail de la tâche',
+      'Il est déjà en tête de la tâche. Le suivi sert aux réponses : la tienne, ou celle de ton interlocuteur.'
+    );
+  }
 }
 
 // Replies being sent: what they answer and their text, kept until the send succeeds.

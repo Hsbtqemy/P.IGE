@@ -102,6 +102,7 @@
 							<button class="link" onclick={() => (unfolded = new Set([...unfolded, e.id]))} hidden={unfolded.has(e.id)}>Lire la suite</button>
 						{/if}
 						{#if e.mail_message_id}<MailOpen messageId={e.mail_message_id} class="link" label="Ouvrir le mail" />{/if}
+						{#if e.task_id}<a class="link" href="{e.project_id ? `/projets/${e.project_id}` : `/espaces/${e.space_id}`}?tache={e.task_id}">{e.source === 'mail' ? 'Voir l’échange dans la tâche' : 'Voir la tâche'}</a>{/if}
 						<button class="link" onclick={() => edit(e)}>Modifier</button>
 						<a class="link" href="/journal/{e.entry_date}#e-{e.id}">Dans le journal du jour</a>
 					</footer>
