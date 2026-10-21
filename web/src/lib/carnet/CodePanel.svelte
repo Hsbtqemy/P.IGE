@@ -70,7 +70,7 @@
 			<header>
 				<span class="label">Code</span>
 				<a href="https://github.com/{code.repo}" target="_blank" rel="noopener">{code.repo}</a>
-				<small class="muted">{code.branch ? `${code.branch} · ` : ''}{when(code.last_sync)}</small>
+				<small class="muted">{code.branch ? `${code.branch} · ` : ''}{when(code.last_sync)} · lu à 12 h 30 et 19 h 30</small>
 				<span class="grow"></span>
 				<button class="link" disabled={busy} onclick={() => run(() => v2.syncProjectCode(projectId))}>{busy ? 'Lecture…' : 'Actualiser'}</button>
 				<button class="link" onclick={() => ((editing = true), (draft = code?.repo ?? ''))}>Modifier</button>

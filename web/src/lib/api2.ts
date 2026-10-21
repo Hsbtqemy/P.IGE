@@ -366,6 +366,10 @@ export const v2 = {
 	validateDay: (day: string, tz: string) =>
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),
 	search: (text: string, limit = 20) => request<SearchHit[]>('GET', `/api/v2/search?${q({ q: text, limit, include_done: true })}`),
+	linkedRepos: () =>
+		request<{ project_id: string; repo: string; last_sync: string | null; last_error: string | null }[]>('GET', '/api/v2/code'),
+	syncAllCode: () =>
+		request<{ repos: number; days: number; errors: { repo: string; error: string }[] }>('POST', '/api/v2/code/sync'),
 	projectCode: (id: string) => request<ProjectCode>('GET', `/api/v2/projects/${encodeURIComponent(id)}/code`),
 	setProjectRepo: (id: string, repo: string | null) =>
 		request<ProjectCode>('PUT', `/api/v2/projects/${encodeURIComponent(id)}/repo`, { repo }),

@@ -37,6 +37,18 @@ def build_code_router(
             "closed": sum(1 for f in fiches if f["status"] not in OPEN_STATUSES),
         }
 
+    @router.get("/code")
+    def linked() -> list[dict[str, Any]]:
+        """The linked repositories and when they were read (for « Récupérer le code »)."""
+        return [
+            {"project_id": r["project_id"], "repo": r["repo"], "last_sync": r["last_sync"], "last_error": r["last_error"]}
+            for r in store.project_repos()
+        ]
+
+    @router.post("/code/sync")
+    def sync_all(_sid: str = Depends(require_session)) -> dict[str, Any]:
+        return journal.sync_all()
+
     @router.get("/projects/{project_id}/code")
     def get_code(project_id: str) -> dict[str, Any]:
         return view(project_id)

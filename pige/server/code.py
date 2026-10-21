@@ -31,7 +31,9 @@ MAX_BYTES = 5 * 1024 * 1024
 FIRST_WINDOW = timedelta(days=30)  # how far back the first sync of a repository looks
 OVERLAP = timedelta(days=2)  # later syncs re-read a little before the last one
 MAX_PAGES = 10  # 100 commits a page, per branch
-SYNC_EVERY = timedelta(hours=1)
+# Read on its own twice a day (local time), else when asked (« Récupérer le code »).
+SYNC_TIMES = ((12, 30), (19, 30))
+RETRY_AFTER = timedelta(hours=1)  # a failed scheduled read is tried again an hour later, once
 OPEN_STATUSES = {"à venir", "interrompu", "différé"}  # pilote: closed are clos, livré, abandonné
 
 
@@ -167,7 +169,7 @@ class CodeJournal:
         self.get = fetcher
         self._lock = threading.Lock()
         self._stop = threading.Event()
-        self._attempts: dict[str, datetime] = {}  # failed links are retried hourly, not every round
+        self._attempts: dict[str, datetime] = {}  # last scheduled attempt per project
 
     def _pages(self, path: str, params: dict[str, str]) -> list[Any]:
         out: list[Any] = []
@@ -268,17 +270,30 @@ class CodeJournal:
                 error = CodeError(f"Lecture du dépôt impossible ({type(exc).__name__}).")
                 self.store.repo_synced(project_id, error=str(error))
                 raise error from None
-            self.store.repo_synced(project_id, branch=branch, fiches=fiches, fiche_shas=shas)
+            self.store.repo_synced(project_id, branch=branch, fiches=fiches, fiche_shas=shas, at=moment)
             return {"commits": len(commits), "days": written, "fiches": len(fiches)}
 
+    def last_slot(self, moment: datetime) -> datetime:
+        """The latest scheduled reading time (12:30 or 19:30 local) at or before ``moment``."""
+        local = moment.astimezone(self.zone)
+        for days_back in (0, 1):
+            day = local.date() - timedelta(days=days_back)
+            for hour, minute in sorted(SYNC_TIMES, reverse=True):
+                slot = datetime(day.year, day.month, day.day, hour, minute, tzinfo=self.zone)
+                if slot <= local:
+                    return slot.astimezone(timezone.utc)
+        return moment - timedelta(days=1)
+
     def sync_due(self, now: datetime | None = None) -> None:
+        """The scheduled reading: each linked repository not read since the last slot."""
         moment = now or datetime.now(timezone.utc)
+        slot = self.last_slot(moment)
         for link in self.store.project_repos():
             last = link["last_sync"]
-            if last and moment - datetime.strptime(last, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc) < SYNC_EVERY:
+            if last and datetime.strptime(last, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc) >= slot:
                 continue
             tried = self._attempts.get(link["project_id"])
-            if tried and moment - tried < SYNC_EVERY:
+            if tried and (tried >= slot + RETRY_AFTER or moment - tried < RETRY_AFTER):
                 continue
             self._attempts[link["project_id"]] = moment
             try:
@@ -286,9 +301,22 @@ class CodeJournal:
             except CodeError:
                 pass  # recorded on the link, shown on the project page
 
+    def sync_all(self, now: datetime | None = None) -> dict[str, Any]:
+        """« Récupérer le code »: every linked repository, now."""
+        moment = now or datetime.now(timezone.utc)
+        read, days, errors = 0, 0, []
+        for link in self.store.project_repos():
+            try:
+                result = self.sync(link["project_id"], now=moment)
+                read += 1
+                days += result["days"]
+            except CodeError as exc:
+                errors.append({"repo": link["repo"], "error": str(exc)})
+        return {"repos": read, "days": days, "errors": errors}
+
     def start(self) -> None:
         def loop() -> None:
-            while not self._stop.wait(300):
+            while not self._stop.wait(600):
                 try:
                     self.sync_due()
                 except Exception as exc:

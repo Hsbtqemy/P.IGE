@@ -1598,9 +1598,10 @@ class ModelStore:
     def repo_synced(
         self, project_id: str, *, error: str | None = None, branch: str | None = None,
         fiches: list[dict[str, Any]] | None = None, fiche_shas: dict[str, str] | None = None,
+        at: datetime | None = None,
     ) -> None:
         with self._tx():
-            now = _utc(_now())
+            now = _utc(at or _now())
             if error is not None:
                 self.conn.execute("UPDATE project_repos SET last_error = ? WHERE project_id = ?",
                                   (error[:500], project_id))

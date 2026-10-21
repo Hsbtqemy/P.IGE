@@ -184,3 +184,34 @@ def test_the_stopping_point_is_kept_only_for_recent_days(app):
     store.set_project_repo(other, "Hsbtqemy/pilote")
     app.state.code_journal.sync(other, now=datetime(2026, 11, 5, 9, 0, tzinfo=timezone.utc))
     assert store.code_day(other, "2026-10-21")["summary"]["chantiers"][0]["stopped"] == ""  # read weeks later
+
+
+def test_read_twice_a_day_or_when_asked(app):
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    journal = app.state.code_journal
+    paris = ZoneInfo("Europe/Paris")
+    at = lambda h, m: datetime(2026, 10, 21, h, m, tzinfo=paris).astimezone(timezone.utc)  # noqa: E731
+    assert journal.last_slot(at(13, 0)) == at(12, 30)
+    assert journal.last_slot(at(20, 0)) == at(19, 30)
+    assert journal.last_slot(at(8, 0)) == datetime(2026, 10, 20, 19, 30, tzinfo=paris).astimezone(timezone.utc)
+
+    store = journal.store
+    space = store.create_space("DEV")
+    pid = store.create_project(space.id, "pilote").id
+    store.set_project_repo(pid, "Hsbtqemy/pilote")
+    journal.sync_due(now=at(12, 40))
+    first = store.project_repo(pid)["last_sync"]
+    assert first is not None
+    calls = len(app.state.github.calls)
+    journal.sync_due(now=at(15, 0))  # nothing scheduled since 12:30
+    assert len(app.state.github.calls) == calls
+    journal.sync_due(now=at(19, 45))  # the evening reading
+    assert len(app.state.github.calls) > calls
+
+    c = TestClient(app)
+    c.post("/api/login", json={"password": PASSWORD})
+    assert [r["repo"] for r in c.get("/api/v2/code").json()] == ["Hsbtqemy/pilote"]
+    result = c.post("/api/v2/code/sync", headers=WEB).json()
+    assert result["repos"] == 1 and result["errors"] == []
