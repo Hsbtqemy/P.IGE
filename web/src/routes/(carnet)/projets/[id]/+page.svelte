@@ -672,10 +672,13 @@
 				{/if}
 			</section>
 			<section aria-labelledby="journal-title">
-				<h2 id="journal-title">Journal <small>{entries.length} {entries.length > 1 ? 'entrées' : 'entrée'}</small></h2>
+				<h2 id="journal-title">
+					Journal <small>{entries.length} {entries.length > 1 ? 'entrées' : 'entrée'}</small>
+					{#if entries.length}<a class="thread" href="/fil?projet={project.id}">Lire le fil →</a>{/if}
+				</h2>
 				{#each entries as entry (entry.id)}
 					{@const d = shortDate(entry.entry_date)}
-					<a class="entry" href="/journal/{entry.entry_date}">
+					<a class="entry" href={entry.source === 'writing' ? `/ecrire/${entry.id}` : `/journal/${entry.entry_date}#e-${entry.id}`}>
 						<span class="date"><b>{d.day}</b><small>{d.month}</small></span>
 						<span class="text"><b>{entry.title || entry.body.slice(0, 80)}</b>{#if entry.people.length}<small>{entry.people.map((p) => p.display_name).join(', ')}</small>{/if}</span>
 					</a>
@@ -1108,5 +1111,12 @@
 	.task-people .chip a {
 		text-decoration: none;
 		font-weight: 700;
+	}
+	.thread {
+		float: right;
+		font-family: var(--sans);
+		font-size: 0.8125rem;
+		font-weight: 400;
+		color: var(--accent);
 	}
 </style>

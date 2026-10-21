@@ -72,7 +72,7 @@
 				<TaskList tasks={tag.tasks} empty="Aucune tâche ouverte." />
 			</section>
 			<section class="wide">
-				<h2>Journal <small>{entries.length || ''}</small></h2>
+				<h2>Journal <small>{entries.length || ''}</small>{#if entries.length}<a class="thread" href="/fil?etiquette={tag.id}">Lire le fil →</a>{/if}</h2>
 				<EntryList {entries} showPlace empty="Aucun paragraphe." />
 			</section>
 		</div>
@@ -165,5 +165,12 @@
 		.wrap {
 			padding: 16px;
 		}
+	}
+	.thread {
+		float: right;
+		font-family: var(--sans);
+		font-size: 0.8125rem;
+		font-weight: 400;
+		color: var(--accent);
 	}
 </style>

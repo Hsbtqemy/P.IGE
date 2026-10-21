@@ -372,6 +372,7 @@ export const v2 = {
 		source?: Entry['source'];
 		without_project?: boolean;
 		limit?: number;
+		offset?: number;
 	}) =>
 		request<Entry[]>('GET', `/api/v2/timeline?${q({ limit: 200, ...params })}`),
 	journalDays: (month: string) => request<string[]>('GET', `/api/v2/journal/days?month=${month}`),

@@ -27,6 +27,7 @@
 
 	let day = $derived(isDay(page.params.day ?? '') ? (page.params.day as string) : '');
 	let entries = $state<Entry[]>([]);
+	let highlighted = $state(''); // the paragraph shown when coming from a thread
 	let doneKey = $state(0); // a task ticked in the side column: refresh « Fait ce jour-là »
 	let writtenDays = $state<string[]>([]);
 	let loading = $state(true);
@@ -100,6 +101,14 @@
 			entries = sortDay(list);
 			writtenDays = days;
 			meetings = agenda;
+			// Coming from a thread (#e-<id>): show that paragraph.
+			const hash = page.url.hash;
+			const wanted = hash.startsWith('#e-') ? hash.slice(3) : '';
+			if (wanted && entries.some((x) => x.id === wanted)) {
+				highlighted = wanted;
+				await tick();
+				document.getElementById(`e-${wanted}`)?.scrollIntoView({ block: 'center' });
+			}
 		} catch (err) {
 			if (target === day) message = failure(err, 'Feuillet non chargé : ');
 		} finally {
@@ -439,7 +448,7 @@
 
 			<article class="sheet" aria-busy={loading}>
 				{#each entries as entry (entry.id)}
-					<div class="para">
+					<div class="para" id="e-{entry.id}" class:target={highlighted === entry.id}>
 						<div class="margin">
 							<span class="time">{entry.start_time ?? ''}</span>
 							<span class="where">{placeLabel(entry)}</span>
@@ -972,5 +981,10 @@
 		border: 1px solid var(--line);
 		border-left: 3px solid var(--accent);
 		border-radius: 8px;
+	}
+	.para.target {
+		background: var(--softer);
+		border-radius: 8px;
+		transition: background 1.5s;
 	}
 </style>

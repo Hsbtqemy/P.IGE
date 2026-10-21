@@ -223,7 +223,10 @@
 						<p class="hint">Du plus ancien au plus récent : range chaque élément dans un projet, la liste se vide au fur et à mesure.</p>
 					{/if}
 				{:else}
-					<h2 id="j-title">Journal de l’espace <small>{showAll ? entries.length || '' : shown.length || ''}</small></h2>
+					<h2 id="j-title">
+						Journal de l’espace <small>{showAll ? entries.length || '' : shown.length || ''}</small>
+						<a class="thread" href="/fil?espace={id}">Fil de tout l’espace →</a>
+					</h2>
 					{#if loaded && entries.length}
 						<p class="hint">Ce qui concerne l’espace sans projet précis{showAll ? '' : `, ces ${RECENT_DAYS} derniers jours`}.</p>
 					{/if}
@@ -231,7 +234,7 @@
 				{#if loaded}
 					{#each shown as entry (entry.id)}
 						<div class="entry">
-							<a class="what" href={entry.source === 'writing' ? `/ecrire/${entry.id}` : `/journal/${entry.entry_date}`}>
+							<a class="what" href={entry.source === 'writing' ? `/ecrire/${entry.id}` : `/journal/${entry.entry_date}#e-${entry.id}`}>
 								<b>{entry.title || entry.body.slice(0, 80)}</b>
 								<small>{longDate(entry.entry_date).toLocaleLowerCase('fr')}{entry.mail_message_id ? ' · mail' : ''}{entry.people.length ? ` · ${entry.people.map((p) => p.display_name).join(', ')}` : ''}</small>
 							</a>
@@ -465,5 +468,12 @@
 		cursor: pointer;
 		font: inherit;
 		font-size: 0.875rem;
+	}
+	.thread {
+		float: right;
+		font-family: var(--sans);
+		font-size: 0.8125rem;
+		font-weight: 400;
+		color: var(--accent);
 	}
 </style>

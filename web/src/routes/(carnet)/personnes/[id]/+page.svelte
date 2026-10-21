@@ -198,7 +198,7 @@
 					<TaskList tasks={person.involved_in} empty="Aucune tâche ouverte." />
 				</section>
 				<section>
-					<h2>Journal <small>{entries.length || ''}</small></h2>
+					<h2>Journal <small>{entries.length || ''}</small>{#if entries.length}<a class="thread" href="/fil?personne={person.id}">Lire le fil →</a>{/if}</h2>
 					<EntryList {entries} showPlace empty="Aucun paragraphe ne la ou le mentionne." />
 				</section>
 			</div>
@@ -383,5 +383,12 @@
 	.project small {
 		color: var(--muted);
 		font-size: 0.875rem;
+	}
+	.thread {
+		float: right;
+		font-family: var(--sans);
+		font-size: 0.8125rem;
+		font-weight: 400;
+		color: var(--accent);
 	}
 </style>
