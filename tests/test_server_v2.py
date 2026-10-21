@@ -439,6 +439,7 @@ def test_task_follow_up_from_thunderbird_and_by_hand(client, tree):
             "message_id": mid, "references": refs, "direction": direction, "sent_at": at, "day": day,
             "author": "moi", "recipients": "Anne Martin", "subject": "Re: Devis", "body": f"texte {mid}"})
 
+    assert mail("<orig@univ>", []).status_code == 409  # the task's own mail: not a follow-up
     first = ok(mail("<r1@me>", ["<orig@univ>"]), 201)
     assert first["task"]["id"] == task["id"] and first["created"]
     assert ok(mail("<r1@me>", ["<orig@univ>"]), 200)["created"] is False  # sent twice: once
