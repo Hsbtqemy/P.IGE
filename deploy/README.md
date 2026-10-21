@@ -126,10 +126,10 @@ zip -r ../pige-thunderbird.xpi . -x '*.DS_Store' -x 'test/*' -x 'scripts/*' -x p
 
 **Mises à jour.** Depuis la 0.3.1, l'extension se met à jour toute seule : Thunderbird lit
 `updates.json` dans la version GitHub « thunderbird-updates » (une fois par jour, ou roue
-dentée › « Rechercher des mises à jour »). Pour publier une nouvelle version : change
-`version` dans `thunderbird/manifest.json`, fusionne, puis pousse l'étiquette
-`thunderbird-vX.Y.Z` ; le workflow « Thunderbird extension » construit le `.xpi` et met à
-jour `updates.json` (avec l'empreinte SHA-256 du fichier).
+dentée › « Rechercher des mises à jour »). Pour publier une nouvelle version : augmente
+`version` dans `thunderbird/manifest.json` et fusionne sur `main` ; le workflow
+« Thunderbird extension » construit le `.xpi` et met à jour `updates.json` (avec
+l'empreinte SHA-256 du fichier). Une version déjà publiée n'est pas republiée.
 
 Dans Thunderbird : Outils, Modules complémentaires et thèmes, roue dentée,
 « Installer un module depuis un fichier », choisis `pige-thunderbird.xpi`. Dans les options
