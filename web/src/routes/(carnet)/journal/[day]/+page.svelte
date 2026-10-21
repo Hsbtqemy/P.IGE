@@ -6,6 +6,7 @@
 	import EventRow from '#lib/carnet/EventRow.svelte';
 	import DoneToday from '#lib/carnet/DoneToday.svelte';
 	import TodayCompact from '#lib/carnet/TodayCompact.svelte';
+	import CodeDayView from '#lib/carnet/CodeDayView.svelte';
 	import { newId, prepare } from '#lib/carnet/capture.js';
 	import { outbox, queue } from '#lib/carnet/outbox.svelte.js';
 	import { appleMail, appleMailHref, onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
@@ -502,6 +503,7 @@
 						{:else}
 							<div class="body">
 								{#if entry.kind === 'meeting'}<span class="kind">Réunion</span>{/if}
+								{#if entry.code}<CodeDayView code={entry.code} day={entry.entry_date} />{/if}
 								{#if entry.source === 'mail' && entry.task_id}
 									<a class="to-task" href="{entry.project_id ? `/projets/${entry.project_id}` : `/espaces/${entry.space_id}`}?tache={entry.task_id}"
 										>Voir l’échange dans la tâche →</a

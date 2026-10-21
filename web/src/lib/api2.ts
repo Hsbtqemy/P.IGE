@@ -60,6 +60,37 @@ export interface Entry {
 	revision: number;
 	people: Person[];
 	tags: Tag[];
+	/** A code day (code journal): the day's commits by work item. */
+	code?: CodeDay;
+}
+
+export interface Chantier {
+	code: string;
+	title: string;
+	status: string;
+	stopped: string;
+	stopped_label: string;
+	open: number;
+	path: string;
+}
+
+/** A day of pushed code, summed up by work item (« chantier » of pilote). */
+export interface CodeDay {
+	total: number;
+	chantiers: { code: string; title: string; count: number; stopped: string; path: string }[];
+	other: number;
+	repo: string | null;
+	branch: string | null;
+}
+
+export interface ProjectCode {
+	repo: string | null;
+	token: boolean;
+	branch?: string | null;
+	last_sync?: string | null;
+	last_error?: string | null;
+	chantiers?: Chantier[];
+	closed?: number;
 }
 
 export interface EntryVersion {
@@ -335,6 +366,10 @@ export const v2 = {
 	validateDay: (day: string, tz: string) =>
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),
 	search: (text: string, limit = 20) => request<SearchHit[]>('GET', `/api/v2/search?${q({ q: text, limit, include_done: true })}`),
+	projectCode: (id: string) => request<ProjectCode>('GET', `/api/v2/projects/${encodeURIComponent(id)}/code`),
+	setProjectRepo: (id: string, repo: string | null) =>
+		request<ProjectCode>('PUT', `/api/v2/projects/${encodeURIComponent(id)}/repo`, { repo }),
+	syncProjectCode: (id: string) => request<ProjectCode>('POST', `/api/v2/projects/${encodeURIComponent(id)}/code/sync`),
 	taskMails: (taskId: string) => request<TaskMail[]>('GET', `/api/v2/tasks/${encodeURIComponent(taskId)}/mails`),
 	addFollowUp: (taskId: string, entry_date: string, body: string) =>
 		request<Entry>('POST', `/api/v2/tasks/${encodeURIComponent(taskId)}/followups`, { entry_date, body }),

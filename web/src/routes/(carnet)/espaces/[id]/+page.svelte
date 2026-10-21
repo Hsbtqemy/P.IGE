@@ -135,7 +135,7 @@
 </script>
 
 {#snippet places(current: string)}
-	<option value="">Ranger dans…</option>
+	<option value="">{current === `s:${id}` && !isInbox ? 'Rangé ici · déplacer…' : 'Ranger dans…'}</option>
 	{#each carnet.tree?.spaces ?? [] as s (s.id)}
 		<optgroup label={s.name}>
 			{#if `s:${s.id}` !== current}<option value="s:{s.id}">{s.name} (sans projet)</option>{/if}

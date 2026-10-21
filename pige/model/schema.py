@@ -385,6 +385,30 @@ MIGRATIONS: tuple[str, ...] = (
     CREATE INDEX task_mails_message ON task_mails(message_id);
     CREATE INDEX task_mails_entry ON task_mails(entry_id);
     """,
+    # ------------------------------------------------------------------ 6
+    # The code journal: a project linked to a git repository (GitHub). Each day with
+    # pushed commits gives one journal entry, summed up by work item (« chantier » of
+    # pilote); the work items themselves are read, not copied into tasks.
+    """
+    CREATE TABLE project_repos (
+        project_id  TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        repo        TEXT NOT NULL CHECK (length(repo) BETWEEN 3 AND 200),
+        branch      TEXT,
+        last_sync   TEXT,
+        last_error  TEXT,
+        fiches      TEXT NOT NULL DEFAULT '[]',
+        fiche_shas  TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE code_days (
+        project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        day         TEXT NOT NULL,
+        entry_id    TEXT REFERENCES entries(id) ON DELETE SET NULL,
+        commits     TEXT NOT NULL DEFAULT '[]',
+        summary     TEXT NOT NULL DEFAULT '{}',
+        PRIMARY KEY (project_id, day)
+    );
+    CREATE INDEX code_days_entry ON code_days(entry_id);
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

@@ -62,7 +62,8 @@ jobs:
             tests/test_server_security.py \
             tests/test_model.py \
             tests/test_import_legacy.py \
-            tests/test_agenda.py
+            tests/test_agenda.py \
+            tests/test_code.py
 
       - name: Thunderbird extension (helpers)
         run: node --test thunderbird/test/lib.test.mjs thunderbird/test/updates.test.mjs

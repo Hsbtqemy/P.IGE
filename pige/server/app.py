@@ -24,6 +24,8 @@ from pige.core.storage import Storage
 from pige.model import DB_FILE_NAME, ConflictError, ModelStore, NotFoundError
 from pige.server.api_model import build_router
 from pige.server.api_security import build_security_router
+from pige.server.api_code import build_code_router
+from pige.server.code import CodeJournal, github_fetcher
 from pige.server.agenda import Agenda, Vault
 from pige.server.api_agenda import build_agenda_router
 from pige.server.auth import LoginThrottle, SessionSigner, verify_api_token, verify_password
@@ -306,8 +308,14 @@ def create_app(
     app.include_router(
         build_agenda_router(model_store, agenda, vault, settings.timezone, require_auth, require_session)
     )
+    code_journal = CodeJournal(model_store, ZoneInfo(settings.timezone), github_fetcher(settings.github_token))
+    app.state.code_journal = code_journal
+    app.include_router(
+        build_code_router(model_store, code_journal, require_auth, require_session, bool(settings.github_token))
+    )
     if settings.background_jobs:
         agenda.start()
+        code_journal.start()
 
     @app.api_route("/api", methods=["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"], include_in_schema=False)
     @app.api_route("/api/{path:path}", methods=["GET", "HEAD", "POST", "PATCH", "PUT", "DELETE"])

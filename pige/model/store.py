@@ -1564,6 +1564,98 @@ class ModelStore:
             elif entry is not None:
                 self._retitle_exchange(entry_id, row["day"])
 
+    # ------------------------------------------------------------ code journal
+
+    def set_project_repo(self, project_id: str, repo: str | None) -> None:
+        """Link a project to a repository (``owner/name``), or unlink it (``None``). The
+        days already written stay in the journal."""
+        with self._tx():
+            self._require("projects", project_id)
+            if repo is None:
+                self.conn.execute("DELETE FROM project_repos WHERE project_id = ?", (project_id,))
+                return
+            self.conn.execute(
+                "INSERT INTO project_repos(project_id, repo) VALUES (?, ?) ON CONFLICT(project_id) DO UPDATE SET"
+                " repo = excluded.repo, branch = NULL, last_sync = NULL, last_error = NULL, fiches = '[]',"
+                " fiche_shas = '{}' WHERE project_repos.repo <> excluded.repo",
+                (project_id, repo),
+            )
+
+    def project_repo(self, project_id: str) -> dict[str, Any] | None:
+        row = self._one("SELECT * FROM project_repos WHERE project_id = ?", (project_id,))
+        if row is None:
+            return None
+        return {
+            "project_id": row["project_id"], "repo": row["repo"], "branch": row["branch"],
+            "last_sync": row["last_sync"], "last_error": row["last_error"],
+            "fiches": json.loads(row["fiches"]), "fiche_shas": json.loads(row["fiche_shas"]),
+        }
+
+    def project_repos(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT project_id FROM project_repos").fetchall()
+        return [r for r in (self.project_repo(row["project_id"]) for row in rows) if r is not None]
+
+    def repo_synced(
+        self, project_id: str, *, error: str | None = None, branch: str | None = None,
+        fiches: list[dict[str, Any]] | None = None, fiche_shas: dict[str, str] | None = None,
+    ) -> None:
+        with self._tx():
+            now = _utc(_now())
+            if error is not None:
+                self.conn.execute("UPDATE project_repos SET last_error = ? WHERE project_id = ?",
+                                  (error[:500], project_id))
+                return
+            self.conn.execute(
+                "UPDATE project_repos SET last_sync = ?, last_error = NULL, branch = coalesce(?, branch),"
+                " fiches = coalesce(?, fiches), fiche_shas = coalesce(?, fiche_shas) WHERE project_id = ?",
+                (now, branch, None if fiches is None else json.dumps(fiches, ensure_ascii=False),
+                 None if fiche_shas is None else json.dumps(fiche_shas), project_id),
+            )
+
+    def code_day(self, project_id: str, day: str) -> dict[str, Any] | None:
+        row = self._one("SELECT * FROM code_days WHERE project_id = ? AND day = ?", (project_id, day))
+        if row is None:
+            return None
+        return {"entry_id": row["entry_id"], "commits": json.loads(row["commits"]), "summary": json.loads(row["summary"])}
+
+    def save_code_day(
+        self, project_id: str, day: str, *, commits: list[dict[str, Any]], summary: dict[str, Any], title: str
+    ) -> str:
+        """Store a day of commits and keep its journal entry (created once, title updated;
+        the body is the user's own synthesis and is never touched)."""
+        with self._tx():
+            project = self.get_project(project_id)
+            row = self._one("SELECT entry_id FROM code_days WHERE project_id = ? AND day = ?", (project_id, day))
+            entry_id = row["entry_id"] if row is not None else None
+            if entry_id is None or self._one("SELECT 1 FROM entries WHERE id = ?", (entry_id,)) is None:
+                entry_id = self.create_entry(entry_date=day, project_id=project.id, title=title, source="import").id
+            else:
+                self.conn.execute("UPDATE entries SET title = ? WHERE id = ?", (title, entry_id))
+            self.conn.execute(
+                "INSERT INTO code_days(project_id, day, entry_id, commits, summary) VALUES (?, ?, ?, ?, ?)"
+                " ON CONFLICT(project_id, day) DO UPDATE SET entry_id = excluded.entry_id,"
+                " commits = excluded.commits, summary = excluded.summary",
+                (project_id, day, entry_id, json.dumps(commits, ensure_ascii=False),
+                 json.dumps(summary, ensure_ascii=False)),
+            )
+            return str(entry_id)
+
+    def code_summaries(self, entry_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """entry id -> its day's code summary, for the entries that are code days."""
+        ids = list(entry_ids)
+        if not ids:
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        for chunk in range(0, len(ids), 500):
+            part = ids[chunk:chunk + 500]
+            marks = ", ".join("?" for _ in part)
+            for r in self.conn.execute(
+                f"SELECT c.entry_id, c.summary, r.repo, r.branch FROM code_days c LEFT JOIN project_repos r"
+                f" ON r.project_id = c.project_id WHERE c.entry_id IN ({marks})", part,
+            ):
+                out[r["entry_id"]] = {**json.loads(r["summary"]), "repo": r["repo"], "branch": r["branch"]}
+        return out
+
     # ------------------------------------------------------------ project people
 
     def set_project_person(self, project_id: str, person_id: str, role: str | None = None) -> None:

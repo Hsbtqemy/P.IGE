@@ -5,6 +5,7 @@
 	import { v2, type Entry } from '../api2.js';
 	import { segments } from '../feuillet.js';
 	import MailOpen from './MailOpen.svelte';
+	import CodeDayView from './CodeDayView.svelte';
 	import { failure, longDate, placeName } from './state.svelte.js';
 
 	let { entries, showPlace = true, onchanged }: { entries: Entry[]; showPlace?: boolean; onchanged?: (e: Entry) => void } = $props();
@@ -82,6 +83,7 @@
 						<button class="btn" onclick={() => (editing = null)}>Annuler</button>
 					</div>
 				{:else}
+					{#if e.code}<CodeDayView code={e.code} day={e.entry_date} />{/if}
 					<div class="body">
 						{#each lines(e) as line, i (i)}
 							{#if line.trim()}

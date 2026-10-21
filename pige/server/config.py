@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import re
 from urllib.parse import urlsplit
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -64,6 +64,9 @@ class Settings:
     public_origin: str | None = None
     # Background jobs (calendar sync every 15 min). Off in tests.
     background_jobs: bool = True
+    # Read-only GitHub token (fine-grained: Contents + Metadata) for the code journal of
+    # private repositories; optional for public ones (but raises GitHub's rate limit).
+    github_token: str = field(default="", repr=False)
 
     @property
     def passkey_rp_id(self) -> str | None:
@@ -113,4 +116,5 @@ class Settings:
             sessions_not_before=int(env.get("PIGE_SESSIONS_NOT_BEFORE", "0")),
             timezone=timezone,
             public_origin=origin or None,
+            github_token=env.get("PIGE_GITHUB_TOKEN", "").strip(),
         )
