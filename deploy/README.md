@@ -155,6 +155,46 @@ read -rs -p "Jeton GitHub : " T && echo && echo "PIGE_GITHUB_TOKEN=$T" | sudo te
 sudo systemctl restart pige
 ```
 
+**Avec l'export pilote (dépôts publics) : ni limite ni jeton.** Si le dépôt publie
+l'export de pilote sur GitHub Pages, indique son adresse dans « Export pilote » (ex.
+`https://hsbtqemy.github.io/mon-depot/`) : P.IGE lit ce seul `journal.json` au lieu de
+l'API. Action à mettre dans le dépôt, `.github/workflows/pilote-pages.yml` (Settings ›
+Pages › Source : « GitHub Actions » ; pour publier aussi depuis `dev`, ajoute `dev` dans
+Settings › Environments › github-pages › Deployment branches) :
+
+```yaml
+name: Journal pilote
+on:
+  push:
+    branches: [main, dev]
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tout l'historique : pilote date les chantiers par les commits
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npx --yes github:Hsbtqemy/pilote exporter _site --web "https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - uses: actions/deploy-pages@v4
+```
+
+Une page GitHub Pages est publique : ne publie pas l'export d'un dépôt privé.
+
 ## 10. Vérifier les critères de réussite
 
 1. Sur le téléphone en mode avion, crée une tâche : elle s'affiche « En attente d'envoi ».

@@ -9,6 +9,7 @@
 	let code = $state<ProjectCode | null>(null);
 	let editing = $state(false);
 	let draft = $state('');
+	let exportDraft = $state('');
 	let busy = $state(false);
 	let message = $state('');
 
@@ -38,7 +39,7 @@
 
 	function save(event: SubmitEvent) {
 		event.preventDefault();
-		void run(() => v2.setProjectRepo(projectId, draft.trim() || null));
+		void run(() => v2.setProjectRepo(projectId, draft.trim() || null, exportDraft.trim() || null));
 	}
 
 	function when(iso: string | null | undefined): string {
@@ -55,25 +56,35 @@
 			{#if editing}
 				<form onsubmit={save}>
 					<input bind:value={draft} placeholder="propriétaire/dépôt ou adresse GitHub" aria-label="Dépôt GitHub" />
+					<input
+						bind:value={exportDraft}
+						placeholder="Export pilote sur GitHub Pages (facultatif) : https://…github.io/depot/"
+						aria-label="Adresse de l’export pilote"
+						inputmode="url"
+					/>
 					<button class="btn primary" disabled={busy}>{busy ? 'Lecture…' : 'Relier'}</button>
 					<button type="button" class="btn" onclick={() => (editing = false)}>Annuler</button>
 					{#if code.repo}<button type="button" class="btn" onclick={() => run(() => v2.setProjectRepo(projectId, null))}>Délier</button>{/if}
 				</form>
 				<small class="muted">
-					Chaque jour où tu pousses du code, une entrée le résume par chantier dans le journal du projet.
-					{#if !code.token}Dépôt privé : il faut d’abord un jeton GitHub sur le serveur (voir deploy/README).{/if}
+					Chaque jour où tu pousses du code, une entrée le résume par chantier dans le journal du projet. Avec l’export
+					pilote (dépôt public), P.IGE lit ce seul fichier : ni limite ni jeton.
+					{#if !code.token}Sans export, un dépôt privé demande un jeton GitHub sur le serveur (voir deploy/README).{/if}
 				</small>
 			{:else}
-				<button class="link" onclick={() => ((editing = true), (draft = ''))}>+ Relier un dépôt de code</button>
+				<button class="link" onclick={() => ((editing = true), (draft = ''), (exportDraft = ''))}>+ Relier un dépôt de code</button>
 			{/if}
 		{:else}
 			<header>
 				<span class="label">Code</span>
 				<a href="https://github.com/{code.repo}" target="_blank" rel="noopener">{code.repo}</a>
-				<small class="muted">{code.branch ? `${code.branch} · ` : ''}{when(code.last_sync)} · lu à 12 h 30 et 19 h 30</small>
+				<small class="muted">
+					{code.branch ? `${code.branch} · ` : ''}{when(code.last_sync)} · lu à 12 h 30 et 19 h 30{#if code.export_url}
+						· via <a href={code.export_url.replace(/journal\.json$/, '')} target="_blank" rel="noopener">l’export pilote</a>{/if}
+				</small>
 				<span class="grow"></span>
 				<button class="link" disabled={busy} onclick={() => run(() => v2.syncProjectCode(projectId))}>{busy ? 'Lecture…' : 'Actualiser'}</button>
-				<button class="link" onclick={() => ((editing = true), (draft = code?.repo ?? ''))}>Modifier</button>
+				<button class="link" onclick={() => ((editing = true), (draft = code?.repo ?? ''), (exportDraft = (code?.export_url ?? '').replace(/journal\.json$/, '')))}>Modifier</button>
 			</header>
 			{#if code.last_error}<p class="warn">{code.last_error}</p>{/if}
 			{#if code.chantiers?.length}

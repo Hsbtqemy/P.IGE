@@ -1566,19 +1566,22 @@ class ModelStore:
 
     # ------------------------------------------------------------ code journal
 
-    def set_project_repo(self, project_id: str, repo: str | None) -> None:
-        """Link a project to a repository (``owner/name``), or unlink it (``None``). The
-        days already written stay in the journal."""
+    def set_project_repo(self, project_id: str, repo: str | None, export_url: str | None = None) -> None:
+        """Link a project to a repository (``owner/name``), with or without the address of
+        its pilote export, or unlink it (``None``). The days already written stay."""
         with self._tx():
             self._require("projects", project_id)
             if repo is None:
                 self.conn.execute("DELETE FROM project_repos WHERE project_id = ?", (project_id,))
                 return
+            current = self._one("SELECT repo, export_url FROM project_repos WHERE project_id = ?", (project_id,))
+            if current is not None and (current["repo"], current["export_url"]) == (repo, export_url):
+                return
             self.conn.execute(
-                "INSERT INTO project_repos(project_id, repo) VALUES (?, ?) ON CONFLICT(project_id) DO UPDATE SET"
-                " repo = excluded.repo, branch = NULL, last_sync = NULL, last_error = NULL, fiches = '[]',"
-                " fiche_shas = '{}', heads = '{}' WHERE project_repos.repo <> excluded.repo",
-                (project_id, repo),
+                "INSERT INTO project_repos(project_id, repo, export_url) VALUES (?, ?, ?) ON CONFLICT(project_id)"
+                " DO UPDATE SET repo = excluded.repo, export_url = excluded.export_url, branch = NULL,"
+                " last_sync = NULL, last_error = NULL, fiches = '[]', fiche_shas = '{}', heads = '{}'",
+                (project_id, repo, export_url),
             )
 
     def project_repo(self, project_id: str) -> dict[str, Any] | None:
@@ -1589,7 +1592,7 @@ class ModelStore:
             "project_id": row["project_id"], "repo": row["repo"], "branch": row["branch"],
             "last_sync": row["last_sync"], "last_error": row["last_error"],
             "fiches": json.loads(row["fiches"]), "fiche_shas": json.loads(row["fiche_shas"]),
-            "heads": json.loads(row["heads"]),
+            "heads": json.loads(row["heads"]), "export_url": row["export_url"],
         }
 
     def project_repos(self) -> list[dict[str, Any]]:
