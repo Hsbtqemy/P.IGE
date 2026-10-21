@@ -119,10 +119,17 @@ Fabrique le fichier de l'extension sur ton ordinateur :
 
 ```sh
 cd thunderbird
-zip -r ../pige-thunderbird.xpi . -x '*.DS_Store' -x 'test/*' -x package.json
+zip -r ../pige-thunderbird.xpi . -x '*.DS_Store' -x 'test/*' -x 'scripts/*' -x package.json
 ```
 
 (Le fichier est aussi joint à chaque version publiée sur GitHub, sous le même nom.)
+
+**Mises à jour.** Depuis la 0.3.1, l'extension se met à jour toute seule : Thunderbird lit
+`updates.json` dans la version GitHub « thunderbird-updates » (une fois par jour, ou roue
+dentée › « Rechercher des mises à jour »). Pour publier une nouvelle version : change
+`version` dans `thunderbird/manifest.json`, fusionne, puis pousse l'étiquette
+`thunderbird-vX.Y.Z` ; le workflow « Thunderbird extension » construit le `.xpi` et met à
+jour `updates.json` (avec l'empreinte SHA-256 du fichier).
 
 Dans Thunderbird : Outils, Modules complémentaires et thèmes, roue dentée,
 « Installer un module depuis un fichier », choisis `pige-thunderbird.xpi`. Dans les options
