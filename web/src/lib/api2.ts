@@ -86,6 +86,8 @@ export interface CodeDay {
 export interface ProjectCode {
 	repo: string | null;
 	export_url?: string | null;
+	/** The repository sends its journal itself (« pilote envoyer », npm run pige). */
+	pushed?: boolean;
 	token: boolean;
 	branch?: string | null;
 	last_sync?: string | null;
@@ -370,7 +372,10 @@ export const v2 = {
 	linkedRepos: () =>
 		request<{ project_id: string; repo: string; last_sync: string | null; last_error: string | null }[]>('GET', '/api/v2/code'),
 	syncAllCode: () =>
-		request<{ repos: number; days: number; errors: { repo: string; error: string }[] }>('POST', '/api/v2/code/sync'),
+		request<{ repos: number; days: number; pushed: number; errors: { repo: string; error: string }[] }>(
+			'POST',
+			'/api/v2/code/sync'
+		),
 	projectCode: (id: string) => request<ProjectCode>('GET', `/api/v2/projects/${encodeURIComponent(id)}/code`),
 	setProjectRepo: (id: string, repo: string | null, export_url: string | null = null) =>
 		request<ProjectCode>('PUT', `/api/v2/projects/${encodeURIComponent(id)}/repo`, { repo, export_url }),

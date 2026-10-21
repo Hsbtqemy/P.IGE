@@ -36,11 +36,15 @@
 		message = '';
 		try {
 			const r = await v2.syncAllCode();
-			message = r.errors.length
-				? `${r.errors[0].repo} : ${r.errors[0].error}`
-				: r.days
-					? `${r.days} jour${r.days > 1 ? 's' : ''} de code mis à jour.`
-					: 'Rien de nouveau.';
+			const pushed = r.pushed ? ` ${r.pushed} dépôt${r.pushed > 1 ? 's envoient' : ' envoie'} lui-même son journal (npm run pige).` : '';
+			message =
+				(r.errors.length
+					? `${r.errors[0].repo} : ${r.errors[0].error}`
+					: r.days
+						? `${r.days} jour${r.days > 1 ? 's' : ''} de code mis à jour.`
+						: r.repos
+							? 'Rien de nouveau.'
+							: '') + pushed;
 			await load();
 			onfetched();
 		} catch (err) {

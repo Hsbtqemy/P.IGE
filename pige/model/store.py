@@ -1595,6 +1595,12 @@ class ModelStore:
             "heads": json.loads(row["heads"]), "export_url": row["export_url"],
         }
 
+    def projects_for_repo(self, repo: str) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT project_id FROM project_repos WHERE lower(repo) = lower(?)", (repo.strip(),)
+        ).fetchall()
+        return [r["project_id"] for r in rows]
+
     def project_repos(self) -> list[dict[str, Any]]:
         rows = self.conn.execute("SELECT project_id FROM project_repos").fetchall()
         return [r for r in (self.project_repo(row["project_id"]) for row in rows) if r is not None]

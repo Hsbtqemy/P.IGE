@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from pige.model import ModelStore
-from pige.server.code import OPEN_STATUSES, CodeError, CodeJournal, normalize_export, normalize_repo
+from pige.server.code import OPEN_STATUSES, PUSHED, CodeError, CodeJournal, normalize_export, normalize_repo
+
+MAX_EXPORT_BYTES = 20 * 1024 * 1024
 
 HEX = r"^[0-9a-f]{32}$"
 
@@ -32,7 +36,8 @@ def build_code_router(
             return {"repo": None, "token": has_token}
         fiches = link["fiches"]
         return {
-            "repo": link["repo"], "export_url": link["export_url"], "branch": link["branch"], "last_sync": link["last_sync"],
+            "repo": link["repo"], "export_url": link["export_url"], "pushed": link["export_url"] == PUSHED,
+            "branch": link["branch"], "last_sync": link["last_sync"],
             "last_error": link["last_error"], "token": has_token,
             "chantiers": [f for f in fiches if f["status"] in OPEN_STATUSES],
             "closed": sum(1 for f in fiches if f["status"] not in OPEN_STATUSES),
@@ -46,6 +51,36 @@ def build_code_router(
              "last_error": r["last_error"]}
             for r in store.project_repos()
         ]
+
+    @router.post("/code/export")
+    async def receive_export(request: Request, repo: str = Query(min_length=3, max_length=300)) -> dict[str, Any]:
+        """« pilote envoyer » (npm run pige): a repository sends its pilote journal.json. Token
+        allowed (the same as Thunderbird's). Goes to every project linked to that repository."""
+        try:
+            name = normalize_repo(repo)
+        except CodeError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        projects = store.projects_for_repo(name)
+        if not projects:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"Aucun projet P.IGE n'est relié à {name} : sur la page du projet, « Relier un dépôt de code ».",
+            )
+        raw = await request.body()
+        if len(raw) > MAX_EXPORT_BYTES:
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Export trop volumineux.")
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Ce n'est pas un export pilote (JSON illisible).") from exc
+        out = []
+        for project_id in projects:
+            try:
+                result = journal.receive(project_id, data)
+            except CodeError as exc:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+            out.append({"project": store.get_project(project_id).name, **result})
+        return {"repo": name, "projects": out}
 
     @router.post("/code/sync")
     def sync_all(_sid: str = Depends(require_session)) -> dict[str, Any]:

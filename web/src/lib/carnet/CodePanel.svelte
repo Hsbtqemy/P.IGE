@@ -67,8 +67,9 @@
 					{#if code.repo}<button type="button" class="btn" onclick={() => run(() => v2.setProjectRepo(projectId, null))}>Délier</button>{/if}
 				</form>
 				<small class="muted">
-					Chaque jour où tu pousses du code, une entrée le résume par chantier dans le journal du projet. Avec l’export
-					pilote (dépôt public), P.IGE lit ce seul fichier : ni limite ni jeton.
+					Chaque jour où tu pousses du code, une entrée le résume par chantier dans le journal du projet. Le plus simple :
+					« npm run pige » dans le dépôt (pilote envoyer) envoie le journal de pilote, public ou privé, sans réglage
+					GitHub. Sinon, l’export pilote publié (Pages) ou l’API GitHub.
 					{#if !code.token}Sans export, un dépôt privé demande un jeton GitHub sur le serveur (voir deploy/README).{/if}
 				</small>
 			{:else}
@@ -79,12 +80,19 @@
 				<span class="label">Code</span>
 				<a href="https://github.com/{code.repo}" target="_blank" rel="noopener">{code.repo}</a>
 				<small class="muted">
-					{code.branch ? `${code.branch} · ` : ''}{when(code.last_sync)} · lu à 12 h 30 et 19 h 30{#if code.export_url}
-						· via <a href={code.export_url.replace(/journal\.json$/, '')} target="_blank" rel="noopener">l’export pilote</a>{/if}
+					{#if code.pushed}
+						{code.branch ? `${code.branch} · ` : ''}{code.last_sync ? `reçu ${when(code.last_sync).replace(/^lu /, '')}` : 'rien reçu'} · envoyé
+						depuis le dépôt (npm run pige)
+					{:else}
+						{code.branch ? `${code.branch} · ` : ''}{when(code.last_sync)} · lu à 12 h 30 et 19 h 30{#if code.export_url}
+							· via <a href={code.export_url.replace(/journal\.json$/, '')} target="_blank" rel="noopener">l’export pilote</a>{/if}
+					{/if}
 				</small>
 				<span class="grow"></span>
-				<button class="link" disabled={busy} onclick={() => run(() => v2.syncProjectCode(projectId))}>{busy ? 'Lecture…' : 'Actualiser'}</button>
-				<button class="link" onclick={() => ((editing = true), (draft = code?.repo ?? ''), (exportDraft = (code?.export_url ?? '').replace(/journal\.json$/, '')))}>Modifier</button>
+				{#if !code.pushed}
+					<button class="link" disabled={busy} onclick={() => run(() => v2.syncProjectCode(projectId))}>{busy ? 'Lecture…' : 'Actualiser'}</button>
+				{/if}
+				<button class="link" onclick={() => ((editing = true), (draft = code?.repo ?? ''), (exportDraft = code?.pushed ? '' : (code?.export_url ?? '').replace(/journal\.json$/, '')))}>Modifier</button>
 			</header>
 			{#if code.last_error}<p class="warn">{code.last_error}</p>{/if}
 			{#if code.chantiers?.length}

@@ -155,6 +155,20 @@ read -rs -p "Jeton GitHub : " T && echo && echo "PIGE_GITHUB_TOKEN=$T" | sudo te
 sudo systemctl restart pige
 ```
 
+**Le plus simple : le dépôt envoie lui-même son journal (`npm run pige`).** Pour un dépôt
+qui utilise pilote, public ou privé, sans réglage GitHub ni jeton GitHub. Une fois par
+ordinateur :
+
+```sh
+npm install -g github:Hsbtqemy/P.IGE   # installe la seule commande pige-envoyer
+pige-envoyer --configurer              # adresse de P.IGE + jeton d'accès (celui de Thunderbird)
+```
+
+Puis, dans un dépôt relié à un projet (page du projet › « Relier un dépôt de code ») :
+`pige-envoyer`, ou `npm run pige` avec `"scripts": { "pige": "pige-envoyer" }` dans son
+`package.json`. pilote exporte le journal, qui part directement au serveur P.IGE ; le
+projet passe alors en mode « envoyé depuis le dépôt » et n'est plus lu par l'API.
+
 **Avec l'export pilote (dépôts publics) : ni limite ni jeton.** Si le dépôt publie
 l'export de pilote sur GitHub Pages, indique son adresse dans « Export pilote » (ex.
 `https://hsbtqemy.github.io/mon-depot/`) : P.IGE lit ce seul `journal.json` au lieu de

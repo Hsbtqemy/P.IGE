@@ -266,3 +266,25 @@ def test_reading_the_pilote_export_instead_of_the_api(app):
     day = store.code_day(pid, "2026-10-21")
     assert day["summary"]["total"] == 2 and day["summary"]["chantiers"][0]["code"] == "P-8"
     assert store.code_day(pid, "2025-01-01") is None
+
+
+def test_the_repository_sends_its_journal_itself(app):
+    c = TestClient(app)
+    c.post("/api/login", json={"password": PASSWORD})
+    space = c.post("/api/v2/spaces", json={"name": "DEV"}, headers=WEB).json()
+    pid = c.post("/api/v2/projects", json={"space_id": space["id"], "name": "pilote"}, headers=WEB).json()["id"]
+    token = TestClient(app, headers={"Authorization": f"Bearer {_TOKEN}"})
+    sent = token.post("/api/v2/code/export?repo=git@github.com:Hsbtqemy/pilote.git", json=EXPORT)
+    assert sent.status_code == 404 and "Relier un dépôt" in sent.json()["detail"]
+
+    c.put(f"/api/v2/projects/{pid}/repo", json={"repo": "Hsbtqemy/pilote"}, headers=WEB)
+    calls = len(app.state.github.calls)
+    sent = token.post("/api/v2/code/export?repo=https://github.com/hsbtqemy/pilote", json=EXPORT).json()
+    assert sent["repo"] == "hsbtqemy/pilote" and sent["projects"][0]["project"] == "pilote"
+    view = c.get(f"/api/v2/projects/{pid}/code").json()
+    assert view["pushed"] is True and view["branch"] == "dev" and [f["code"] for f in view["chantiers"]] == ["P-8"]
+    # from now on, the repository is not read through the API any more
+    app.state.code_journal.sync_due()
+    assert c.post("/api/v2/code/sync", headers=WEB).json()["pushed"] == 1
+    assert len(app.state.github.calls) == calls
+    assert token.post("/api/v2/code/export?repo=Hsbtqemy/pilote", content=b"pas du json").status_code == 400
