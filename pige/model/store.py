@@ -1577,7 +1577,7 @@ class ModelStore:
             self.conn.execute(
                 "INSERT INTO project_repos(project_id, repo) VALUES (?, ?) ON CONFLICT(project_id) DO UPDATE SET"
                 " repo = excluded.repo, branch = NULL, last_sync = NULL, last_error = NULL, fiches = '[]',"
-                " fiche_shas = '{}' WHERE project_repos.repo <> excluded.repo",
+                " fiche_shas = '{}', heads = '{}' WHERE project_repos.repo <> excluded.repo",
                 (project_id, repo),
             )
 
@@ -1589,6 +1589,7 @@ class ModelStore:
             "project_id": row["project_id"], "repo": row["repo"], "branch": row["branch"],
             "last_sync": row["last_sync"], "last_error": row["last_error"],
             "fiches": json.loads(row["fiches"]), "fiche_shas": json.loads(row["fiche_shas"]),
+            "heads": json.loads(row["heads"]),
         }
 
     def project_repos(self) -> list[dict[str, Any]]:
@@ -1598,7 +1599,7 @@ class ModelStore:
     def repo_synced(
         self, project_id: str, *, error: str | None = None, branch: str | None = None,
         fiches: list[dict[str, Any]] | None = None, fiche_shas: dict[str, str] | None = None,
-        at: datetime | None = None,
+        heads: dict[str, str] | None = None, at: datetime | None = None,
     ) -> None:
         with self._tx():
             now = _utc(at or _now())
@@ -1608,9 +1609,11 @@ class ModelStore:
                 return
             self.conn.execute(
                 "UPDATE project_repos SET last_sync = ?, last_error = NULL, branch = coalesce(?, branch),"
-                " fiches = coalesce(?, fiches), fiche_shas = coalesce(?, fiche_shas) WHERE project_id = ?",
+                " fiches = coalesce(?, fiches), fiche_shas = coalesce(?, fiche_shas), heads = coalesce(?, heads)"
+                " WHERE project_id = ?",
                 (now, branch, None if fiches is None else json.dumps(fiches, ensure_ascii=False),
-                 None if fiche_shas is None else json.dumps(fiche_shas), project_id),
+                 None if fiche_shas is None else json.dumps(fiche_shas),
+                 None if heads is None else json.dumps(heads), project_id),
             )
 
     def code_day(self, project_id: str, day: str) -> dict[str, Any] | None:

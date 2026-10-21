@@ -9,7 +9,6 @@ project page as read, never turned into tasks. GitHub only, read-only.
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import re
@@ -60,6 +59,20 @@ def github_fetcher(token: str) -> Fetcher:
     to api.github.com, never logged."""
 
     def get(path: str, params: dict[str, str]) -> tuple[Any, dict[str, str]]:
+        # « raw:owner/name/ref/path »: a file's text from raw.githubusercontent.com, which
+        # does not count against the API's hourly limit.
+        if path.startswith("raw:"):
+            url = "https://raw.githubusercontent.com/" + urllib.parse.quote(path[4:])
+            headers = {"User-Agent": "pige"}
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            try:
+                with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=TIMEOUT_SECONDS) as r:
+                    return r.read(MAX_BYTES).decode("utf-8", "replace"), {}
+            except urllib.error.HTTPError as exc:
+                raise CodeError(f"Fiche illisible ({exc.code}).") from exc
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                raise CodeError("GitHub injoignable.") from exc
         url = f"{API}{path}" + (f"?{urllib.parse.urlencode(params)}" if params else "")
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
                    "User-Agent": "pige"}
@@ -78,7 +91,13 @@ def github_fetcher(token: str) -> Fetcher:
             if exc.code in (401, 403):
                 remaining = exc.headers.get("x-ratelimit-remaining") if exc.headers else None
                 if remaining == "0":
-                    raise CodeError("Limite de requêtes GitHub atteinte : réessaie dans une heure (un jeton la relève).") from exc
+                    reset = exc.headers.get("x-ratelimit-reset") if exc.headers else None
+                    when = ""
+                    if reset and reset.isdigit():
+                        when = " après " + datetime.fromtimestamp(int(reset), timezone.utc).astimezone(
+                            ZoneInfo("Europe/Paris")).strftime("%H h %M")
+                    hint = "" if token else " Sans jeton, GitHub n'accorde que 60 requêtes par heure : ajoute PIGE_GITHUB_TOKEN."
+                    raise CodeError(f"Limite de requêtes GitHub atteinte : réessaie{when or ' dans une heure'}.{hint}") from exc
                 raise CodeError("GitHub refuse l'accès : vérifie le jeton (lecture du contenu de ce dépôt).") from exc
             raise CodeError(f"GitHub répond {exc.code}.") from exc
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
@@ -203,8 +222,9 @@ class CodeJournal:
             if known_shas.get(path) == sha and path in by_path:
                 fiches.append(by_path[path])
                 continue
-            blob, _ = self.get(f"/repos/{repo}/contents/{path}", {"ref": branch})
-            text = base64.b64decode(blob.get("content", "")).decode("utf-8", "replace") if isinstance(blob, dict) else ""
+            text, _ = self.get(f"raw:{repo}/{branch}/{path}", {})
+            if not isinstance(text, str):
+                text = ""
             fiche = parse_fiche(text, name)
             if fiche is not None:
                 fiches.append(fiche)
@@ -221,10 +241,14 @@ class CodeJournal:
                 last = (datetime.strptime(link["last_sync"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
                         if link["last_sync"] else None)
                 since = (last - OVERLAP) if last else (moment - FIRST_WINDOW)
-                branches = [b["name"] for b in self._pages(f"/repos/{repo}/branches", {}) if "name" in b]
+                listed = self._pages(f"/repos/{repo}/branches", {})
+                heads = {b["name"]: (b.get("commit") or {}).get("sha", "") for b in listed if "name" in b}
+                branches = list(heads)
+                # A branch whose last commit has not changed has nothing new: not read again.
+                moved = [b for b in branches if not heads[b] or link["heads"].get(b) != heads[b]]
                 commits: dict[str, dict[str, Any]] = {}
                 latest_branch, latest_at = None, ""
-                for branch in branches:
+                for branch in moved:
                     for c in self._pages(f"/repos/{repo}/commits",
                                          {"sha": branch, "since": since.strftime("%Y-%m-%dT%H:%M:%SZ")}):
                         sha = c.get("sha")
@@ -236,8 +260,10 @@ class CodeJournal:
                             latest_branch, latest_at = branch, at
                         commits[sha] = {"sha": sha, "at": at, "subject": (info.get("message") or "").split("\n", 1)[0][:200]}
                 branch = latest_branch or link["branch"] or (branches[0] if branches else None)
-                fiches, shas = (self._fiches(repo, branch, link["fiche_shas"], link["fiches"]) if branch
-                                else (link["fiches"], link["fiche_shas"]))
+                if branch and (moved or not link["last_sync"]):
+                    fiches, shas = self._fiches(repo, branch, link["fiche_shas"], link["fiches"])
+                else:
+                    fiches, shas = link["fiches"], link["fiche_shas"]  # nothing moved: work items unchanged
                 days: dict[str, list[dict[str, Any]]] = {}
                 for c in commits.values():
                     when = datetime.strptime(c["at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
@@ -270,7 +296,7 @@ class CodeJournal:
                 error = CodeError(f"Lecture du dépôt impossible ({type(exc).__name__}).")
                 self.store.repo_synced(project_id, error=str(error))
                 raise error from None
-            self.store.repo_synced(project_id, branch=branch, fiches=fiches, fiche_shas=shas, at=moment)
+            self.store.repo_synced(project_id, branch=branch, fiches=fiches, fiche_shas=shas, heads=heads, at=moment)
             return {"commits": len(commits), "days": written, "fiches": len(fiches)}
 
     def last_slot(self, moment: datetime) -> datetime:

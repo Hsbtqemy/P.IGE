@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 
 import pytest
 
@@ -91,14 +90,13 @@ class FakeGitHub:
     def __call__(self, path, params):
         self.calls.append(path)
         if path.endswith("/branches"):
-            return [{"name": "main"}, {"name": "dev"}], {}
+            return [{"name": b, "commit": {"sha": cs[-1]["sha"] if cs else ""}} for b, cs in self.commits.items()], {}
         if path.endswith("/commits"):
             return self.commits[params["sha"]], {}
         if path.endswith("/contents/pilotage"):
             return [{"type": "file", "name": n, "path": f"pilotage/{n}", "sha": f"s-{n}"} for n in self.files], {}
-        if "/contents/pilotage/" in path:
-            name = path.rsplit("/", 1)[1]
-            return {"content": base64.b64encode(self.files[name].encode()).decode()}, {}
+        if path.startswith("raw:"):
+            return self.files[path.rsplit("/", 1)[1]], {}
         raise CodeError("Dépôt introuvable : vérifie son nom, ou le jeton GitHub s'il est privé.")
 
 
@@ -139,13 +137,17 @@ def test_linking_a_project_writes_one_entry_a_day(app):
     e21 = entries[1]
     c.patch(f"/api/v2/entries/{e21['id']}", json={"expected_revision": e21["revision"], "body": "Bonne avancée"}, headers=WEB)
     app.state.github.commits["dev"].append(FakeGitHub.c("b4", "2026-10-21T10:00:00Z", "P-8 : fin"))
-    files_read = app.state.github.calls.count("/repos/Hsbtqemy/pilote/contents/pilotage/P-8.md")
+    files_read = app.state.github.calls.count("raw:Hsbtqemy/pilote/dev/pilotage/P-8.md")
     c.post(f"/api/v2/projects/{pid}/code/sync", headers=WEB)
     again = c.get(f"/api/v2/entries/{e21['id']}").json()
     assert again["title"] == "Code — pilote · 2 commits (P-8)" and again["body"] == "Bonne avancée"
     assert again["code"]["chantiers"][0]["count"] == 2
     # unchanged work items are not read again
-    assert app.state.github.calls.count("/repos/Hsbtqemy/pilote/contents/pilotage/P-8.md") == files_read
+    assert app.state.github.calls.count("raw:Hsbtqemy/pilote/dev/pilotage/P-8.md") == files_read
+    # nothing pushed since: only the branch list is asked
+    before = len(app.state.github.calls)
+    c.post(f"/api/v2/projects/{pid}/code/sync", headers=WEB)
+    assert app.state.github.calls[before:] == ["/repos/Hsbtqemy/pilote/branches"]
 
     # unlinking keeps the days already written
     assert c.put(f"/api/v2/projects/{pid}/repo", json={"repo": None}, headers=WEB).json()["repo"] is None
