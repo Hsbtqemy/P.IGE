@@ -39,7 +39,9 @@ def build_code_router(
             "repo": link["repo"], "export_url": link["export_url"], "pushed": link["export_url"] == PUSHED,
             "branch": link["branch"], "last_sync": link["last_sync"],
             "last_error": link["last_error"], "token": has_token,
-            "chantiers": [f for f in fiches if f["status"] in OPEN_STATUSES],
+            # Most recently worked on first; never touched (« à venir ») last.
+            "chantiers": sorted((f for f in fiches if f["status"] in OPEN_STATUSES),
+                                key=lambda f: (f.get("last") or "", f["code"]), reverse=True),
             "closed": sum(1 for f in fiches if f["status"] not in OPEN_STATUSES),
         }
 
