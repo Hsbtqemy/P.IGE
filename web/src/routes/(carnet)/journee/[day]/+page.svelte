@@ -4,7 +4,7 @@
 	import EventRow from '#lib/carnet/EventRow.svelte';
 	import DayPlan from '#lib/carnet/DayPlan.svelte';
 	import DoneToday from '#lib/carnet/DoneToday.svelte';
-	import { v2, type AgendaEvent, type CountedBlock, type DayReport, type OverlapMode, type Target, type Task, type TimeBlock } from '#lib/api2.js';
+	import { v2, type AgendaEvent, type CountedBlock, type DayReport, type OverlapMode, type Target, type Task, type TimeBlock, type WeekReport } from '#lib/api2.js';
 	import {
 		carnet,
 		duration,
@@ -19,6 +19,8 @@
 
 	let day = $derived(isDay(page.params.day ?? '') ? (page.params.day as string) : '');
 	let report = $state<DayReport | null>(null);
+	let week = $state<WeekReport | null>(null);
+	let span = $state<'day' | 'week'>('day'); // the Bilan: this day or its week
 	let meetings = $state<AgendaEvent[]>([]);
 	let openTasks = $state<Task[]>([]); // open tasks of active projects: the day's plan
 	let doneKey = $state(0); // reloads « Fait aujourd'hui » after a change in the plan
@@ -64,15 +66,17 @@
 
 	async function load(current = day) {
 		try {
-			const [r, timers, doing, agenda] = await Promise.all([
+			const [r, timers, doing, agenda, w] = await Promise.all([
 				v2.day(current, timeZone()),
 				v2.timers(),
 				v2.openTasks(true),
-				v2.agenda(current, 1, timeZone()).catch(() => [] as AgendaEvent[])
+				v2.agenda(current, 1, timeZone()).catch(() => [] as AgendaEvent[]),
+				v2.week(current, timeZone()).catch(() => null)
 			]);
 			doneKey += 1;
 			if (current !== day) return;
 			report = r;
+			week = w;
 			meetings = agenda.filter((m) => !m.all_day);
 			carnet.timers = timers;
 			openTasks = doing;
@@ -271,6 +275,33 @@
 		return rows.sort((a, b) => b.seconds - a.seconds);
 	});
 	let maxSeconds = $derived(Math.max(1, ...byProject.map((r) => r.seconds)));
+
+	// The week holding the day: per day, per space, per project.
+	let weekProjects = $derived.by(() => {
+		if (!week) return [];
+		return Object.entries(week.by_project)
+			.filter(([, s]) => s >= 60)
+			.map(([key, seconds]) => ({ key, name: key ? placeName({ project_id: key, space_id: '' }) : 'Sans projet', seconds }))
+			.sort((a, b) => b.seconds - a.seconds);
+	});
+	let weekSpaces = $derived.by(() => {
+		if (!week) return [];
+		return Object.entries(week.by_space)
+			.filter(([, s]) => s >= 60)
+			.map(([key, seconds]) => ({ key, name: placeName({ project_id: null, space_id: key }), seconds }))
+			.sort((a, b) => b.seconds - a.seconds);
+	});
+	let weekMax = $derived(Math.max(1, ...weekProjects.map((r) => r.seconds)));
+	let dayMax = $derived(Math.max(1, ...(week?.days.map((d) => d.presence_seconds) ?? [])));
+	let weekCounted = $derived(week ? week.days.reduce((n, d) => n + d.presence_seconds, 0) : 0);
+	const LETTERS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
+	/** « 19 au 25 octobre », « 26 octobre au 1er novembre ». */
+	function weekSpan(start: string, end: string): string {
+		const fmt = (iso: string, month: boolean) =>
+			new Date(`${iso}T12:00:00`).toLocaleDateString('fr-FR', month ? { day: 'numeric', month: 'long' } : { day: 'numeric' });
+		const n = (iso: string) => (iso.endsWith('-01') ? '1er' + fmt(iso, true).slice(1) : fmt(iso, true));
+		return start.slice(5, 7) === end.slice(5, 7) ? `${fmt(start, false)} au ${n(end)}` : `${n(start)} au ${n(end)}`;
+	}
 	let unchecked = $derived(report?.blocks.some((c) => !c.block.validated && !c.running) ?? false);
 </script>
 
@@ -388,7 +419,9 @@
 										</span>
 										<span class="flags">
 											{#if c.block.validated}<span title="Validé">✓</span>{/if}
-											{#if !c.running}<button class="edit" onclick={() => (editId === c.block.id ? (editId = null) : edit(c))} aria-expanded={editId === c.block.id} aria-label="Modifier le créneau">✎</button>{/if}
+											{#if c.block.entry_id && c.block.source === 'manual'}
+												<a class="to-journal" href="/journal/{day}#e-{c.block.entry_id}" title="Vient d’une entrée du journal : sa plage horaire se modifie là-bas">✎ journal</a>
+											{:else if !c.running}<button class="edit" onclick={() => (editId === c.block.id ? (editId = null) : edit(c))} aria-expanded={editId === c.block.id} aria-label="Modifier le créneau">✎</button>{/if}
 										</span>
 									</div>
 									{#if editId === c.block.id}
@@ -434,8 +467,44 @@
 			</div>
 
 			<aside class="summary" aria-labelledby="summary-title">
-				<h2 id="summary-title">Bilan</h2>
-				{#if report}
+				<h2 id="summary-title" class="summary-head">
+					Bilan
+					<span class="switch" role="group" aria-label="Période">
+						<button class:on={span === 'day'} aria-pressed={span === 'day'} onclick={() => (span = 'day')}>Jour</button>
+						<button class:on={span === 'week'} aria-pressed={span === 'week'} onclick={() => (span = 'week')}>Semaine</button>
+					</span>
+				</h2>
+				{#if span === 'week'}
+					{#if week}
+						<p class="presence"><b>{duration(weekCounted)}</b> <span>semaine du {weekSpan(week.start, week.end)}</span></p>
+						<div class="week-days" aria-label="Temps par jour">
+							{#each week.days as d, i (d.day)}
+								<a href="/journee/{d.day}" class="wd" class:current={d.day === day} title="{longDate(d.day)} : {duration(d.presence_seconds)}">
+									<span class="wd-bar"><span style="height: {(d.presence_seconds / dayMax) * 100}%"></span></span>
+									<span class="wd-l">{LETTERS[i]}</span>
+								</a>
+							{/each}
+						</div>
+						{#if weekSpaces.length > 1}
+							<h3>Par espace</h3>
+							{#each weekSpaces as row (row.key)}
+								<div class="bar-row"><span class="bar-name">{row.name}</span><span class="bar-time">{duration(row.seconds)}</span></div>
+							{/each}
+						{/if}
+						<h3>Par projet</h3>
+						{#each weekProjects as row (row.key)}
+							<div class="bar-row">
+								<span class="bar-name">{row.name}</span>
+								<span class="bar-time">{duration(row.seconds)}</span>
+								<span class="bar" aria-hidden="true"><span style="width: {(row.seconds / weekMax) * 100}%"></span></span>
+							</div>
+						{:else}
+							<p class="muted">Pas de temps compté cette semaine.</p>
+						{/each}
+					{:else}
+						<p class="muted">Semaine non chargée.</p>
+					{/if}
+				{:else if report}
 					<p class="presence"><b>{duration(report.presence_seconds)}</b> <span>de présence</span></p>
 					{#each byProject as row (row.key)}
 						<div class="bar-row">
@@ -509,6 +578,79 @@
 	}
 	.info {
 		background: var(--soft);
+	}
+	.summary-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 8px;
+	}
+	.switch {
+		display: inline-flex;
+		border: 1px solid var(--line);
+		border-radius: 6px;
+		overflow: hidden;
+		font-family: var(--sans);
+	}
+	.switch button {
+		padding: 2px 8px;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-size: 0.75rem;
+		color: var(--muted);
+		cursor: pointer;
+	}
+	.switch button.on {
+		background: var(--soft);
+		color: var(--ink);
+		font-weight: 700;
+	}
+	h3 {
+		margin: 10px 0 2px;
+		font-family: var(--sans);
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--muted);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+	.week-days {
+		display: grid;
+		grid-template-columns: repeat(7, 1fr);
+		gap: 4px;
+		margin: 4px 0 6px;
+	}
+	.wd {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+		color: var(--muted);
+		text-decoration: none;
+		font-family: var(--sans);
+		font-size: 0.75rem;
+	}
+	.wd.current {
+		color: var(--ink);
+		font-weight: 700;
+	}
+	.wd-bar {
+		display: flex;
+		align-items: flex-end;
+		width: 100%;
+		height: 44px;
+		background: var(--softer);
+		border-radius: 3px;
+		overflow: hidden;
+	}
+	.wd-bar span {
+		width: 100%;
+		background: var(--accent);
+		opacity: 0.75;
+	}
+	.wd.current .wd-bar span {
+		opacity: 1;
 	}
 	.cols {
 		display: grid;
@@ -659,6 +801,12 @@
 	}
 	.edit:hover {
 		background: var(--soft);
+	}
+	.to-journal {
+		font-family: var(--sans);
+		font-size: 0.75rem;
+		color: var(--muted);
+		white-space: nowrap;
 	}
 	.edit-form {
 		display: flex;

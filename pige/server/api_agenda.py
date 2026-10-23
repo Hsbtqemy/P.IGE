@@ -327,6 +327,11 @@ def build_agenda_router(
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "Un événement sur la journée entière ne se compte pas")
             if event.block_id is not None:
                 return {"block_id": event.block_id, "created": False, "event": current(event_id)}
+            own = store.entry_block(event.entry_id) if event.entry_id else None
+            if own is not None:
+                # The note's time range already counts it: that block becomes the meeting's.
+                store.link_event(event_id, block_id=own.id)
+                return {"block_id": own.id, "created": False, "event": current(event_id)}
             target = where(event, body)
             begin = datetime.strptime(event.start_at, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
             end = datetime.strptime(event.end_at, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)

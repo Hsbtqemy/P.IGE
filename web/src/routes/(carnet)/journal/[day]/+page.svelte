@@ -8,6 +8,7 @@
 	import TodayCompact from '#lib/carnet/TodayCompact.svelte';
 	import CodeDayView from '#lib/carnet/CodeDayView.svelte';
 	import CodeFetch from '#lib/carnet/CodeFetch.svelte';
+	import EntryTime from '#lib/carnet/EntryTime.svelte';
 	import { newId, prepare } from '#lib/carnet/capture.js';
 	import { outbox, queue } from '#lib/carnet/outbox.svelte.js';
 	import { appleMail, appleMailHref, onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
@@ -452,7 +453,7 @@
 				{#each entries as entry (entry.id)}
 					<div class="para" id="e-{entry.id}" class:target={highlighted === entry.id}>
 						<div class="margin">
-							<span class="time">{entry.start_time ?? ''}</span>
+							<EntryTime {entry} onsaved={() => void refresh()} />
 							<span class="where">{placeLabel(entry)}</span>
 							{#if entry.mail_message_id}
 								{#if thunderbird.available}

@@ -237,6 +237,21 @@ def test_agenda_notes_and_time_from_a_meeting(app):
     assert c.get(f"/api/v2/entries/{loose['entry_id']}").json()["project_id"] is None
 
 
+
+def test_a_meeting_is_counted_once_between_its_note_range_and_the_agenda(app):
+    c, project, _paul, week = _agenda_with_meeting(app)
+    meeting = next(e for e in week if e["title"] == "Point FoReLLIS")
+    noted = c.post(f"/api/v2/agenda/{meeting['id']}/note?tz=Europe/Paris", json={"project_id": project["id"]}, headers=WEB).json()
+    day = lambda: c.get("/api/v2/days/2026-10-19?tz=Europe/Paris").json()  # noqa: E731
+    assert day()["blocks"] == []  # noting a meeting does not count it by itself
+    entry = c.get(f"/api/v2/entries/{noted['entry_id']}").json()
+    c.patch(f"/api/v2/entries/{entry['id']}", json={"expected_revision": entry["revision"], "end_time": "11:00"}, headers=WEB)
+    [own] = day()["blocks"]
+    assert (own["block"]["source"], own["counted_seconds"]) == ("manual", 3600)
+    counted = c.post(f"/api/v2/agenda/{meeting['id']}/count", json={}, headers=WEB).json()
+    assert (counted["block_id"], counted["created"]) == (own["block"]["id"], False)
+    assert len(day()["blocks"]) == 1
+
 def test_a_noted_meeting_is_filed_elsewhere_with_its_time(app):
     c, project, _paul, week = _agenda_with_meeting(app)
     meeting = next(e for e in week if e["title"] == "Point FoReLLIS")

@@ -227,6 +227,15 @@ export interface DayReport {
 	stale_timers: TimeBlock[];
 }
 
+export interface WeekReport {
+	start: string;
+	end: string;
+	presence_seconds: number;
+	days: { day: string; presence_seconds: number; counted_seconds: number }[];
+	by_space: Record<string, number>;
+	by_project: Record<string, number>;
+}
+
 export interface Target {
 	project_id?: string | null;
 	space_id?: string | null;
@@ -325,6 +334,7 @@ export interface EntryPatch {
 	body?: string | null;
 	kind?: EntryKind;
 	start_time?: string | null;
+	end_time?: string | null;
 	people?: string[];
 	tags?: string[];
 }
@@ -368,6 +378,7 @@ export const v2 = {
 	) => request<TimeBlock>('PATCH', `/api/v2/blocks/${id}`, patch),
 	deleteBlock: (id: string) => request<void>('DELETE', `/api/v2/blocks/${id}`),
 	day: (day: string, tz: string) => request<DayReport>('GET', `/api/v2/days/${day}?tz=${encodeURIComponent(tz)}`),
+	week: (day: string, tz: string) => request<WeekReport>('GET', `/api/v2/weeks/${day}?tz=${encodeURIComponent(tz)}`),
 	validateDay: (day: string, tz: string) =>
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),
 	search: (text: string, limit = 20) => request<SearchHit[]>('GET', `/api/v2/search?${q({ q: text, limit, include_done: true })}`),

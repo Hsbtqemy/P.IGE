@@ -1239,6 +1239,12 @@ class ModelStore:
                 " WHERE id = ?",
                 (space, project, task_id, _utc(_now()), entry_id),
             )
+            # The time of its range moves along.
+            self.conn.execute(
+                "UPDATE time_blocks SET space_id = ?, project_id = ?, task_id = ?, validated = 0"
+                " WHERE entry_id = ? AND source = 'manual'",
+                (space, project, task_id, entry_id),
+            )
             return self.get_entry(entry_id)
 
     def _touch_entry(self, entry_id: str) -> None:
@@ -1360,8 +1366,11 @@ class ModelStore:
                 raise ConflictError(refusal) from exc
 
     def delete_entry(self, entry_id: str) -> None:
-        """Delete an entry and its versions (time blocks and tasks keep existing, unlinked)."""
-        self._delete("entries", entry_id, "entry cannot be deleted")
+        """Delete an entry and its versions, and the time of its range. Other time blocks
+        and tasks keep existing, unlinked."""
+        with self._tx():
+            self.conn.execute("DELETE FROM time_blocks WHERE entry_id = ? AND source = 'manual'", (entry_id,))
+            self._delete("entries", entry_id, "entry cannot be deleted")
 
     def delete_task(self, task_id: str) -> None:
         """Delete a task and its steps; its entries and time stay, detached from it."""
@@ -2099,6 +2108,72 @@ class ModelStore:
                 (space, project, task_id, block_id),
             )
             return self.get_block(block_id)
+
+    def entry_block(self, entry_id: str) -> TimeBlock | None:
+        """The block kept in step with an entry's time range, if it has one."""
+        row = self.conn.execute(
+            "SELECT * FROM time_blocks WHERE entry_id = ? AND source = 'manual' ORDER BY created_at LIMIT 1", (entry_id,)
+        ).fetchone()
+        return self._block(row) if row else None
+
+    def sync_entry_block(self, entry_id: str, tz: tzinfo) -> TimeBlock | None:
+        """An entry with a start and an end counts its time: one block, kept in step with it
+        (times, place, title). Without a full range, the block goes. A meeting already counted
+        from the agenda keeps that block alone, so its time is never counted twice."""
+        with self._tx():
+            entry = self.get_entry(entry_id)
+            own = [
+                self._block(r)
+                for r in self.conn.execute(
+                    "SELECT * FROM time_blocks WHERE entry_id = ? AND source = 'manual' ORDER BY created_at", (entry_id,)
+                ).fetchall()
+            ]
+            counted_elsewhere = self.conn.execute(
+                "SELECT 1 FROM time_blocks WHERE entry_id = ? AND source != 'manual'"
+                " UNION SELECT 1 FROM calendar_events e JOIN time_blocks b ON b.id = e.block_id"
+                " WHERE e.entry_id = ? AND b.source != 'manual'",
+                (entry_id, entry_id),
+            ).fetchone()
+            span = self._entry_span(entry, tz)
+            keep = own[0] if own and span and not counted_elsewhere else None
+            for b in own:
+                if b is not keep:
+                    self.conn.execute("DELETE FROM time_blocks WHERE id = ?", (b.id,))
+            if span is None or counted_elsewhere:
+                return None
+            start, end = span
+            note = entry.title[:200] or None
+            if keep is None:
+                block_id = _new_id()
+                self.conn.execute(
+                    "INSERT INTO time_blocks(id, space_id, project_id, task_id, entry_id, start_at, end_at, source,"
+                    " note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?)",
+                    (block_id, entry.space_id, entry.project_id, entry.task_id, entry_id, _utc(start), _utc(end),
+                     note, _utc(_now())),
+                )
+                return self.get_block(block_id)
+            same = (keep.start_at, keep.end_at, keep.space_id, keep.project_id, keep.task_id, keep.note) == (
+                start, end, entry.space_id, entry.project_id, entry.task_id, note
+            )
+            if not same:
+                self.conn.execute(
+                    "UPDATE time_blocks SET start_at = ?, end_at = ?, space_id = ?, project_id = ?, task_id = ?,"
+                    " note = ?, validated = 0 WHERE id = ?",
+                    (_utc(start), _utc(end), entry.space_id, entry.project_id, entry.task_id, note, keep.id),
+                )
+            return self.get_block(keep.id)
+
+    @staticmethod
+    def _entry_span(entry: Entry, tz: tzinfo) -> tuple[datetime, datetime] | None:
+        """« 09:30 »–« 11:00 » on the entry's day, as instants; an end before the start is the next day."""
+        if not entry.start_time or not entry.end_time:
+            return None
+        day = date.fromisoformat(entry.entry_date)
+        start = datetime.combine(day, time.fromisoformat(entry.start_time), tzinfo=tz)
+        end = datetime.combine(day, time.fromisoformat(entry.end_time), tzinfo=tz)
+        if end <= start:
+            end = datetime.combine(day + timedelta(days=1), time.fromisoformat(entry.end_time), tzinfo=tz)
+        return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
     @staticmethod
     def _check_span(start: datetime, end: datetime) -> None:
