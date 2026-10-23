@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from pige.model.store import Entry, ModelStore
+from pige.model.store import Entry, ModelStore, NotFoundError
 
 HEX = r"^[0-9a-f]{32}$"
 IdPath = Annotated[str, Path(pattern=HEX)]
@@ -201,6 +201,20 @@ class TimerIn(_In):
     task_id: str | None = OptHexId
     note: str | None = Field(default=None, max_length=2000)
     at: datetime | None = None
+
+
+class PriorityIn(_In):
+    text: str = Field(default="", max_length=300)
+    task_id: str | None = OptHexId
+    done: bool = False
+    carried: bool = False  # moved to the next day
+
+
+class FramePatch(_In):
+    started_at: datetime | None = None  # null clears it
+    ended_at: datetime | None = None
+    priorities: list[PriorityIn] | None = Field(default=None, max_length=10)
+    tomorrow: str | None = Field(default=None, max_length=5000)
 
 
 class TimerStop(_In):
@@ -830,6 +844,63 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             "stale_timers": _out(report.stale_timers),
         }
 
+    def _span(day: date, zone_: ZoneInfo) -> dict[str, Any] | None:
+        """How long the day lasted: declared start and end, or what the day's activity shows
+        for the one (or both) not given. ``estimated`` says if any side was guessed."""
+        frame = store.day_frame(day)
+        traces = store.day_traces(day, zone_)
+        start = frame.started_at or (traces[0] if traces else None)
+        end = frame.ended_at or (traces[1] if traces else None)
+        if frame.started_at and not frame.ended_at and day == datetime.now(zone_).date():
+            end = datetime.now(timezone.utc)  # a day still going on
+        if start is None or end is None or end <= start:
+            return None
+        return {"start": _out(start), "end": _out(end), "seconds": int((end - start).total_seconds()),
+                "estimated": not (frame.started_at and frame.ended_at)}
+
+    def _frame_view(day: date, zone_: ZoneInfo) -> dict[str, Any]:
+        frame = store.day_frame(day)
+        priorities = []
+        for p in frame.priorities:
+            status_ = None
+            if p.get("task_id"):
+                try:
+                    status_ = store.get_task(p["task_id"]).status
+                except NotFoundError:
+                    status_ = "deleted"
+            priorities.append({**p, "task_status": status_})
+        before = store.previous_tomorrow(day)
+        return {
+            "day": frame.day,
+            "started_at": _out(frame.started_at),
+            "ended_at": _out(frame.ended_at),
+            "priorities": priorities,
+            "tomorrow": frame.tomorrow,
+            "from_before": {"day": before.day, "text": before.tomorrow} if before else None,
+            "span": _span(day, zone_),
+        }
+
+    @router.get("/days/{day}/frame")
+    def day_frame(day: date, tz: str = Query(default=default_timezone, max_length=64)) -> dict[str, Any]:
+        return _frame_view(day, _zone(tz))
+
+    @router.patch("/days/{day}/frame")
+    def update_day_frame(
+        day: date, body: FramePatch, tz: str = Query(default=default_timezone, max_length=64)
+    ) -> dict[str, Any]:
+        sent = body.model_fields_set
+        args: dict[str, Any] = {}
+        if "started_at" in sent:
+            args["started_at"] = body.started_at
+        if "ended_at" in sent:
+            args["ended_at"] = body.ended_at
+        if body.priorities is not None:
+            args["priorities"] = [p.model_dump() for p in body.priorities]
+        if body.tomorrow is not None:
+            args["tomorrow"] = body.tomorrow
+        store.set_day_frame(day, **args)
+        return _frame_view(day, _zone(tz))
+
     @router.get("/weeks/{day}")
     def week_report(day: date, tz: str = Query(default=default_timezone, max_length=64)) -> dict[str, Any]:
         """The week (Monday to Sunday) holding ``day``: time per day, per space and per project."""
@@ -840,8 +911,11 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         by_project: dict[str, int] = {}
         for i in range(7):
             report = store.day_report(monday + timedelta(days=i), zone_)
+            span = _span(monday + timedelta(days=i), zone_)
             days.append({"day": report.day.isoformat(), "presence_seconds": report.presence_seconds,
-                         "counted_seconds": sum(report.by_space.values())})
+                         "counted_seconds": sum(report.by_space.values()),
+                         "span_seconds": span["seconds"] if span else None,
+                         "span_estimated": span["estimated"] if span else None})
             for k, v in report.by_space.items():
                 by_space[k] = by_space.get(k, 0) + v
             for pk, v in report.by_project.items():
@@ -850,6 +924,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             "start": monday.isoformat(),
             "end": (monday + timedelta(days=6)).isoformat(),
             "presence_seconds": sum(d["presence_seconds"] for d in days),
+            "span_seconds": sum(d["span_seconds"] or 0 for d in days),
             "days": days,
             "by_space": by_space,
             "by_project": by_project,

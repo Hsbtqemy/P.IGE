@@ -231,9 +231,48 @@ export interface WeekReport {
 	start: string;
 	end: string;
 	presence_seconds: number;
-	days: { day: string; presence_seconds: number; counted_seconds: number }[];
+	span_seconds: number;
+	days: {
+		day: string;
+		presence_seconds: number;
+		counted_seconds: number;
+		span_seconds: number | null;
+		span_estimated: boolean | null;
+	}[];
 	by_space: Record<string, number>;
 	by_project: Record<string, number>;
+}
+
+export interface Priority {
+	text: string;
+	task_id: string | null;
+	done: boolean;
+	carried?: boolean;
+	task_status?: string | null;
+}
+
+export interface DaySpan {
+	start: string;
+	end: string;
+	seconds: number;
+	estimated: boolean;
+}
+
+export interface DayFrame {
+	day: string;
+	started_at: string | null;
+	ended_at: string | null;
+	priorities: Priority[];
+	tomorrow: string;
+	from_before: { day: string; text: string } | null;
+	span: DaySpan | null;
+}
+
+export interface FramePatch {
+	started_at?: string | null;
+	ended_at?: string | null;
+	priorities?: { text: string; task_id: string | null; done: boolean; carried?: boolean }[];
+	tomorrow?: string;
 }
 
 export interface Target {
@@ -378,6 +417,9 @@ export const v2 = {
 	) => request<TimeBlock>('PATCH', `/api/v2/blocks/${id}`, patch),
 	deleteBlock: (id: string) => request<void>('DELETE', `/api/v2/blocks/${id}`),
 	day: (day: string, tz: string) => request<DayReport>('GET', `/api/v2/days/${day}?tz=${encodeURIComponent(tz)}`),
+	frame: (day: string, tz: string) => request<DayFrame>('GET', `/api/v2/days/${day}/frame?tz=${encodeURIComponent(tz)}`),
+	updateFrame: (day: string, tz: string, patch: FramePatch) =>
+		request<DayFrame>('PATCH', `/api/v2/days/${day}/frame?tz=${encodeURIComponent(tz)}`, patch),
 	week: (day: string, tz: string) => request<WeekReport>('GET', `/api/v2/weeks/${day}?tz=${encodeURIComponent(tz)}`),
 	validateDay: (day: string, tz: string) =>
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),

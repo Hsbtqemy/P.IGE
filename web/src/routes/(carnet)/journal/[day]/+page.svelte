@@ -9,6 +9,7 @@
 	import CodeDayView from '#lib/carnet/CodeDayView.svelte';
 	import CodeFetch from '#lib/carnet/CodeFetch.svelte';
 	import EntryTime from '#lib/carnet/EntryTime.svelte';
+	import DayFrameLine from '#lib/carnet/DayFrameLine.svelte';
 	import { newId, prepare } from '#lib/carnet/capture.js';
 	import { outbox, queue } from '#lib/carnet/outbox.svelte.js';
 	import { appleMail, appleMailHref, onMailFiled, openMail, thunderbird } from '#lib/carnet/thunderbird.svelte.js';
@@ -433,6 +434,7 @@
 				{/if}
 			</div>
 
+			<DayFrameLine {day} />
 			<div class="done-box"><DoneToday {day} refreshKey={doneKey} /></div>
 
 			{#if meetings.length}

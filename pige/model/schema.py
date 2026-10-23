@@ -421,6 +421,20 @@ MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE project_repos ADD COLUMN export_url TEXT;
     """,
+    # ------------------------------------------------------------------ 9
+    # The frame of a day: when it started and ended (declared, all optional), its
+    # priorities (JSON list of {text, task_id, done}) and what to pick up the next day.
+    """
+    CREATE TABLE day_frames (
+        day         TEXT PRIMARY KEY,
+        started_at  TEXT,
+        ended_at    TEXT,
+        priorities  TEXT NOT NULL DEFAULT '[]',
+        tomorrow    TEXT NOT NULL DEFAULT '',
+        updated_at  TEXT NOT NULL,
+        CHECK (ended_at IS NULL OR started_at IS NULL OR ended_at > started_at)
+    );
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)
