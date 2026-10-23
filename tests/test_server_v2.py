@@ -467,3 +467,40 @@ def test_task_follow_up_from_thunderbird_and_by_hand(client, tree):
     assert web.delete(f"/api/v2/task-mails/{mails[3]['id']}", headers=h).status_code == 204
     titles = sorted(e["title"] for e in ok(client.get(f"/api/v2/timeline?task_id={task['id']}")))
     assert titles == ["", "Échange du 21 oct. — 2 réponses envoyées"]
+
+
+def test_entry_time_range_counts_once_and_follows_the_entry(client, tree):
+    dico, portail = tree["dico"]["id"], tree["portail"]["id"]
+    e = ok(client.post("/api/v2/entries", json={
+        "entry_date": "2026-10-15", "project_id": dico, "title": "Relecture", "body": "x",
+        "start_time": "09:30", "end_time": "11:00"}), 201)
+    report = ok(client.get("/api/v2/days/2026-10-15?tz=Europe/Paris"))
+    [c] = report["blocks"]
+    assert (c["block"]["entry_id"], c["block"]["note"], c["counted_seconds"]) == (e["id"], "Relecture", 90 * 60)
+    assert c["block"]["start_at"].startswith("2026-10-15T07:30")
+    # Changing the range, the day or the place moves the same block.
+    e = ok(client.patch(f"/api/v2/entries/{e['id']}", json={"expected_revision": e["revision"], "end_time": "12:00"}))
+    ok(client.post(f"/api/v2/entries/{e['id']}/move", json={"project_id": portail}))
+    [c2] = ok(client.get("/api/v2/days/2026-10-15?tz=Europe/Paris"))["blocks"]
+    assert (c2["block"]["id"], c2["counted_seconds"], c2["block"]["project_id"]) == (c["block"]["id"], 150 * 60, portail)
+    week = ok(client.get("/api/v2/weeks/2026-10-17?tz=Europe/Paris"))
+    assert (week["start"], week["end"]) == ("2026-10-12", "2026-10-18")
+    assert week["by_project"] == {portail: 150 * 60} and week["by_space"] == {tree["mimmoc"]["id"]: 150 * 60}
+    assert [d["counted_seconds"] for d in week["days"]] == [0, 0, 0, 150 * 60, 0, 0, 0]
+    # Without an end, nothing counts; a range ending after midnight runs to the next day.
+    e = ok(client.get(f"/api/v2/entries/{e['id']}"))
+    e = ok(client.patch(f"/api/v2/entries/{e['id']}", json={"expected_revision": e["revision"], "end_time": None}))
+    assert ok(client.get("/api/v2/days/2026-10-15"))["blocks"] == []
+    e = ok(client.patch(f"/api/v2/entries/{e['id']}", json={
+        "expected_revision": e["revision"], "start_time": "23:00", "end_time": "01:00"}))
+    assert ok(client.get("/api/v2/days/2026-10-16?tz=Europe/Paris"))["presence_seconds"] == 3600
+    # Deleting the entry takes its time away; a text-only edit of a plain entry counts nothing.
+    web = TestClient(client.app)
+    ok(web.post("/api/login", json={"password": PASSWORD}))
+    ok(web.delete(f"/api/v2/entries/{e['id']}", headers={CSRF_HEADER: "web"}), 204)
+    assert ok(client.get("/api/v2/days/2026-10-16"))["blocks"] == []
+    plain = ok(client.post("/api/v2/entries", json={
+        "entry_date": "2026-10-15", "project_id": dico, "body": "y", "start_time": "09:00"}), 201)
+    ok(client.patch(f"/api/v2/entries/{plain['id']}", json={"expected_revision": plain["revision"], "body": "z"}))
+    assert ok(client.get("/api/v2/days/2026-10-15"))["blocks"] == []
+

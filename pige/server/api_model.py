@@ -7,7 +7,7 @@ for the current web app and the Thunderbird extension until they move here.
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any, Callable, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -656,7 +656,10 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         data["new_id"] = data.pop("id")
         data["start_time"] = data["start_time"] or None
         data["end_time"] = data["end_time"] or None
-        return store.create_entry(**data)
+        with store.transaction():
+            entry = store.create_entry(**data)
+            store.sync_entry_block(entry.id, _zone(default_timezone))
+            return entry
 
     @router.get("/entries/{entry_id}")
     def get_entry(entry_id: IdPath) -> dict[str, Any]:
@@ -683,6 +686,11 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
                 store.set_entry_people(entry_id, names=body.people or [], person_ids=body.person_ids or [])
             if body.tags is not None:
                 store.set_entry_tags(entry_id, body.tags)
+            # A range set by hand counts its time (Ma journée), and the block follows the entry.
+            # A meeting noted from the agenda counts only once its range is touched.
+            ranged = {"start_time", "end_time", "entry_date"} & body.model_fields_set
+            if ranged or store.entry_block(entry_id) is not None:
+                store.sync_entry_block(entry_id, _zone(default_timezone))
             return _entry_view(entry_id)
 
     @router.post("/entries/{entry_id}/move")
@@ -820,6 +828,31 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             "by_project": {k or "": v for k, v in report.by_project.items()},
             "blocks": _out(report.blocks),
             "stale_timers": _out(report.stale_timers),
+        }
+
+    @router.get("/weeks/{day}")
+    def week_report(day: date, tz: str = Query(default=default_timezone, max_length=64)) -> dict[str, Any]:
+        """The week (Monday to Sunday) holding ``day``: time per day, per space and per project."""
+        zone_ = _zone(tz)
+        monday = day - timedelta(days=day.weekday())
+        days: list[dict[str, Any]] = []
+        by_space: dict[str, int] = {}
+        by_project: dict[str, int] = {}
+        for i in range(7):
+            report = store.day_report(monday + timedelta(days=i), zone_)
+            days.append({"day": report.day.isoformat(), "presence_seconds": report.presence_seconds,
+                         "counted_seconds": sum(report.by_space.values())})
+            for k, v in report.by_space.items():
+                by_space[k] = by_space.get(k, 0) + v
+            for pk, v in report.by_project.items():
+                by_project[pk or ""] = by_project.get(pk or "", 0) + v
+        return {
+            "start": monday.isoformat(),
+            "end": (monday + timedelta(days=6)).isoformat(),
+            "presence_seconds": sum(d["presence_seconds"] for d in days),
+            "days": days,
+            "by_space": by_space,
+            "by_project": by_project,
         }
 
     @router.post("/days/{day}/validate")
