@@ -169,6 +169,11 @@ Puis, dans un dépôt relié à un projet (page du projet › « Relier un dép�
 `package.json`. pilote exporte le journal, qui part directement au serveur P.IGE ; le
 projet passe alors en mode « envoyé depuis le dépôt » et n'est plus lu par l'API.
 
+Sur un réseau qui bloque l'accès direct au serveur (université…) mais que le navigateur
+traverse par un proxy : `pige-envoyer --proxy http://adresse:port`, une fois. L'envoi
+reste direct quand le serveur répond (chez soi) et ne passe par le proxy qu'autrement
+(Node 22.21+ ou 24.5+). `pige-envoyer --proxy aucun` l'enlève.
+
 **Avec l'export pilote (dépôts publics) : ni limite ni jeton.** Si le dépôt publie
 l'export de pilote sur GitHub Pages, indique son adresse dans « Export pilote » (ex.
 `https://hsbtqemy.github.io/mon-depot/`) : P.IGE lit ce seul `journal.json` au lieu de
