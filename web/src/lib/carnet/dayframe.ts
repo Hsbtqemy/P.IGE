@@ -1,7 +1,4 @@
-// The frame of a day: the holes between counted time, and the thresholds of a long day.
-
-export const LONG_DAY = 10 * 3600; // seconds: a day this long is pointed out
-export const LONG_WEEK = 45 * 3600;
+// The frame of a day: the holes between counted time, clocks and instants.
 
 export interface Gap {
 	start: string; // ISO instants

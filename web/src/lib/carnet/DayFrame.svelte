@@ -4,7 +4,7 @@
 	// counted time, what to pick up tomorrow). Nothing declared: the day's activity gives an
 	// estimate, so a forgotten click still shows how long the day was.
 	import { v2, type DayFrame, type DayReport, type Priority, type Task } from '../api2.js';
-	import { LONG_DAY, atClock, gaps, hhmm } from './dayframe.js';
+	import { atClock, gaps, hhmm } from './dayframe.js';
 	import { duration, failure, longDate, shiftDay, timeZone, todayIso } from './state.svelte.js';
 
 	let {
@@ -56,7 +56,6 @@
 	let phase = $derived(!frame ? 'loading' : frame.ended_at ? 'closed' : frame.started_at ? 'started' : 'none');
 	let span = $derived(frame?.span ?? null);
 	let counted = $derived(report?.presence_seconds ?? 0);
-	let long = $derived(!!span && span.seconds >= LONG_DAY);
 
 	// While closing: the times typed, their holes.
 	let closeStart = $derived(startClock ? atClock(day, startClock) : null);
@@ -216,7 +215,7 @@
 {/snippet}
 
 {#if frame}
-	<section class="frame" class:long aria-label="Cadre de la journée">
+	<section class="frame" aria-label="Cadre de la journée">
 		{#if message}<p class="warn" role="alert">{message}</p>{/if}
 
 		{#if closing}
@@ -226,7 +225,7 @@
 					<label>De <input type="time" bind:value={startClock} required /></label>
 					<label>à <input type="time" bind:value={endClock} required /></label>
 					{#if closeSeconds}
-						<span class="sum" class:warn-text={closeSeconds >= LONG_DAY}>
+						<span class="sum">
 							<b>{duration(closeSeconds)}</b>{' · '}{duration(counted)} comptées{#if closeSeconds - counted >= 600}{' · '}<b>{duration(closeSeconds - counted)}</b> non attribuées{/if}
 						</span>
 					{/if}
@@ -282,7 +281,7 @@
 				<div class="head">
 					<p class="line">
 						{#if span}
-							Journée ≈ <b>{hhmm(span.start)} → {hhmm(span.end)}</b> · <span class:warn-text={long}>{duration(span.seconds)}</span>
+							Journée ≈ <b>{hhmm(span.start)} → {hhmm(span.end)}</b> · <span>{duration(span.seconds)}</span>
 							<small>d’après ton activité</small>
 						{:else}
 							<span class="muted">Pas d’heures pour ce jour.</span>
@@ -309,12 +308,11 @@
 				</div>
 				<button class="btn primary" onclick={openClosing}>Clore la journée</button>
 			</div>
-			{#if long && isToday}<p class="warn-text small">Plus de {duration(LONG_DAY)} depuis le début : pense à t’arrêter.</p>{/if}
 			{@render priorities(false)}
 		{:else if phase === 'closed' && span}
 			<div class="head">
 				<p class="line">
-					Journée <b>{hhmm(span.start)} → {hhmm(span.end)}</b> · <b class:warn-text={long}>{duration(span.seconds)}</b>
+					Journée <b>{hhmm(span.start)} → {hhmm(span.end)}</b> · <b>{duration(span.seconds)}</b>
 					<small>· {duration(counted)} comptées{#if span.seconds - counted >= 600}{' · '}{duration(span.seconds - counted)} non attribuées{/if}</small>
 				</p>
 				<button class="plain link" onclick={openClosing}>Modifier</button>
@@ -334,9 +332,6 @@
 		background: var(--surface);
 		border: 1px solid var(--line);
 		border-radius: 10px;
-	}
-	.frame.long {
-		border-color: var(--warn);
 	}
 	h3 {
 		margin: 0;
@@ -369,12 +364,7 @@
 		color: var(--muted);
 		font-size: 0.8125rem;
 	}
-	.small {
-		margin: 0;
-		font-size: 0.8125rem;
-	}
-	.warn,
-	.warn-text {
+	.warn {
 		color: var(--warn);
 	}
 	.warn {

@@ -4,7 +4,6 @@
 	import EventRow from '#lib/carnet/EventRow.svelte';
 	import DayPlan from '#lib/carnet/DayPlan.svelte';
 	import DayFrame from '#lib/carnet/DayFrame.svelte';
-	import { LONG_DAY, LONG_WEEK } from '#lib/carnet/dayframe.js';
 	import DoneToday from '#lib/carnet/DoneToday.svelte';
 	import { v2, type AgendaEvent, type CountedBlock, type DayReport, type OverlapMode, type Target, type Task, type TimeBlock, type WeekReport } from '#lib/api2.js';
 	import {
@@ -494,13 +493,13 @@
 					{#if week}
 						<p class="presence"><b>{duration(weekCounted)}</b> <span>comptées, semaine du {weekSpan(week.start, week.end)}</span></p>
 						{#if week.span_seconds}
-							<p class="amplitude" class:warn-text={week.span_seconds >= LONG_WEEK}>
+							<p class="amplitude">
 								Journées : <b>{duration(week.span_seconds)}</b>{#if week.days.some((d) => d.span_estimated)}{' '}<small>(estimées en partie d’après ton activité)</small>{/if}
 							</p>
 						{/if}
 						<div class="week-days" aria-label="Temps par jour">
 							{#each week.days as d, i (d.day)}
-								<a href="/journee/{d.day}" class="wd" class:current={d.day === day} class:long={(d.span_seconds ?? 0) >= LONG_DAY}
+								<a href="/journee/{d.day}" class="wd" class:current={d.day === day}
 									title="{longDate(d.day)} : {duration(d.presence_seconds)} comptées{d.span_seconds ? ` sur une journée de ${duration(d.span_seconds)}${d.span_estimated ? ' (estimée)' : ''}` : ''}">
 									<span class="wd-bar">
 										{#if d.span_seconds}<span class="span" style="height: {(d.span_seconds / dayMax) * 100}%"></span>{/if}
@@ -689,17 +688,10 @@
 	.wd.current .wd-bar .counted {
 		opacity: 1;
 	}
-	.wd.long .wd-bar .span {
-		background: var(--warn);
-		opacity: 0.35;
-	}
 	.amplitude {
 		margin: 0;
 		font-family: var(--sans);
 		font-size: 0.875rem;
-	}
-	.warn-text {
-		color: var(--warn);
 	}
 	.cols {
 		display: grid;
