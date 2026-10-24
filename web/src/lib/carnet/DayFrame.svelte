@@ -226,16 +226,17 @@
 					<label>à <input type="time" bind:value={endClock} required /></label>
 					{#if closeSeconds}
 						<span class="sum">
-							<b>{duration(closeSeconds)}</b>{' · '}{duration(counted)} comptées{#if closeSeconds - counted >= 600}{' · '}<b>{duration(closeSeconds - counted)}</b> non attribuées{/if}
+							<b>{duration(closeSeconds)}</b>{' · '}{duration(counted)} comptées
 						</span>
 					{/if}
 				</div>
 				{#if holes.length}
+					<p class="holes-title">Moments sans temps compté <small>(une pause, tu l’ignores ; un oubli, tu peux l’attribuer)</small></p>
 					<ul class="holes" aria-label="Moments sans temps compté">
 						{#each holes as h (h.start)}
 							<li>
 								<span>{hhmm(h.start)}–{hhmm(h.end)} · {duration(h.minutes * 60)}</span>
-								<button type="button" class="plain link" onclick={() => onfillgap(hhmm(h.start), hhmm(h.end))}>Attribuer à un projet</button>
+								<button type="button" class="plain link" onclick={() => onfillgap(hhmm(h.start), hhmm(h.end))}>Attribuer</button>
 							</li>
 						{/each}
 					</ul>
@@ -313,7 +314,7 @@
 			<div class="head">
 				<p class="line">
 					Journée <b>{hhmm(span.start)} → {hhmm(span.end)}</b> · <b>{duration(span.seconds)}</b>
-					<small>· {duration(counted)} comptées{#if span.seconds - counted >= 600}{' · '}{duration(span.seconds - counted)} non attribuées{/if}</small>
+					<small>· {duration(counted)} comptées</small>
 				</p>
 				<button class="plain link" onclick={openClosing}>Modifier</button>
 			</div>
@@ -468,6 +469,10 @@
 		align-items: center;
 	}
 	.sum {
+		font-size: 0.875rem;
+	}
+	.holes-title {
+		margin: 0 0 -6px;
 		font-size: 0.875rem;
 	}
 	.holes {
