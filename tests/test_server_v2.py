@@ -504,3 +504,36 @@ def test_entry_time_range_counts_once_and_follows_the_entry(client, tree):
     ok(client.patch(f"/api/v2/entries/{plain['id']}", json={"expected_revision": plain["revision"], "body": "z"}))
     assert ok(client.get("/api/v2/days/2026-10-15"))["blocks"] == []
 
+
+
+def test_day_frame_start_end_priorities_and_tomorrow(client, tree):
+    dico = tree["dico"]["id"]
+    task = ok(client.post("/api/v2/tasks", json={"title": "Relire le chapitre 3", "project_id": dico}), 201)
+    empty = ok(client.get("/api/v2/days/2026-10-15/frame?tz=Europe/Paris"))
+    assert (empty["started_at"], empty["priorities"], empty["span"], empty["from_before"]) == (None, [], None, None)
+    frame = ok(client.patch("/api/v2/days/2026-10-15/frame?tz=Europe/Paris", json={
+        "started_at": "2026-10-15T08:45:00+02:00",
+        "priorities": [{"task_id": task["id"]}, {"text": "Appeler la MSH"}]}))
+    assert [p["text"] for p in frame["priorities"]] == ["Relire le chapitre 3", "Appeler la MSH"]
+    assert frame["priorities"][0]["task_status"] == "open" and frame["span"] is None  # no trace of an end yet
+    ok(client.post("/api/v2/blocks", json={"start": "2026-10-15T09:00:00+02:00", "end": "2026-10-15T17:30:00+02:00",
+                                            "project_id": dico}), 201)
+    frame = ok(client.get("/api/v2/days/2026-10-15/frame?tz=Europe/Paris"))
+    assert frame["span"]["seconds"] == (8 * 60 + 45) * 60 and frame["span"]["estimated"] is True  # end from the block
+    frame = ok(client.patch("/api/v2/days/2026-10-15/frame?tz=Europe/Paris", json={
+        "ended_at": "2026-10-15T19:15:00+02:00", "tomorrow": "Finir la relecture"}))
+    assert frame["span"] == {**frame["span"], "seconds": 10 * 3600 + 30 * 60, "estimated": False}
+    assert frame["priorities"][1]["text"] == "Appeler la MSH"  # untouched by the patch
+    nxt = ok(client.get("/api/v2/days/2026-10-16/frame"))
+    assert nxt["from_before"] == {"day": "2026-10-15", "text": "Finir la relecture"}
+    week = ok(client.get("/api/v2/weeks/2026-10-15?tz=Europe/Paris"))
+    assert week["span_seconds"] == 10 * 3600 + 30 * 60 and week["days"][3]["span_estimated"] is False
+    # A day without a declared start or end: estimated from its activity alone.
+    ok(client.post("/api/v2/blocks", json={"start": "2026-10-16T10:00:00+02:00", "end": "2026-10-16T12:00:00+02:00",
+                                            "project_id": dico}), 201)
+    assert ok(client.get("/api/v2/days/2026-10-16/frame?tz=Europe/Paris"))["span"]["seconds"] == 7200
+    cleared = ok(client.patch("/api/v2/days/2026-10-15/frame", json={"ended_at": None}))
+    assert cleared["ended_at"] is None and cleared["started_at"]
+    assert client.patch("/api/v2/days/2026-10-15/frame", json={
+        "ended_at": "2026-10-15T08:00:00+02:00"}).status_code == 400
+    assert client.patch("/api/v2/days/2026-10-15/frame", json={"priorities": [{"text": " "}]}).status_code == 400

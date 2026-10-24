@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, tick as nextTick } from 'svelte';
 	import { page } from '$app/state';
 	import EventRow from '#lib/carnet/EventRow.svelte';
 	import DayPlan from '#lib/carnet/DayPlan.svelte';
+	import DayFrame from '#lib/carnet/DayFrame.svelte';
 	import DoneToday from '#lib/carnet/DoneToday.svelte';
 	import { v2, type AgendaEvent, type CountedBlock, type DayReport, type OverlapMode, type Target, type Task, type TimeBlock, type WeekReport } from '#lib/api2.js';
 	import {
@@ -292,7 +293,7 @@
 			.sort((a, b) => b.seconds - a.seconds);
 	});
 	let weekMax = $derived(Math.max(1, ...weekProjects.map((r) => r.seconds)));
-	let dayMax = $derived(Math.max(1, ...(week?.days.map((d) => d.presence_seconds) ?? [])));
+	let dayMax = $derived(Math.max(1, ...(week?.days.map((d) => Math.max(d.presence_seconds, d.span_seconds ?? 0)) ?? [])));
 	let weekCounted = $derived(week ? week.days.reduce((n, d) => n + d.presence_seconds, 0) : 0);
 	const LETTERS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 	/** « 19 au 25 octobre », « 26 octobre au 1er novembre ». */
@@ -334,6 +335,20 @@
 
 		{#if message}<p class="message" role="alert">{message}</p>{/if}
 		{#if info}<p class="info" role="status">{info}</p>{/if}
+
+		<DayFrame
+			{day}
+			tasks={openTasks}
+			{report}
+			onchanged={() => void load()}
+			onfillgap={async (start, end) => {
+				addDraft = { start, end, place: '', note: '' };
+				adding = true;
+				await nextTick();
+				document.getElementById('add-block')?.scrollIntoView({ block: 'center' });
+				(document.querySelector('#add-block select') as HTMLSelectElement | null)?.focus();
+			}}
+		/>
 
 		<div class="today">
 			{#if meetings.length}
@@ -447,7 +462,7 @@
 							{/each}
 						</ol>
 						{#if adding}
-							<form class="edit-form add" onsubmit={addBlock}>
+							<form class="edit-form add" id="add-block" onsubmit={addBlock}>
 								<label>De <input type="time" bind:value={addDraft.start} required /></label>
 								<label>à <input type="time" bind:value={addDraft.end} required /></label>
 								<label class="wide">Pour
@@ -476,11 +491,20 @@
 				</h2>
 				{#if span === 'week'}
 					{#if week}
-						<p class="presence"><b>{duration(weekCounted)}</b> <span>semaine du {weekSpan(week.start, week.end)}</span></p>
+						<p class="presence"><b>{duration(weekCounted)}</b> <span>comptées, semaine du {weekSpan(week.start, week.end)}</span></p>
+						{#if week.span_seconds}
+							<p class="amplitude">
+								Journées : <b>{duration(week.span_seconds)}</b>{#if week.days.some((d) => d.span_estimated)}{' '}<small>(estimées en partie d’après ton activité)</small>{/if}
+							</p>
+						{/if}
 						<div class="week-days" aria-label="Temps par jour">
 							{#each week.days as d, i (d.day)}
-								<a href="/journee/{d.day}" class="wd" class:current={d.day === day} title="{longDate(d.day)} : {duration(d.presence_seconds)}">
-									<span class="wd-bar"><span style="height: {(d.presence_seconds / dayMax) * 100}%"></span></span>
+								<a href="/journee/{d.day}" class="wd" class:current={d.day === day}
+									title="{longDate(d.day)} : {duration(d.presence_seconds)} comptées{d.span_seconds ? ` sur une journée de ${duration(d.span_seconds)}${d.span_estimated ? ' (estimée)' : ''}` : ''}">
+									<span class="wd-bar">
+										{#if d.span_seconds}<span class="span" style="height: {(d.span_seconds / dayMax) * 100}%"></span>{/if}
+										<span class="counted" style="height: {(d.presence_seconds / dayMax) * 100}%"></span>
+									</span>
 									<span class="wd-l">{LETTERS[i]}</span>
 								</a>
 							{/each}
@@ -644,13 +668,30 @@
 		border-radius: 3px;
 		overflow: hidden;
 	}
+	.wd-bar {
+		position: relative;
+	}
 	.wd-bar span {
+		position: absolute;
+		left: 0;
+		bottom: 0;
 		width: 100%;
+	}
+	.wd-bar .span {
+		background: var(--accent);
+		opacity: 0.18;
+	}
+	.wd-bar .counted {
 		background: var(--accent);
 		opacity: 0.75;
 	}
-	.wd.current .wd-bar span {
+	.wd.current .wd-bar .counted {
 		opacity: 1;
+	}
+	.amplitude {
+		margin: 0;
+		font-family: var(--sans);
+		font-size: 0.875rem;
 	}
 	.cols {
 		display: grid;

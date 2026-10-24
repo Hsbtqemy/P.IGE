@@ -262,6 +262,15 @@ class Entry:
 
 
 @dataclass(frozen=True)
+class DayFrame:
+    day: str
+    started_at: datetime | None
+    ended_at: datetime | None
+    priorities: list[dict[str, Any]]
+    tomorrow: str
+
+
+@dataclass(frozen=True)
 class EntryVersion:
     entry_id: str
     version: int
@@ -2226,6 +2235,91 @@ class ModelStore:
             by_space[c.block.space_id] = by_space.get(c.block.space_id, 0) + c.counted_seconds
             by_project[c.block.project_id] = by_project.get(c.block.project_id, 0) + c.counted_seconds
         return DayReport(day, counted, presence_seconds(spans), by_space, by_project, stale)
+
+    # ------------------------------------------------------------ day frame
+
+    def day_frame(self, day: date) -> DayFrame:
+        row = self.conn.execute("SELECT * FROM day_frames WHERE day = ?", (day.isoformat(),)).fetchone()
+        if row is None:
+            return DayFrame(day.isoformat(), None, None, [], "")
+        return DayFrame(
+            row["day"],
+            _parse_utc(row["started_at"]) if row["started_at"] else None,
+            _parse_utc(row["ended_at"]) if row["ended_at"] else None,
+            json.loads(row["priorities"]),
+            row["tomorrow"],
+        )
+
+    _UNSET: Any = object()
+
+    def set_day_frame(
+        self,
+        day: date,
+        *,
+        started_at: datetime | None = _UNSET,
+        ended_at: datetime | None = _UNSET,
+        priorities: list[dict[str, Any]] | None = None,
+        tomorrow: str | None = None,
+    ) -> DayFrame:
+        """Change what is given (None clears a time); the rest stays."""
+        with self._tx():
+            current = self.day_frame(day)
+            start = current.started_at if started_at is self._UNSET else started_at
+            end = current.ended_at if ended_at is self._UNSET else ended_at
+            if start is not None:
+                start = _aware(start, "started_at")
+            if end is not None:
+                end = _aware(end, "ended_at")
+            if start and end and end <= start:
+                raise InvalidOperationError("a day must end after it starts")
+            if start and end and end - start > MAX_BLOCK:
+                raise InvalidOperationError("a day cannot last more than 24 hours")
+            items = current.priorities if priorities is None else [self._priority(p) for p in priorities]
+            note = current.tomorrow if tomorrow is None else tomorrow.strip()
+            self.conn.execute(
+                "INSERT INTO day_frames(day, started_at, ended_at, priorities, tomorrow, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(day) DO UPDATE SET started_at = excluded.started_at,"
+                " ended_at = excluded.ended_at, priorities = excluded.priorities, tomorrow = excluded.tomorrow,"
+                " updated_at = excluded.updated_at",
+                (day.isoformat(), _utc(start) if start else None, _utc(end) if end else None,
+                 json.dumps(items, ensure_ascii=False), note, _utc(_now())),
+            )
+            return self.day_frame(day)
+
+    def _priority(self, item: dict[str, Any]) -> dict[str, Any]:
+        text = str(item.get("text") or "").strip()[:300]
+        task_id = item.get("task_id") or None
+        if task_id is not None:
+            text = text or self.get_task(str(task_id)).title[:300]
+        if not text:
+            raise InvalidOperationError("a priority needs a text or a task")
+        return {"text": text, "task_id": task_id, "done": bool(item.get("done")), "carried": bool(item.get("carried"))}
+
+    def previous_tomorrow(self, day: date, *, within: int = 14) -> DayFrame | None:
+        """The last earlier day (within ``within`` days) that left something for « demain »."""
+        row = self.conn.execute(
+            "SELECT day FROM day_frames WHERE day < ? AND day >= ? AND tomorrow != '' ORDER BY day DESC LIMIT 1",
+            (day.isoformat(), (day - timedelta(days=within)).isoformat()),
+        ).fetchone()
+        return self.day_frame(date.fromisoformat(row["day"])) if row else None
+
+    def day_traces(self, day: date, tz: tzinfo) -> tuple[datetime, datetime] | None:
+        """First and last sign of work on a local day: entries written, time counted, tasks
+        done. Stands in for a start or an end that was not declared."""
+        win_start, win_end = self._day_window(day, tz)
+        lo, hi = _utc(win_start), _utc(win_end)
+        moments: list[str] = []
+        for sql, args in (
+            ("SELECT MIN(created_at), MAX(created_at) FROM entries WHERE created_at >= ? AND created_at < ?", (lo, hi)),
+            ("SELECT MIN(start_at), MAX(start_at) FROM time_blocks WHERE start_at >= ? AND start_at < ?", (lo, hi)),
+            ("SELECT MIN(end_at), MAX(end_at) FROM time_blocks WHERE end_at > ? AND end_at <= ?", (lo, hi)),
+            ("SELECT MIN(done_at), MAX(done_at) FROM tasks WHERE done_at >= ? AND done_at < ?", (lo, hi)),
+        ):
+            a, b = self.conn.execute(sql, args).fetchone()
+            moments += [m for m in (a, b) if m]
+        if not moments:
+            return None
+        return _parse_utc(min(moments)), _parse_utc(max(moments))
 
     def validate_day(self, day: date, tz: tzinfo) -> int:
         """Mark the day's finished blocks as checked. Returns how many were marked."""
