@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { ApiError } from '#lib/api.js';
 	import { v2, type Entry, type Place, type ProjectView, type Task, type TaskStatus, type TaskView } from '#lib/api2.js';
 	import { onMailFiled } from '#lib/carnet/thunderbird.svelte.js';
@@ -60,14 +61,40 @@
 				project = p;
 				tasks = t;
 				entries = e;
-				// /taches and Ma journée link here with ?tache=<id>: open that task right away.
-				const wanted = t.find((task) => task.id === page.url.searchParams.get('tache'));
-				if (wanted) void openTask(wanted);
 			})
 			.catch((err) => {
 				if (current !== id) return;
 				loadError = err instanceof ApiError && err.status === 404 ? 'Projet introuvable.' : failure(err, 'Projet non chargé : ');
 			});
+	});
+
+	// Links from elsewhere (Ma journée, Tâches, the journal…) say ?tache=<id>: open that task,
+	// also when the page is already shown and only the task changes.
+	let wantedTask = $derived(page.url.searchParams.get('tache'));
+	async function elsewhereTask(taskId: string, moved: (t: { project_id: string | null; space_id: string }) => boolean) {
+		try {
+			const t = await v2.task(taskId);
+			if (moved(t)) await goto(`${t.project_id ? `/projets/${t.project_id}` : `/espaces/${t.space_id}`}?tache=${t.id}`, { replaceState: true });
+		} catch {
+			/* deleted task: the page simply shows the project */
+		}
+	}
+	let shownWanted = '';
+	$effect(() => {
+		const wanted = wantedTask;
+		const list = tasks;
+		if (!project || !wanted || `${id}:${wanted}` === shownWanted) return;
+		const task = list.find((t) => t.id === wanted);
+		if (!task) {
+			// Not an open task of this page: the link may point to the wrong place (a task moved
+			// since): go where the task is.
+			shownWanted = `${id}:${wanted}`;
+			void elsewhereTask(wanted, (t) => t.project_id !== id);
+			return;
+		}
+		shownWanted = `${id}:${wanted}`;
+		if (openId !== task.id) void openTask(task);
+		void tick().then(() => document.getElementById(`task-${task.id}`)?.scrollIntoView({ block: 'center' }));
 	});
 
 	/** Run a write; on failure show why and reload the lists so the page matches the server. */
@@ -512,6 +539,7 @@
 					{#each tasks as task, i (task.id)}
 						{@const late = task.due_date && task.due_date < todayIso()}
 						<li
+							id="task-{task.id}"
 							class:open={openId === task.id}
 							class:dragging={dragId === task.id}
 							class:drop-before={over?.id === task.id && !over.after}

@@ -7,7 +7,7 @@
 // - Follow-up: a reply sent to a mail a task came from goes into that task's « Suivi »
 //   (option, on by default); « Ajouter au suivi de la tâche » does it by hand for any mail.
 
-import { entryForMail, followUpFor, menuItems, parseAuthor, parseMenuId, parseReferences, plainBody, stableId } from './lib.js';
+import { elsewhere, entryForMail, followUpFor, menuItems, parseAuthor, parseMenuId, parseReferences, plainBody, stableId } from './lib.js';
 
 const SPACE_NAME = 'pige';
 const ROOT_MENU = 'pige';
@@ -245,14 +245,21 @@ async function fileMail(header, action, target, people) {
     entryForMail({ id: entryId, header, text, attachments, target, personIds: known ? [known.id] : [] })
   );
   if (action === 'task') {
+    // A mail already in P.IGE (noted earlier, elsewhere) comes back as it was: the task goes
+    // where it was asked, and the mail follows unless it belongs to another task's thread.
+    if (elsewhere(entry, target) && !entry.task_id) {
+      await api('POST', `/api/v2/entries/${entry.id}/move`, target);
+    }
     const taskId = msgId ? await stableId(msgId, 'task') : crypto.randomUUID().replaceAll('-', '');
-    await api('POST', '/api/v2/tasks', {
+    const task = await api('POST', '/api/v2/tasks', {
       id: taskId,
       title: (header.subject || '(sans objet)').trim().slice(0, 500),
-      ...(entry.project_id ? { project_id: entry.project_id } : { space_id: entry.space_id }),
+      ...target,
       origin_entry_id: entry.id,
       person_ids: known ? [known.id] : []
     });
+    // The same mail made a task before: filing it again moves that task here.
+    if (elsewhere(task, target)) await api('POST', `/api/v2/tasks/${task.id}/move`, target);
   }
   return entry;
 }

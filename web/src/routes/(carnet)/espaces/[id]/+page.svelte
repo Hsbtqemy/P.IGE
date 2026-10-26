@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { ApiError } from '#lib/api.js';
 	import { v2, type Entry, type Task } from '#lib/api2.js';
 	import { onMailFiled } from '#lib/carnet/thunderbird.svelte.js';
@@ -54,8 +55,6 @@
 			]);
 			if (current !== id) return;
 			tasks = t;
-			const wanted = page.url.searchParams.get('tache');
-			if (wanted && t.some((task) => task.id === wanted)) opened = wanted;
 			// The space's own paragraphs: those of its projects are on the project pages.
 			entries = e;
 			loaded = true;
@@ -64,6 +63,32 @@
 			loadError = err instanceof ApiError && err.status === 404 ? 'Espace introuvable.' : failure(err, 'Espace non chargé : ');
 		}
 	}
+
+	// ?tache=<id> (from Ma journée, Tâches, the journal…): show that task, also when only the
+	// task changes on a page already shown; a reload does not reopen what was closed.
+	let wantedTask = $derived(page.url.searchParams.get('tache'));
+	async function elsewhereTask(taskId: string, moved: (t: { project_id: string | null; space_id: string }) => boolean) {
+		try {
+			const t = await v2.task(taskId);
+			if (moved(t)) await goto(`${t.project_id ? `/projets/${t.project_id}` : `/espaces/${t.space_id}`}?tache=${t.id}`, { replaceState: true });
+		} catch {
+			/* deleted task: the page simply shows the project */
+		}
+	}
+	let shownWanted = '';
+	$effect(() => {
+		const wanted = wantedTask;
+		const list = tasks;
+		if (!loaded || !wanted || `${id}:${wanted}` === shownWanted) return;
+		if (!list.some((t) => t.id === wanted)) {
+			shownWanted = `${id}:${wanted}`;
+			void elsewhereTask(wanted, (t) => !!t.project_id || t.space_id !== id);
+			return;
+		}
+		shownWanted = `${id}:${wanted}`;
+		opened = wanted;
+		void tick().then(() => document.getElementById(`task-${wanted}`)?.scrollIntoView({ block: 'center' }));
+	});
 
 	onMount(() => onMailFiled(() => void load()));
 
@@ -188,7 +213,7 @@
 					<p class="muted">Chargement…</p>
 				{:else}
 					{#each tasks as task (task.id)}
-						<div class="row">
+						<div class="row" id="task-{task.id}">
 							<input type="checkbox" class="check" onchange={() => done(task)} aria-label="Terminer « {task.title} »" />
 							<button class="title plain open" onclick={() => (opened = opened === task.id ? null : task.id)} aria-expanded={opened === task.id}>
 								{task.title} <small aria-hidden="true">{opened === task.id ? '▴' : task.origin_entry_id ? '✉' : '▾'}</small>
