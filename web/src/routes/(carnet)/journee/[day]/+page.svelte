@@ -341,6 +341,7 @@
 			tasks={openTasks}
 			{report}
 			onchanged={() => void load()}
+			refreshKey={doneKey}
 			onfillgap={async (start, end) => {
 				addDraft = { start, end, place: '', note: '' };
 				adding = true;
