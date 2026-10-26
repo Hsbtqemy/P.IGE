@@ -1,9 +1,9 @@
 <script lang="ts">
 	// What was finished on a day (by the moment it was ticked), grouped by project: the day's
 	// record in the journal and in Ma journée. « Rouvrir » undoes a click.
-	import { v2, type Task } from '../api2.js';
+	import { v2, type Priority, type Task } from '../api2.js';
 	import { byPlace } from './plan.js';
-	import { failure, placeName, reload, shiftDay } from './state.svelte.js';
+	import { failure, placeName, reload, shiftDay, timeZone } from './state.svelte.js';
 
 	let {
 		day,
@@ -13,14 +13,24 @@
 	}: { day: string; title?: string; refreshKey?: number; onreopen?: () => void } = $props();
 
 	let tasks = $state<Task[]>([]);
+	// Priorities of the day's frame written as plain text and ticked: done too, though not tasks
+	// (a priority that is a task shows up as that task).
+	let priorities = $state<Priority[]>([]);
+	let all = $state<Priority[]>([]);
 	let message = $state('');
 
 	async function load(target: string) {
 		try {
 			const start = new Date(`${target}T00:00:00`);
 			const end = new Date(`${shiftDay(target, 1)}T00:00:00`);
-			const list = await v2.doneTasks(start.toISOString());
-			if (target === day) tasks = list.filter((t) => t.done_at && new Date(t.done_at) < end);
+			const [list, frame] = await Promise.all([
+				v2.doneTasks(start.toISOString()),
+				v2.frame(target, timeZone()).catch(() => null)
+			]);
+			if (target !== day) return;
+			tasks = list.filter((t) => t.done_at && new Date(t.done_at) < end);
+			all = frame?.priorities ?? [];
+			priorities = all.filter((p) => !p.task_id && p.done);
 		} catch (err) {
 			if (target === day) message = failure(err, 'Tâches terminées non chargées : ');
 		}
@@ -43,14 +53,47 @@
 		}
 	}
 
+	async function reopenPriority(p: Priority) {
+		message = '';
+		try {
+			const next = all.map((x) => ({ text: x.text, task_id: x.task_id, done: x === p ? false : x.done, carried: x.carried ?? false }));
+			const frame = await v2.updateFrame(day, timeZone(), { priorities: next });
+			all = frame.priorities;
+			priorities = all.filter((x) => !x.task_id && x.done);
+			onreopen?.();
+		} catch (err) {
+			message = failure(err, 'Priorité non rouverte : ');
+		}
+	}
+
 	const clock = (iso: string) => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 </script>
 
-{#if tasks.length || message}
+{#if tasks.length || priorities.length || message}
 	<section class="done" aria-label={title}>
-		<h2>{title} <small>{tasks.length} tâche{tasks.length > 1 ? 's' : ''} terminée{tasks.length > 1 ? 's' : ''}</small></h2>
+		<h2>
+			{title}
+			<small>
+				{#if tasks.length}{tasks.length} tâche{tasks.length > 1 ? 's' : ''} terminée{tasks.length > 1 ? 's' : ''}{/if}{#if tasks.length && priorities.length}{' · '}{/if}{#if priorities.length}{priorities.length} priorité{priorities.length > 1 ? 's' : ''}{/if}
+			</small>
+		</h2>
 		{#if message}<p class="warn" role="alert">{message}</p>{/if}
-		{#each byPlace(tasks) as g (g.key)}
+		{#if priorities.length}
+			<div class="place">
+				<h3>Priorités du jour</h3>
+				<ul>
+					{#each priorities as p, i (i)}
+						<li>
+							<span class="tick" aria-hidden="true">✓</span>
+							<span class="title">{p.text}</span>
+							<small></small>
+							<button class="reopen" onclick={() => reopenPriority(p)} title="Cochée par erreur ? La remettre à faire">Rouvrir</button>
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
+				{#each byPlace(tasks) as g (g.key)}
 			<div class="place">
 				<h3>
 					<a href={g.target.project_id ? `/projets/${g.target.project_id}` : `/espaces/${g.target.space_id}`}>{placeName(g.target)}</a>

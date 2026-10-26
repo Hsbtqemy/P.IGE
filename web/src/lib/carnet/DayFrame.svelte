@@ -12,13 +12,15 @@
 		tasks,
 		report,
 		onfillgap,
-		onchanged
+		onchanged,
+		refreshKey = 0
 	}: {
 		day: string;
 		tasks: Task[];
 		report: DayReport | null;
 		onfillgap: (start: string, end: string) => void;
 		onchanged: () => void;
+		refreshKey?: number; // changed elsewhere (a priority reopened in « Fait aujourd’hui »)
 	} = $props();
 
 	let frame = $state<DayFrame | null>(null);
@@ -50,6 +52,23 @@
 			.catch((err) => {
 				if (current === day) message = failure(err, 'Cadre de la journée non chargé : ');
 			});
+	});
+
+	// Refetch quietly when told something changed elsewhere; what is being edited stays open.
+	let seenKey: number | null = null;
+	$effect(() => {
+		const key = refreshKey;
+		const current = day;
+		if (seenKey === null || key === seenKey) {
+			seenKey = key;
+			return;
+		}
+		seenKey = key;
+		v2.frame(current, timeZone())
+			.then((f) => {
+				if (current === day && !busy) frame = f;
+			})
+			.catch(() => {});
 	});
 
 	let isToday = $derived(day === todayIso());
@@ -149,7 +168,7 @@
 			}
 			return;
 		}
-		await save({ priorities: frame.priorities.map((x, j) => (j === i ? { ...plain(x), done: !x.done } : plain(x))) });
+		if (await save({ priorities: frame.priorities.map((x, j) => (j === i ? { ...plain(x), done: !x.done } : plain(x))) })) onchanged();
 	}
 
 	/** Put an unfinished priority on tomorrow's list; it stays here, marked « → demain ». */
