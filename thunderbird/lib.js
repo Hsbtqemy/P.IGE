@@ -93,6 +93,13 @@ export function parseMenuId(id) {
   return null;
 }
 
+/** Is a task or an entry ({project_id, space_id}) somewhere else than the place chosen? */
+export function elsewhere(item, target) {
+  if (!item || !target) return false;
+  if (target.project_id) return item.project_id !== target.project_id;
+  return Boolean(item.project_id) || item.space_id !== target.space_id;
+}
+
 /** The mail's text kept in P.IGE: long enough to work from the phone, without the thread below. */
 export const MAIL_TEXT_MAX = 20_000;
 

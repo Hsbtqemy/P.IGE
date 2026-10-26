@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { defaultSpace, entryForMail, excerpt, followUpFor, formatSize, localDay, mailFooter, parseReferences, menuItems, parseAuthor, parseMenuId, plainBody, stableId } from '../lib.js';
+import { defaultSpace, elsewhere, entryForMail, excerpt, followUpFor, formatSize, localDay, mailFooter, parseReferences, menuItems, parseAuthor, parseMenuId, plainBody, stableId } from '../lib.js';
 
 const tree = {
   spaces: [
@@ -117,4 +117,13 @@ test('references and follow-up payload', () => {
   assert.equal(p.subject, 'Re: Devis');
   assert.equal(p.body, 'Bonjour,\nci-joint le devis.');
   assert.equal(p.attachments, 'devis.pdf (2 Ko)');
+});
+
+test('a task or a mail is elsewhere than the place chosen', () => {
+  assert.equal(elsewhere({ project_id: 'p1', space_id: 's1' }, { project_id: 'p1' }), false);
+  assert.equal(elsewhere({ project_id: 'p2', space_id: 's1' }, { project_id: 'p1' }), true);
+  assert.equal(elsewhere({ project_id: null, space_id: 's2' }, { space_id: 's2' }), false);
+  assert.equal(elsewhere({ project_id: 'p1', space_id: 's1' }, { space_id: 's1' }), true);
+  assert.equal(elsewhere({ project_id: null, space_id: 's2' }, { project_id: 'p1' }), true);
+  assert.equal(elsewhere(null, { project_id: 'p1' }), false);
 });
