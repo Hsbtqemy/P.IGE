@@ -58,6 +58,7 @@ export interface Entry {
 	updated_at: string;
 	version: number;
 	revision: number;
+	cancelled?: boolean;
 	people: Person[];
 	tags: Tag[];
 	/** A code day (code journal): the day's commits by work item. */
@@ -374,6 +375,7 @@ export interface EntryPatch {
 	kind?: EntryKind;
 	start_time?: string | null;
 	end_time?: string | null;
+	cancelled?: boolean;
 	people?: string[];
 	tags?: string[];
 }

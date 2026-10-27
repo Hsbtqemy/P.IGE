@@ -553,3 +553,17 @@ def test_entries_written_ahead_are_planned(client, tree):
     assert [e["id"] for e in planned] == [ahead["id"]] and planned[0]["start_time"] == "09:30"
     assert ok(client.get(f"/api/v2/planned?start={(today + _td(days=2)).isoformat()}&days=3")) == []
     assert client.get(f"/api/v2/planned?start={later}&days=100").status_code == 422
+
+
+def test_a_cancelled_entry_counts_no_time_and_can_be_restored(client, tree):
+    dico = tree["dico"]["id"]
+    e = ok(client.post("/api/v2/entries", json={
+        "entry_date": "2026-10-15", "project_id": dico, "title": "Comité", "body": "x",
+        "start_time": "14:00", "end_time": "16:00"}), 201)
+    assert e["cancelled"] is False
+    assert len(ok(client.get("/api/v2/days/2026-10-15"))["blocks"]) == 1
+    e = ok(client.patch(f"/api/v2/entries/{e['id']}", json={"expected_revision": e["revision"], "cancelled": True}))
+    assert e["cancelled"] is True and ok(client.get("/api/v2/days/2026-10-15"))["blocks"] == []
+    e = ok(client.patch(f"/api/v2/entries/{e['id']}", json={"expected_revision": e["revision"], "cancelled": False}))
+    assert len(ok(client.get("/api/v2/days/2026-10-15"))["blocks"]) == 1
+    assert client.patch(f"/api/v2/entries/{e['id']}", json={"expected_revision": e["revision"], "cancelled": None}).status_code == 400

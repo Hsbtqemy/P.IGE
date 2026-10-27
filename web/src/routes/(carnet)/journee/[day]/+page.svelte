@@ -364,7 +364,7 @@
 					{#if allDay.length}
 						<p class="all-day"><span>Toute la journée</span> {allDay.map((e) => e.title).join(' · ')}</p>
 					{/if}
-					{#each planned as e (e.id)}<PlannedRow entry={e} />{/each}
+					{#each planned as e (e.id)}<PlannedRow entry={e} onchanged={() => void load()} />{/each}
 					{#each meetings as m (m.id)}
 						<EventRow
 							event={m}

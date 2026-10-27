@@ -506,6 +506,7 @@
 							</div>
 						{:else}
 							<div class="body">
+								{#if entry.cancelled}<span class="kind">Annulé</span>{/if}
 								{#if entry.kind === 'meeting'}<span class="kind">Réunion</span>{/if}
 								{#if entry.code}
 									<p class="code-title"><b>{entry.title}</b></p>
