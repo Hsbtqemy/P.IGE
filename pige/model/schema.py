@@ -435,6 +435,11 @@ MIGRATIONS: tuple[str, ...] = (
         CHECK (ended_at IS NULL OR started_at IS NULL OR ended_at > started_at)
     );
     """,
+    # ------------------------------------------------------------------ 10
+    # Something planned that did not happen: kept as a trace, struck through, no time counted.
+    """
+    ALTER TABLE entries ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0 CHECK (cancelled IN (0, 1));
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

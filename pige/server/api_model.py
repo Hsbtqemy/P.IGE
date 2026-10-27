@@ -167,6 +167,7 @@ class EntryPatch(_In):
     start_time: str | None = OptTime  # "" clears it
     end_time: str | None = OptTime
     decision_applied: bool | None = None
+    cancelled: bool | None = None  # planned, did not happen: struck through, no time counted
     people: list[ShortText] | None = Field(default=None, max_length=50)
     person_ids: list[Annotated[str, Field(pattern=HEX)]] | None = Field(default=None, max_length=50)
     tags: list[ShortText] | None = Field(default=None, max_length=50)
@@ -688,7 +689,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
 
     @router.patch("/entries/{entry_id}")
     def update_entry(entry_id: IdPath, body: EntryPatch) -> dict[str, Any]:
-        _not_null(body, ("kind", "entry_date", "decision_applied", "people", "person_ids", "tags"))
+        _not_null(body, ("kind", "entry_date", "decision_applied", "cancelled", "people", "person_ids", "tags"))
         cleared = _cleared(body, ("title", "body", "start_time", "end_time"))
         with store.transaction():
             store.update_entry(
@@ -701,6 +702,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
                 start_time=cleared.get("start_time", body.start_time),
                 end_time=cleared.get("end_time", body.end_time),
                 decision_applied=body.decision_applied,
+                cancelled=body.cancelled,
                 autosave=body.autosave,
             )
             if body.people is not None or body.person_ids is not None:
@@ -709,7 +711,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
                 store.set_entry_tags(entry_id, body.tags)
             # A range set by hand counts its time (Ma journée), and the block follows the entry.
             # A meeting noted from the agenda counts only once its range is touched.
-            ranged = {"start_time", "end_time", "entry_date"} & body.model_fields_set
+            ranged = {"start_time", "end_time", "entry_date", "cancelled"} & body.model_fields_set
             if ranged or store.entry_block(entry_id) is not None:
                 store.sync_entry_block(entry_id, _zone(default_timezone))
             return _entry_view(entry_id)

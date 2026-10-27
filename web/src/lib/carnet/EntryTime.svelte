@@ -16,7 +16,7 @@
 	let saving = $state(false);
 	let input: HTMLInputElement | undefined = $state();
 
-	let minutes = $derived(rangeMinutes(entry.start_time, entry.end_time));
+	let minutes = $derived(entry.cancelled ? null : rangeMinutes(entry.start_time, entry.end_time)); // cancelled: nothing counted
 
 	async function open() {
 		text = entry.start_time ? formatRange(entry.start_time, entry.end_time) + (entry.end_time ? '' : '-') : '';

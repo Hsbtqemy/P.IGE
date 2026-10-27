@@ -151,7 +151,7 @@
 </script>
 
 {#snippet ahead(iso: string)}
-	{#each plannedOn(iso) as e (e.id)}<PlannedRow entry={e} />{/each}
+	{#each plannedOn(iso) as e (e.id)}<PlannedRow entry={e} onchanged={(u) => (planned = planned.map((x) => (x.id === u.id ? u : x)))} />{/each}
 {/snippet}
 
 {#snippet due(iso: string)}
@@ -237,7 +237,7 @@
 							{/each}
 							{#if c.list.length > 3}<span class="more">+{c.list.length - 3}</span>{/if}
 							{#each plannedOn(c.iso).slice(0, 2) as e (e.id)}
-								<span class="chip planned-chip">{#if e.start_time}<b>{e.start_time.replace(/^0/, '')}</b>{/if} {e.title || e.body.slice(0, 40)}</span>
+								<span class="chip planned-chip" class:gone={e.cancelled}>{#if e.start_time}<b>{e.start_time.replace(/^0/, '')}</b>{/if} {e.title || e.body.slice(0, 40)}</span>
 							{/each}
 							{#if dueOn(c.iso).length}<span class="due-mark">{dueOn(c.iso).length} à rendre</span>{/if}
 							{#if c.list.length}<span class="dots" aria-hidden="true">{#each c.list.slice(0, 4) as e (e.id)}<i style="background: {e.color || 'var(--decision)'}"></i>{/each}</span>{/if}

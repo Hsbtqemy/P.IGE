@@ -259,6 +259,7 @@ class Entry:
     updated_at: str
     version: int
     revision: int
+    cancelled: bool = False
 
 
 @dataclass(frozen=True)
@@ -361,6 +362,12 @@ class SearchHit:
     entry_date: str | None = None  # entries only
     status: str | None = None  # tasks only
     done_at: str | None = None  # finished tasks only
+
+
+def _entry_row(row: sqlite3.Row) -> Entry:
+    applied = row["decision_applied"]
+    return cast(Entry, _row_to(Entry, row, decision_applied=None if applied is None else bool(applied),
+                               cancelled=bool(row["cancelled"])))
 
 
 def _row_to(cls: Any, row: sqlite3.Row, **overrides: Any) -> Any:
@@ -1144,14 +1151,12 @@ class ModelStore:
         for r in rows:
             written = _parse_utc(r["created_at"]).astimezone(tz).date().isoformat()
             if written < r["entry_date"]:
-                applied = r["decision_applied"]
-                out.append(_row_to(Entry, r, decision_applied=None if applied is None else bool(applied)))
+                out.append(_entry_row(r))
         return out
 
     def get_entry(self, entry_id: str) -> Entry:
         row = self._require("entries", entry_id)
-        applied = row["decision_applied"]
-        return _row_to(Entry, row, decision_applied=None if applied is None else bool(applied))
+        return _entry_row(row)
 
     def entry_exists(self, entry_id: str) -> bool:
         return self._one("SELECT 1 FROM entries WHERE id = ?", (entry_id,)) is not None
@@ -1174,6 +1179,7 @@ class ModelStore:
         start_time: str | None = None,
         end_time: str | None = None,
         decision_applied: bool | None = None,
+        cancelled: bool | None = None,
         expected_revision: int | None = None,
         autosave: bool = False,
     ) -> Entry:
@@ -1216,6 +1222,8 @@ class ModelStore:
                 if (kind or current.kind) != "decision":
                     raise InvalidOperationError("only decisions can be applied")
                 changes["decision_applied"] = int(decision_applied)
+            if cancelled is not None and cancelled != current.cancelled:
+                changes["cancelled"] = int(cancelled)
             if not changes:
                 return current
             now = _utc(_now())
@@ -1362,8 +1370,7 @@ class ModelStore:
         params += [int(limit), int(offset)]
         out = []
         for r in self.conn.execute(sql, params).fetchall():
-            applied = r["decision_applied"]
-            out.append(_row_to(Entry, r, decision_applied=None if applied is None else bool(applied)))
+            out.append(_entry_row(r))
         return out
 
     def entry_days(self, month: str) -> list[str]:
@@ -2193,7 +2200,7 @@ class ModelStore:
     @staticmethod
     def _entry_span(entry: Entry, tz: tzinfo) -> tuple[datetime, datetime] | None:
         """« 09:30 »–« 11:00 » on the entry's day, as instants; an end before the start is the next day."""
-        if not entry.start_time or not entry.end_time:
+        if entry.cancelled or not entry.start_time or not entry.end_time:
             return None
         day = date.fromisoformat(entry.entry_date)
         start = datetime.combine(day, time.fromisoformat(entry.start_time), tzinfo=tz)
