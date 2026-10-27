@@ -3,6 +3,7 @@
 	// when long, with a link to the editor.
 	import type { Entry } from '../api2.js';
 	import { toHtml } from './writing/export.js';
+	import { showRange } from './timerange.js';
 
 	let { entry, heading = true }: { entry: Entry; heading?: boolean } = $props();
 	let open = $state(false);
@@ -26,6 +27,12 @@
 		<small>{heading ? '· ' : 'Texte long, '}{words} mots</small>
 		<a href="/ecrire/{entry.id}">Ouvrir dans l’éditeur →</a>
 	</p>
+	{#if entry.about}
+		{@const a = entry.about}
+		<p class="about">
+			Notes de <a href={a.kind === 'event' ? `/agenda/${a.day}` : `/journal/${a.day}#e-${a.entry_id}`}>{a.title}</a>{#if a.start_time}{' · '}{showRange(a.start_time, a.end_time)}{/if}{#if a.location}{' · '}{a.location}{/if}
+		</p>
+	{/if}
 	<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitised by DOMPurify in toHtml -->
 	<div class="rendered" class:folded={long && !open}>{@html html}</div>
 	{#if long}
@@ -56,6 +63,12 @@
 		margin-left: auto;
 		font-family: var(--sans);
 		font-size: 0.8125rem;
+	}
+	.about {
+		margin: 0;
+		font-family: var(--sans);
+		font-size: 0.8125rem;
+		color: var(--muted);
 	}
 	.rendered {
 		position: relative;

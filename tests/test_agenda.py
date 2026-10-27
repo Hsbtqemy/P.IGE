@@ -252,6 +252,25 @@ def test_a_meeting_is_counted_once_between_its_note_range_and_the_agenda(app):
     assert (counted["block_id"], counted["created"]) == (own["block"]["id"], False)
     assert len(day()["blocks"]) == 1
 
+
+def test_notes_for_a_meeting_are_a_long_text_linked_to_it(app):
+    c, project, paul, week = _agenda_with_meeting(app)
+    meeting = next(e for e in week if e["title"] == "Point FoReLLIS")
+    made = c.post(f"/api/v2/agenda/{meeting['id']}/notes?tz=Europe/Paris", json={"project_id": project["id"]}, headers=WEB).json()
+    assert made["created"] is True and made["event"]["notes"]["id"] == made["entry_id"]
+    text = c.get(f"/api/v2/entries/{made['entry_id']}").json()
+    assert text["source"] == "writing" and text["project_id"] == project["id"]
+    assert "**Lieu :** MSHS salle 2" in text["body"] and "10h–11h30" in text["body"]
+    assert text["about"]["kind"] == "event" and text["about"]["event_id"] == meeting["id"]
+    again = c.post(f"/api/v2/agenda/{meeting['id']}/notes", json={}, headers=WEB).json()
+    assert (again["entry_id"], again["created"]) == (made["entry_id"], False)
+    # A meeting already noted in one line: the long text points to that note.
+    other = c.get("/api/v2/agenda?start=2026-10-26&days=1&tz=Europe/Paris").json()[0]
+    noted = c.post(f"/api/v2/agenda/{other['id']}/note", json={}, headers=WEB).json()
+    longer = c.post(f"/api/v2/agenda/{other['id']}/notes", json={}, headers=WEB).json()
+    assert longer["event"]["entry_id"] == noted["entry_id"] and longer["event"]["notes"]["id"] == longer["entry_id"]
+    assert c.get(f"/api/v2/entries/{longer['entry_id']}").json()["about"]["event_id"] == other["id"]
+
 def test_a_noted_meeting_is_filed_elsewhere_with_its_time(app):
     c, project, _paul, week = _agenda_with_meeting(app)
     meeting = next(e for e in week if e["title"] == "Point FoReLLIS")

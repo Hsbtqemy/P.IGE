@@ -59,6 +59,9 @@ export interface Entry {
 	version: number;
 	revision: number;
 	cancelled?: boolean;
+	about_entry_id?: string | null;
+	notes?: NoteRef | null; // the long text of notes taken for it
+	about?: About | null; // a long text: what it is the notes of
 	people: Person[];
 	tags: Tag[];
 	/** A code day (code journal): the day's commits by work item. */
@@ -342,6 +345,26 @@ export interface AgendaEvent {
 	place_source: 'filed' | 'event' | 'series' | null;
 	recurring: boolean;
 	series_filed: boolean;
+	/** The long text of notes taken for it, if any. */
+	notes?: NoteRef | null;
+}
+
+export interface NoteRef {
+	id: string;
+	title: string;
+}
+
+/** What notes are about: a calendar event or something planned in the journal. */
+export interface About {
+	kind: 'event' | 'entry';
+	event_id: string | null;
+	entry_id: string | null;
+	title: string;
+	day: string;
+	start_time: string | null;
+	end_time: string | null;
+	location: string | null;
+	people: string[];
 }
 
 export interface Tree {
@@ -458,6 +481,10 @@ export const v2 = {
 		request<{ entry_id: string; created: boolean; event: AgendaEvent }>('POST', `/api/v2/agenda/${id}/note?${q({ tz })}`, target),
 	placeEvent: (id: string, target: Target, series = false) =>
 		request<AgendaEvent>('POST', `/api/v2/agenda/${encodeURIComponent(id)}/place`, { ...target, series }),
+	eventNotes: (id: string, target: Target, tz: string) =>
+		request<{ entry_id: string; created: boolean; event: AgendaEvent }>('POST', `/api/v2/agenda/${encodeURIComponent(id)}/notes?${q({ tz })}`, target),
+	entryNotes: (id: string) => request<{ entry_id: string; created: boolean }>('POST', `/api/v2/entries/${id}/notes`),
+	setAbout: (id: string, about: { entry_id?: string; event_id?: string }) => request<Entry>('POST', `/api/v2/entries/${id}/about`, about),
 	countEvent: (id: string, target: Target) =>
 		request<{ block_id: string; created: boolean; event: AgendaEvent }>('POST', `/api/v2/agenda/${id}/count`, target),
 	tasksInProgress: () => request<Task[]>('GET', '/api/v2/tasks/in-progress'),

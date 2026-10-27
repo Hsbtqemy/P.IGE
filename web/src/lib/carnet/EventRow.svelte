@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { v2, type AgendaEvent, type Target } from '../api2.js';
 	import { carnet, failure, placeName, timeZone } from './state.svelte.js';
+	import NotesButton from './NotesButton.svelte';
 
 	let {
 		event,
@@ -138,7 +139,12 @@
 				{/each}
 			</select>
 		{/if}
-		{#if event.entry_id}
+		{#if !gone || event.notes}
+			<NotesButton notes={event.notes} what={event.title} create={async () => (await v2.eventNotes(event.id, target(), timeZone())).entry_id} />
+		{/if}
+		{#if event.entry_id && event.notes?.id === event.entry_id}
+			<!-- the notes are the event's note: nothing more to show -->
+		{:else if event.entry_id}
 			<a class="done" href="/journal/{localDay()}">✓ noté</a>
 		{:else if !gone}
 			<button class="btn" disabled={busy} onclick={note} title="Créer la note de réunion dans le journal">Noter</button>

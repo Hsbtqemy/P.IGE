@@ -440,6 +440,13 @@ MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE entries ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0 CHECK (cancelled IN (0, 1));
     """,
+    # ------------------------------------------------------------------ 11
+    # Notes taken for something of the agenda: a long text about a planned entry, or about
+    # the short note of a calendar event (an event without a note points to the text itself).
+    """
+    ALTER TABLE entries ADD COLUMN about_entry_id TEXT REFERENCES entries(id) ON DELETE SET NULL;
+    CREATE INDEX entries_about ON entries(about_entry_id) WHERE about_entry_id IS NOT NULL;
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

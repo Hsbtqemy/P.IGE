@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from pige.model import ModelStore
 from pige.model.store import Calendar, CalendarEvent, NotFoundError
+from pige.server import notes as notes_
 from pige.server.agenda import Agenda, CalendarError, Source, Vault, normalize_url, shown_host
 
 HEX = r"^[0-9a-f]{32}$"
@@ -214,6 +215,7 @@ def build_agenda_router(
             "place_source": "filed" if filed else (plan[1] if plan else None),
             "recurring": key is not None,
             "series_filed": key is not None and (e.calendar_id, key) in ctx.series,
+            "notes": notes_.notes_ref(notes_.notes_of_event(store, e)),
         }
 
     def placed(e: CalendarEvent) -> dict[str, str | None] | None:
@@ -290,6 +292,32 @@ def build_agenda_router(
             )
             store.link_event(event_id, entry_id=entry.id)
             return {"entry_id": entry.id, "created": True, "event": current(event_id)}
+
+    @router.post("/agenda/{event_id}/notes")
+    def event_notes(
+        event_id: str, body: TargetIn, tz: str = Query(default=default_timezone, max_length=64),
+        _auth: str = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Notes for the meeting, in a long text: the one already written, else a new one."""
+        with store.transaction():
+            event = store.get_event(event_id)
+            existing = notes_.notes_of_event(store, event)
+            if existing is not None:
+                return {"entry_id": existing.id, "created": False, "event": current(event_id)}
+            day, start, end = notes_.event_times(event, zone(tz))
+            target = where(event, body)
+            text = store.create_entry(
+                entry_date=day.isoformat(), project_id=target["project_id"],
+                space_id=None if target["project_id"] else target["space_id"], title=(event.title or "Notes")[:500],
+                body=notes_.template(event.title or "Notes", day, start, end, event.location,
+                                     notes_.attendee_names(event)),
+                source="writing",
+            )
+            if event.entry_id is None:
+                store.link_event(event_id, entry_id=text.id)
+            else:
+                store.set_about(text.id, event.entry_id)
+            return {"entry_id": text.id, "created": True, "event": current(event_id)}
 
     @router.post("/agenda/{event_id}/place")
     def place_event(event_id: str, body: PlaceIn, _auth: str = Depends(require_auth)) -> dict[str, Any]:
