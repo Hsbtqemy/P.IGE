@@ -376,6 +376,29 @@ def _row_to(cls: Any, row: sqlite3.Row, **overrides: Any) -> Any:
     return cls(**data)
 
 
+_CHECK_LINE = re.compile(r"^(\s*[-*+]\s+)\[([ xX])\](\s+)(.*?)\s*$")
+
+
+def _plain(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def tick_line(body: str, title: str, done: bool) -> str | None:
+    """The text with the « - [ ] title » checkbox set to ``done``; None if there is no such
+    line or it is already so. A task made from a line of a long text keeps it in step."""
+    wanted = _plain(title)
+    lines = body.split("\n")
+    for i, line in enumerate(lines):
+        m = _CHECK_LINE.match(line)
+        if m and _plain(m.group(4)) == wanted:
+            mark = "x" if done else " "
+            if (m.group(2) != " ") == done:
+                return None
+            lines[i] = f"{m.group(1)}[{mark}]{m.group(3)}{m.group(4)}"
+            return "\n".join(lines)
+    return None
+
+
 # ---------------------------------------------------------------- store
 
 
@@ -1035,7 +1058,25 @@ class ModelStore:
                 "UPDATE tasks SET status = ?, waiting_on = ?, status_since = ?, done_at = ?, updated_at = ? WHERE id = ?",
                 (status, person_id, since, done_at, now, task_id),
             )
+            if current.origin_entry_id and (current.status == "done") != (status == "done"):
+                self._tick_origin(current.origin_entry_id, current.title, status == "done")
             return self.get_task(task_id)
+
+    def _tick_origin(self, entry_id: str, title: str, done: bool) -> None:
+        """A task made from a checkbox of a long text: tick or untick that box too."""
+        row = self.conn.execute("SELECT body, source FROM entries WHERE id = ?", (entry_id,)).fetchone()
+        if row is None or row["source"] != "writing":
+            return
+        body = tick_line(row["body"], title, done)
+        if body is not None:
+            self.conn.execute(
+                "UPDATE entries SET body = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                (body, _utc(_now()), entry_id),
+            )
+
+    def tasks_from_entry(self, entry_id: str) -> list[Task]:
+        """Tasks made from an entry (a mail, a paragraph, the checkboxes of a long text)."""
+        return self._tasks("t.origin_entry_id = ?", (entry_id,), order="t.created_at, t.rid")
 
     def reorder_task(self, task_id: str, *, before: str | None = None, after: str | None = None) -> None:
         with self._tx():

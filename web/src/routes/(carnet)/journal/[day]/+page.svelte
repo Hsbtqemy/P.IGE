@@ -9,6 +9,7 @@
 	import CodeDayView from '#lib/carnet/CodeDayView.svelte';
 	import CodeFetch from '#lib/carnet/CodeFetch.svelte';
 	import EntryTime from '#lib/carnet/EntryTime.svelte';
+	import WritingView from '#lib/carnet/WritingView.svelte';
 	import DayFrameLine from '#lib/carnet/DayFrameLine.svelte';
 	import { newId, prepare } from '#lib/carnet/capture.js';
 	import { outbox, queue } from '#lib/carnet/outbox.svelte.js';
@@ -501,7 +502,7 @@
 							</div>
 						{:else if entry.source === 'writing'}
 							<div class="body">
-								<p><a class="long" href="/ecrire/{entry.id}"><b>{entry.title || 'Texte'}</b> · texte long, {entry.body.split(/\s+/).filter(Boolean).length} mots · ouvrir dans l’éditeur →</a></p>
+								<WritingView {entry} />
 								<span class="where-inline">{placeLabel(entry)}</span>
 							</div>
 						{:else}
@@ -662,12 +663,6 @@
 		background: var(--surface);
 		border: 1px solid var(--line);
 		border-radius: 10px;
-	}
-	.long {
-		text-decoration: none;
-	}
-	.long:hover {
-		text-decoration: underline;
 	}
 	.days {
 		display: flex;

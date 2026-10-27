@@ -683,6 +683,11 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             store.sync_entry_block(entry.id, _zone(default_timezone))
             return entry
 
+    @router.get("/entries/{entry_id}/tasks")
+    def entry_tasks(entry_id: IdPath) -> list[dict[str, Any]]:
+        store.get_entry(entry_id)
+        return _out(store.tasks_from_entry(entry_id))
+
     @router.get("/entries/{entry_id}")
     def get_entry(entry_id: IdPath) -> dict[str, Any]:
         return _entry_view(entry_id)

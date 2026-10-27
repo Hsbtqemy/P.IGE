@@ -501,6 +501,7 @@ export const v2 = {
 		request<Entry[]>('GET', `/api/v2/timeline?${q({ limit: 200, ...params })}`),
 	journalDays: (month: string) => request<string[]>('GET', `/api/v2/journal/days?month=${month}`),
 	createEntry: (entry: NewEntry) => request<Entry>('POST', '/api/v2/entries', entry),
+	entryTasks: (id: string) => request<Task[]>('GET', `/api/v2/entries/${id}/tasks`),
 	updateEntry: (id: string, patch: EntryPatch) => request<Entry>('PATCH', `/api/v2/entries/${id}`, patch),
 	spaceTasks: (id: string) => request<Task[]>('GET', `/api/v2/spaces/${encodeURIComponent(id)}/tasks`),
 	renameSpace: (id: string, name: string) => request<Space>('PATCH', `/api/v2/spaces/${encodeURIComponent(id)}`, { name }),

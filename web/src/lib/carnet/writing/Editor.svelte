@@ -7,8 +7,14 @@
 	let {
 		value,
 		onchange,
-		onsave
-	}: { value: string; onchange: (text: string) => void; onsave: () => void } = $props();
+		onsave,
+		ontoggle
+	}: {
+		value: string;
+		onchange: (text: string) => void;
+		onsave: () => void;
+		ontoggle?: (title: string, done: boolean) => void; // a box ticked in the text
+	} = $props();
 
 	let host: HTMLDivElement;
 	let view: EditorView | null = null;
@@ -18,7 +24,11 @@
 			parent: host,
 			state: EditorState.create({
 				doc: value,
-				extensions: writingExtensions({ onChange: (text) => onchange(text), onSave: () => onsave() })
+				extensions: writingExtensions({
+					onChange: (text) => onchange(text),
+					onSave: () => onsave(),
+					onToggle: (title, done) => ontoggle?.(title, done)
+				})
 			})
 		});
 	});

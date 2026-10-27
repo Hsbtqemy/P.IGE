@@ -4,8 +4,9 @@
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 
-export function toHtml(text: string): string {
-	const html = marked.parse(text, { async: false, gfm: true, breaks: false }) as string;
+/** ``breaks``: a line break in the text is one on screen too (as in the editor). */
+export function toHtml(text: string, breaks = false): string {
+	const html = marked.parse(text, { async: false, gfm: true, breaks }) as string;
 	return DOMPurify.sanitize(html);
 }
 

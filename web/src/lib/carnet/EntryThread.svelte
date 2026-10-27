@@ -5,6 +5,7 @@
 	import { v2, type Entry } from '../api2.js';
 	import { segments } from '../feuillet.js';
 	import MailOpen from './MailOpen.svelte';
+	import WritingView from './WritingView.svelte';
 	import CodeDayView from './CodeDayView.svelte';
 	import { failure, longDate, placeName } from './state.svelte.js';
 
@@ -74,7 +75,7 @@
 					{#if showPlace}<small>{placeName(e)}</small>{/if}
 				</header>
 				{#if e.source === 'writing'}
-					<p><a href="/ecrire/{e.id}">Texte long, {e.body.split(/\s+/).filter(Boolean).length} mots · ouvrir dans l’éditeur →</a></p>
+					<WritingView entry={e} heading={false} />
 				{:else if editing === e.id}
 					<textarea bind:value={draft} rows={Math.min(20, Math.max(4, draft.split('\n').length + 1))} aria-label="Texte du paragraphe"></textarea>
 					{#if message}<p class="warn" role="alert">{message}</p>{/if}
