@@ -3,7 +3,7 @@
 	import { beforeNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { ApiError } from '#lib/api.js';
-	import { v2, type Entry, type EntryPatch, type EntryVersion } from '#lib/api2.js';
+	import { v2, type Entry, type EntryPatch, type EntryVersion, type Task } from '#lib/api2.js';
 	import Editor from '#lib/carnet/writing/Editor.svelte';
 	import {
 		copyFormatted,
@@ -14,7 +14,8 @@
 		toHtml
 	} from '#lib/carnet/writing/export.js';
 	import { outline } from '#lib/carnet/writing/livePreview.js';
-	import { carnet, failure, isDay, placeName } from '#lib/carnet/state.svelte.js';
+	import { boxes, sameTitle } from '#lib/carnet/writing/boxes.js';
+	import { carnet, failure, isDay, placeName, reload } from '#lib/carnet/state.svelte.js';
 
 	let id = $derived(page.params.id ?? '');
 	let entry = $state<Entry | null>(null);
@@ -35,6 +36,13 @@
 	let preview = $state<EntryVersion | null>(null);
 	let notice = $state('');
 
+	// The text's checkboxes and the tasks made from them (a ticked task ticks its box, both ways).
+	let textTasks = $state<Task[]>([]);
+	let creating = $state(false);
+	let allBoxes = $derived(boxes(text));
+	let missing = $derived(allBoxes.filter((b) => !b.done && !textTasks.some((t) => sameTitle(t.title, b.title))));
+	let followed = $derived(allBoxes.filter((b) => textTasks.some((t) => sameTitle(t.title, b.title))).length);
+
 	let dirty = $derived(!!entry && (text !== entry.body || titleDraft.trim() !== entry.title));
 	let plan = $derived(outline(text));
 	let wordCount = $derived(text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length);
@@ -52,6 +60,7 @@
 				entry = e;
 				text = e.body;
 				titleDraft = e.title;
+				void loadTasks(current);
 			})
 			.catch((err) => {
 				if (current !== id) return;
@@ -105,6 +114,58 @@
 		if (pending || (!other && !failed && dirty)) {
 			pending = false;
 			schedule(300);
+		}
+	}
+
+	async function loadTasks(current = id) {
+		try {
+			const list = await v2.entryTasks(current);
+			if (current === id) textTasks = list;
+		} catch {
+			/* the boxes still work; only the link with tasks is missing */
+		}
+	}
+
+	/** Everything typed is saved (so the server, ticking a box for a task, finds the same text). */
+	async function settle() {
+		for (let i = 0; i < 20 && (saving || dirty) && !other; i++) {
+			if (saving) await new Promise((r) => setTimeout(r, 150));
+			else await flush();
+		}
+	}
+
+	async function createTasks() {
+		if (!entry || !missing.length) return;
+		const where = placeName(entry);
+		if (!confirm(`Créer ${missing.length} tâche${missing.length > 1 ? 's' : ''} dans « ${where} » ? Cocher une tâche cochera sa case ici, et l’inverse.`)) return;
+		creating = true;
+		await settle();
+		const target = entry.project_id ? { project_id: entry.project_id } : { space_id: entry.space_id };
+		let failedCount = 0;
+		for (const b of missing) {
+			try {
+				await v2.createTask({ title: b.title, ...target, origin_entry_id: entry.id });
+			} catch {
+				failedCount += 1;
+			}
+		}
+		await loadTasks();
+		reload().catch(() => {});
+		creating = false;
+		notice = failedCount ? `${failedCount} tâche${failedCount > 1 ? 's' : ''} non créée${failedCount > 1 ? 's' : ''}.` : `Tâches créées dans « ${where} ».`;
+	}
+
+	/** A box ticked in the text: its task follows. */
+	async function ontoggle(title: string, done: boolean) {
+		const task = textTasks.find((t) => sameTitle(t.title, title));
+		if (!task || (task.status === 'done') === done) return;
+		await settle();
+		try {
+			await v2.updateTask(task.id, { status: done ? 'done' : 'open' });
+			await loadTasks();
+			reload().catch(() => {});
+		} catch (err) {
+			failed = failure(err, 'Tâche non mise à jour : ');
 		}
 	}
 
@@ -250,10 +311,22 @@
 		<div class="cols">
 			<div class="page">
 				{#key entry.id}
-					<Editor bind:this={editor} value={entry.body} {onchange} onsave={() => flush(true)} />
+					<Editor bind:this={editor} value={entry.body} {onchange} onsave={() => flush(true)} {ontoggle} />
 				{/key}
 			</div>
 			<aside>
+				{#if allBoxes.length}
+					<div class="boxes">
+						<p>
+							<b>{allBoxes.filter((b) => b.done).length}/{allBoxes.length}</b> cases cochées{#if followed}{' · '}{followed} suivie{followed > 1 ? 's' : ''} en tâche{followed > 1 ? 's' : ''}{/if}
+						</p>
+						{#if missing.length}
+							<button class="btn" disabled={creating} onclick={createTasks}>
+								{creating ? 'Création…' : `Créer ${missing.length === 1 ? 'la tâche' : `les ${missing.length} tâches`}`}
+							</button>
+						{/if}
+					</div>
+				{/if}
 				<div class="tabs" role="tablist" aria-label="Outils">
 					<button role="tab" aria-selected={panel === 'plan'} onclick={() => (panel = 'plan')}>Plan</button>
 					<button role="tab" aria-selected={panel === 'versions'} onclick={openVersions}>Versions</button>
@@ -317,6 +390,20 @@
 </div>
 
 <style>
+	.boxes {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px 10px;
+		align-items: center;
+		padding: 8px 10px;
+		margin-bottom: 10px;
+		background: var(--soft);
+		border-radius: 8px;
+		font-size: 0.875rem;
+	}
+	.boxes p {
+		margin: 0;
+	}
 	.wrap {
 		padding: 18px 32px 0;
 		display: flex;

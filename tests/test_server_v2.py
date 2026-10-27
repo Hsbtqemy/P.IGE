@@ -567,3 +567,22 @@ def test_a_cancelled_entry_counts_no_time_and_can_be_restored(client, tree):
     e = ok(client.patch(f"/api/v2/entries/{e['id']}", json={"expected_revision": e["revision"], "cancelled": False}))
     assert len(ok(client.get("/api/v2/days/2026-10-15"))["blocks"]) == 1
     assert client.patch(f"/api/v2/entries/{e['id']}", json={"expected_revision": e["revision"], "cancelled": None}).status_code == 400
+
+
+def test_checkboxes_of_a_long_text_follow_their_tasks(client, tree):
+    from pige.model.store import tick_line
+    body = "# CR\n\n- [ ] CO2 harmonisé\n-  [x] Taille   de police\n* [ ] 13. Italique sur \"sont\"\n"
+    assert tick_line(body, "co2  harmonisé", True) == body.replace("- [ ] CO2", "- [x] CO2")
+    assert tick_line(body, "Taille de police", False) == body.replace("-  [x] Taille", "-  [ ] Taille")
+    assert tick_line(body, "CO2 harmonisé", False) is None and tick_line(body, "absent", True) is None
+    dico = tree["dico"]["id"]
+    text = ok(client.post("/api/v2/entries", json={"entry_date": "2026-10-27", "project_id": dico, "title": "CR",
+                                                    "body": body, "source": "writing"}), 201)
+    task = ok(client.post("/api/v2/tasks", json={"title": "CO2 harmonisé", "project_id": dico,
+                                                  "origin_entry_id": text["id"]}), 201)
+    assert [t["id"] for t in ok(client.get(f"/api/v2/entries/{text['id']}/tasks"))] == [task["id"]]
+    ok(client.patch(f"/api/v2/tasks/{task['id']}", json={"status": "done"}))
+    after = ok(client.get(f"/api/v2/entries/{text['id']}"))
+    assert "- [x] CO2 harmonisé" in after["body"] and after["revision"] == text["revision"] + 1
+    ok(client.patch(f"/api/v2/tasks/{task['id']}", json={"status": "open"}))
+    assert "- [ ] CO2 harmonisé" in ok(client.get(f"/api/v2/entries/{text['id']}"))["body"]
