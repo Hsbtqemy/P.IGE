@@ -5,6 +5,7 @@
 	import { v2, type Entry } from '../api2.js';
 	import { failure, placeName } from './state.svelte.js';
 	import { showRange } from './timerange.js';
+	import NotesButton from './NotesButton.svelte';
 
 	let { entry, onchanged }: { entry: Entry; onchanged?: (updated: Entry) => void } = $props();
 	let title = $derived(entry.title || entry.body.split('\n').find((l) => l.trim())?.trim().slice(0, 120) || 'Sans titre');
@@ -33,6 +34,8 @@
 			<small><span class="tag">{entry.cancelled ? 'annulé' : 'prévu'}</span> · {placeName(entry)}</small>
 		</span>
 	</a>
+	<span class="tools">
+	<NotesButton notes={entry.notes} what={title} create={async () => (await v2.entryNotes(entry.id)).entry_id} />
 	<button
 		class="bin"
 		disabled={busy}
@@ -48,6 +51,7 @@
 			</svg>
 		{/if}
 	</button>
+	</span>
 	{#if message}<small class="warn" role="alert">{message}</small>{/if}
 </div>
 
@@ -98,6 +102,11 @@
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
+	}
+	.tools {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
 	}
 	.bin {
 		display: inline-flex;

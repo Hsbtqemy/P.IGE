@@ -260,6 +260,7 @@ class Entry:
     version: int
     revision: int
     cancelled: bool = False
+    about_entry_id: str | None = None  # notes (a long text) taken for that entry of the agenda
 
 
 @dataclass(frozen=True)
@@ -1181,9 +1182,9 @@ class ModelStore:
     def planned_entries(self, start: date, end: date, tz: tzinfo) -> list[Entry]:
         """Entries written ahead for a day of [start, end) (a training, leave, a meeting noted
         before it happens): what is planned, shown with the agenda. Entries noted from a calendar
-        event are left out, the event itself being shown."""
+        event are left out, the event itself being shown, and so are long texts (notes)."""
         rows = self.conn.execute(
-            "SELECT e.* FROM entries e WHERE e.entry_date >= ? AND e.entry_date < ?"
+            "SELECT e.* FROM entries e WHERE e.entry_date >= ? AND e.entry_date < ? AND e.source != 'writing'"
             " AND NOT EXISTS (SELECT 1 FROM calendar_events c WHERE c.entry_id = e.id)"
             " ORDER BY e.entry_date, coalesce(e.start_time, '00:00'), e.created_at",
             (start.isoformat(), end.isoformat()),
@@ -1925,6 +1926,39 @@ class ModelStore:
             (end_utc, start_utc, last_day_excl, first_day),
         ).fetchall()
         return [self._event(r) for r in rows]
+
+    def set_about(self, entry_id: str, about_entry_id: str | None) -> Entry:
+        """Say which entry of the agenda these notes are about (None: about nothing)."""
+        with self._tx():
+            self._require("entries", entry_id)
+            if about_entry_id is not None:
+                about = self.get_entry(about_entry_id)
+                if about.id == entry_id or about.about_entry_id == entry_id:
+                    raise InvalidOperationError("notes cannot be about themselves")
+            self.conn.execute(
+                "UPDATE entries SET about_entry_id = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                (about_entry_id, _utc(_now()), entry_id),
+            )
+            return self.get_entry(entry_id)
+
+    def notes_for(self, entry_ids: Sequence[str]) -> dict[str, Entry]:
+        """The long text taken as notes for each of these entries (the first written)."""
+        if not entry_ids:
+            return {}
+        marks = ",".join("?" * len(entry_ids))
+        rows = self.conn.execute(
+            f"SELECT * FROM entries WHERE source = 'writing' AND about_entry_id IN ({marks}) ORDER BY created_at DESC",
+            tuple(entry_ids),
+        ).fetchall()
+        return {r["about_entry_id"]: _entry_row(r) for r in rows}
+
+    def event_of_entry(self, entry_id: str) -> CalendarEvent | None:
+        row = self.conn.execute("SELECT * FROM calendar_events WHERE entry_id = ? LIMIT 1", (entry_id,)).fetchone()
+        return self._event(row) if row else None
+
+    def unlink_event_entry(self, entry_id: str) -> None:
+        """Events whose note was this entry no longer point to it."""
+        self.conn.execute("UPDATE calendar_events SET entry_id = NULL WHERE entry_id = ?", (entry_id,))
 
     def get_event(self, event_id: str) -> CalendarEvent:
         return self._event(self._require("calendar_events", event_id))

@@ -586,3 +586,25 @@ def test_checkboxes_of_a_long_text_follow_their_tasks(client, tree):
     assert "- [x] CO2 harmonisé" in after["body"] and after["revision"] == text["revision"] + 1
     ok(client.patch(f"/api/v2/tasks/{task['id']}", json={"status": "open"}))
     assert "- [ ] CO2 harmonisé" in ok(client.get(f"/api/v2/entries/{text['id']}"))["body"]
+
+
+def test_notes_for_something_planned(client, tree):
+    dico = tree["dico"]["id"]
+    planned = ok(client.post("/api/v2/entries", json={
+        "entry_date": "2026-10-27", "project_id": dico, "title": "Formation François", "body": "Salle des conseils",
+        "start_time": "09:30", "end_time": "12:00"}), 201)
+    made = ok(client.post(f"/api/v2/entries/{planned['id']}/notes"))
+    assert made["created"] is True
+    text = ok(client.get(f"/api/v2/entries/{made['entry_id']}"))
+    assert text["source"] == "writing" and text["project_id"] == dico and text["entry_date"] == "2026-10-27"
+    assert text["body"].startswith("# Formation François\n\n**Date :** mardi 27 octobre, 9h30–12h")
+    assert text["about"]["kind"] == "entry" and text["about"]["entry_id"] == planned["id"]
+    assert ok(client.post(f"/api/v2/entries/{planned['id']}/notes")) == {"entry_id": made["entry_id"], "created": False}
+    assert ok(client.get(f"/api/v2/entries/{planned['id']}"))["notes"] == {"id": made["entry_id"], "title": "Formation François"}
+    # A text written before, linked afterwards; then unlinked.
+    other = ok(client.post("/api/v2/entries", json={"entry_date": "2026-10-27", "project_id": dico, "title": "CR",
+                                                     "body": "x", "source": "writing"}), 201)
+    linked = ok(client.post(f"/api/v2/entries/{other['id']}/about", json={"entry_id": planned["id"]}))
+    assert linked["about"]["title"] == "Formation François"
+    assert ok(client.post(f"/api/v2/entries/{other['id']}/about", json={}))["about"] is None
+    assert client.post(f"/api/v2/entries/{other['id']}/about", json={"entry_id": other["id"]}).status_code == 400

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Res
 from pydantic import BaseModel, ConfigDict, Field
 
 from pige.model.store import Entry, ModelStore, NotFoundError
+from pige.server import notes as notes_
 
 HEX = r"^[0-9a-f]{32}$"
 IdPath = Annotated[str, Path(pattern=HEX)]
@@ -171,6 +172,11 @@ class EntryPatch(_In):
     people: list[ShortText] | None = Field(default=None, max_length=50)
     person_ids: list[Annotated[str, Field(pattern=HEX)]] | None = Field(default=None, max_length=50)
     tags: list[ShortText] | None = Field(default=None, max_length=50)
+
+
+class AboutIn(_In):
+    entry_id: str | None = OptHexId
+    event_id: str | None = Field(default=None, max_length=200)
 
 
 class EntryMove(_In):
@@ -597,9 +603,13 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         people = store.people_for_entries(ids)
         tags = store.tags_for_entries(ids)
         code = store.code_summaries([e.id for e in entries if e.source == "import"])
+        written = store.notes_for(ids)
+        zone_ = _zone(default_timezone)
         return [
             {**_out(e), "people": _out(people[e.id]), "tags": _out(tags[e.id]),
-             **({"code": code[e.id]} if e.id in code else {})}
+             **({"code": code[e.id]} if e.id in code else {}),
+             "notes": notes_.notes_ref(written.get(e.id)),
+             "about": notes_.about_view(store, e, zone_) if e.source == "writing" else None}
             for e in entries
         ]
 
@@ -682,6 +692,43 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             entry = store.create_entry(**data)
             store.sync_entry_block(entry.id, _zone(default_timezone))
             return entry
+
+    @router.post("/entries/{entry_id}/about")
+    def set_about(entry_id: IdPath, body: AboutIn) -> dict[str, Any]:
+        """Link these notes to an entry of the agenda or to a calendar event (neither: unlink)."""
+        if body.entry_id and body.event_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Un seul élément à la fois")
+        with store.transaction():
+            store.get_entry(entry_id)
+            store.unlink_event_entry(entry_id)
+            about: str | None = body.entry_id
+            if body.event_id:
+                event = store.get_event(body.event_id)
+                if event.entry_id is None:
+                    store.link_event(event.id, entry_id=entry_id)
+                else:
+                    about = event.entry_id
+            store.set_about(entry_id, about)
+            return _entry_view(entry_id)
+
+    @router.post("/entries/{entry_id}/notes")
+    def entry_notes(entry_id: IdPath) -> dict[str, Any]:
+        """Notes for something planned in the journal: the text already written, else a new one."""
+        with store.transaction():
+            planned = store.get_entry(entry_id)
+            existing = store.notes_for([entry_id]).get(entry_id)
+            if existing is not None:
+                return {"entry_id": existing.id, "created": False}
+            title = planned.title or planned.body.strip().split("\n")[0][:200] or "Notes"
+            text = store.create_entry(
+                entry_date=planned.entry_date, project_id=planned.project_id,
+                space_id=None if planned.project_id else planned.space_id, title=title[:500],
+                body=notes_.template(title, date.fromisoformat(planned.entry_date), planned.start_time,
+                                     planned.end_time, None, []),
+                source="writing",
+            )
+            store.set_about(text.id, entry_id)
+            return {"entry_id": text.id, "created": True}
 
     @router.get("/entries/{entry_id}/tasks")
     def entry_tasks(entry_id: IdPath) -> list[dict[str, Any]]:

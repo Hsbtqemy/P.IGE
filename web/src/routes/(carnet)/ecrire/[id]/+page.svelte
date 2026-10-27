@@ -15,7 +15,8 @@
 	} from '#lib/carnet/writing/export.js';
 	import { outline } from '#lib/carnet/writing/livePreview.js';
 	import { boxes, sameTitle } from '#lib/carnet/writing/boxes.js';
-	import { carnet, failure, isDay, placeName, reload } from '#lib/carnet/state.svelte.js';
+	import { carnet, failure, isDay, placeName, reload, timeZone } from '#lib/carnet/state.svelte.js';
+	import { showRange } from '#lib/carnet/timerange.js';
 
 	let id = $derived(page.params.id ?? '');
 	let entry = $state<Entry | null>(null);
@@ -114,6 +115,53 @@
 		if (pending || (!other && !failed && dirty)) {
 			pending = false;
 			schedule(300);
+		}
+	}
+
+	// What these notes are about: something of the agenda of the text's day.
+	let choices = $state<{ key: string; label: string }[]>([]);
+	let linking = $state(false);
+	$effect(() => {
+		const day = entry?.entry_date;
+		const current = id;
+		if (!day) return;
+		const clock = (iso: string) => new Date(iso).toLocaleTimeString('fr-FR', { hour: 'numeric', minute: '2-digit' });
+		Promise.all([v2.agenda(day, 1, timeZone()).catch(() => []), v2.planned(day, 1, timeZone()).catch(() => [])]).then(([events, planned]) => {
+			if (current !== id) return;
+			choices = [
+				...events
+					.filter((e) => e.status !== 'removed')
+					.map((e) => ({ key: `v:${e.id}`, label: `${e.all_day ? 'Journée' : clock(e.start)} · ${e.title}` })),
+				...planned
+					.filter((p) => p.id !== current && p.source !== 'writing')
+					.map((p) => ({ key: `e:${p.id}`, label: `${p.start_time ? showRange(p.start_time, null) : 'Journée'} · ${p.title || p.body.slice(0, 60)}` }))
+			];
+		});
+	});
+
+	async function linkTo(key: string) {
+		if (!entry || !key) return;
+		linking = true;
+		await settle();
+		try {
+			entry = await v2.setAbout(entry.id, key.startsWith('v:') ? { event_id: key.slice(2) } : { entry_id: key.slice(2) });
+		} catch (err) {
+			failed = failure(err, 'Lien non fait : ');
+		} finally {
+			linking = false;
+		}
+	}
+
+	async function unlink() {
+		if (!entry) return;
+		linking = true;
+		await settle();
+		try {
+			entry = await v2.setAbout(entry.id, {});
+		} catch (err) {
+			failed = failure(err, 'Lien non défait : ');
+		} finally {
+			linking = false;
 		}
 	}
 
@@ -293,6 +341,20 @@
 					{#if !carnet.tree?.spaces.some((s) => s.id === entry?.space_id)}<option value="s:{entry.space_id}">{placeName(entry)}</option>{/if}
 				</select>
 				<input type="date" value={entry.entry_date} onchange={(e) => setDate((e.currentTarget as HTMLInputElement).value)} aria-label="Date" />
+				{#if entry.about}
+					{@const a = entry.about}
+					<span class="about">
+						Notes de :
+						<a href={a.kind === 'event' ? `/agenda/${a.day}` : `/journal/${a.day}#e-${a.entry_id}`}><b>{a.title}</b></a>
+						{#if a.start_time}· {showRange(a.start_time, a.end_time)}{/if}{#if a.location}{' · '}{a.location}{/if}
+						<button class="unlink" disabled={linking} onclick={unlink} aria-label="Défaire le lien avec « {a.title} »" title="Défaire le lien">×</button>
+					</span>
+				{:else if choices.length}
+					<select value="" disabled={linking} onchange={(e) => linkTo((e.currentTarget as HTMLSelectElement).value)} aria-label="Notes de…">
+						<option value="">Notes de… (agenda du jour)</option>
+						{#each choices as c (c.key)}<option value={c.key}>{c.label}</option>{/each}
+					</select>
+				{/if}
 			</div>
 		</header>
 
@@ -443,6 +505,23 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 8px;
+		align-items: center;
+	}
+	.about {
+		font-size: 0.875rem;
+		color: var(--muted);
+	}
+	.about a {
+		color: var(--ink);
+	}
+	.unlink {
+		border: 0;
+		background: none;
+		color: var(--muted);
+		cursor: pointer;
+	}
+	.unlink:hover {
+		color: var(--warn);
 	}
 	select,
 	input[type='date'] {
