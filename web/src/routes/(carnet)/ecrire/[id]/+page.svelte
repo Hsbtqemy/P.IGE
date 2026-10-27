@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { beforeNavigate } from '$app/navigation';
+	import { beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { ApiError } from '#lib/api.js';
 	import { v2, type Entry, type EntryPatch, type EntryVersion, type Task } from '#lib/api2.js';
@@ -82,7 +82,7 @@
 	/** Save what changed. ``explicit`` (Ctrl S, restore) always keeps the previous text as a version. */
 	async function flush(explicit = false) {
 		clearTimeout(timer);
-		if (!entry || other) return;
+		if (!entry || other || deleting) return;
 		if (saving) {
 			pending = true;
 			return;
@@ -297,12 +297,30 @@
 
 	let mail = $derived(mailLink(titleDraft.trim() || 'Texte', text));
 
+	let deleting = $state(false); // once deleted, nothing is saved any more
+
+	async function remove() {
+		if (!entry) return;
+		const tasks = textTasks.length ? ` Les ${textTasks.length} tâche${textTasks.length > 1 ? 's' : ''} créée${textTasks.length > 1 ? 's' : ''} depuis ses cases sont gardées.` : '';
+		if (!confirm(`Supprimer « ${title()} » et ses versions ? C’est définitif.${tasks}`)) return;
+		deleting = true;
+		clearTimeout(timer);
+		try {
+			await v2.deleteEntry(entry.id);
+			reload().catch(() => {});
+			await goto('/ecrire');
+		} catch (err) {
+			deleting = false;
+			failed = failure(err, 'Texte non supprimé : ');
+		}
+	}
+
 	function onBeforeUnload(event: BeforeUnloadEvent) {
-		if (dirty || saving) event.preventDefault();
+		if (!deleting && (dirty || saving)) event.preventDefault();
 	}
 
 	beforeNavigate(() => {
-		if (dirty) void flush();
+		if (dirty && !deleting) void flush();
 	});
 	onDestroy(() => clearTimeout(timer));
 </script>
@@ -431,6 +449,7 @@
 						</p>
 					</div>
 				{/if}
+				<button class="delete" disabled={deleting} onclick={remove}>Supprimer ce texte</button>
 			</aside>
 		</div>
 
@@ -452,6 +471,21 @@
 </div>
 
 <style>
+	.delete {
+		margin-top: 24px;
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-family: var(--sans);
+		font-size: 0.8125rem;
+		color: var(--muted);
+		text-decoration: underline;
+		cursor: pointer;
+	}
+	.delete:hover {
+		color: var(--warn);
+	}
 	.boxes {
 		display: flex;
 		flex-wrap: wrap;
