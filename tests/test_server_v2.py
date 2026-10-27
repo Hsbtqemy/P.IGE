@@ -537,3 +537,19 @@ def test_day_frame_start_end_priorities_and_tomorrow(client, tree):
     assert client.patch("/api/v2/days/2026-10-15/frame", json={
         "ended_at": "2026-10-15T08:00:00+02:00"}).status_code == 400
     assert client.patch("/api/v2/days/2026-10-15/frame", json={"priorities": [{"text": " "}]}).status_code == 400
+
+
+def test_entries_written_ahead_are_planned(client, tree):
+    from datetime import date as _date, timedelta as _td
+    today = _date.today()
+    later = (today + _td(days=1)).isoformat()
+    dico = tree["dico"]["id"]
+    ahead = ok(client.post("/api/v2/entries", json={
+        "entry_date": later, "project_id": dico, "title": "Formation", "body": "Salle des conseils",
+        "start_time": "09:30"}), 201)
+    ok(client.post("/api/v2/entries", json={"entry_date": today.isoformat(), "project_id": dico, "body": "écrit le jour même"}), 201)
+    ok(client.post("/api/v2/entries", json={"entry_date": (today - _td(days=3)).isoformat(), "project_id": dico, "body": "après coup"}), 201)
+    planned = ok(client.get(f"/api/v2/planned?start={(today - _td(days=5)).isoformat()}&days=10&tz=Europe/Paris"))
+    assert [e["id"] for e in planned] == [ahead["id"]] and planned[0]["start_time"] == "09:30"
+    assert ok(client.get(f"/api/v2/planned?start={(today + _td(days=2)).isoformat()}&days=3")) == []
+    assert client.get(f"/api/v2/planned?start={later}&days=100").status_code == 422
