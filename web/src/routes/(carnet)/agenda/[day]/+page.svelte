@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { goto, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
-	import { v2, type AgendaEvent, type CalendarInfo, type Task } from '#lib/api2.js';
+	import { v2, type AgendaEvent, type CalendarInfo, type Entry, type Task } from '#lib/api2.js';
 	import EventRow from '#lib/carnet/EventRow.svelte';
+	import PlannedRow from '#lib/carnet/PlannedRow.svelte';
 	import { failure, isDay, longDate, placeName, shiftDay, timeZone, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let day = $derived(isDay(page.params.day ?? '') ? (page.params.day as string) : '');
@@ -32,16 +33,23 @@
 
 	let events = $state<AgendaEvent[] | null>(null);
 	let dueTasks = $state<Task[]>([]); // open tasks with a due date, shown on their day
+	let planned = $state<Entry[]>([]); // written ahead in the journal for a day of the range
 	let calendars = $state<CalendarInfo[]>([]);
 	let message = $state('');
 	let refreshing = $state(false);
 
 	function load(start: string, days: number) {
 		const key = `${start}/${days}`;
-		return Promise.all([v2.agenda(start, days, timeZone()), v2.calendars(), v2.openTasks(true).catch(() => [] as Task[])])
-			.then(([e, c, t]) => {
+		return Promise.all([
+			v2.agenda(start, days, timeZone()),
+			v2.calendars(),
+			v2.openTasks(true).catch(() => [] as Task[]),
+			v2.planned(start, days, timeZone()).catch(() => [] as Entry[])
+		])
+			.then(([e, c, t, p]) => {
 				if (key !== rangeKey) return;
 				events = e;
+				planned = p;
 				calendars = c;
 				dueTasks = t.filter((task) => task.due_date);
 			})
@@ -81,6 +89,10 @@
 
 	function dueOn(iso: string): Task[] {
 		return dueTasks.filter((t) => t.due_date === iso);
+	}
+
+	function plannedOn(iso: string): Entry[] {
+		return planned.filter((e) => e.entry_date === iso);
 	}
 
 	function listFor(iso: string): AgendaEvent[] {
@@ -137,6 +149,10 @@
 	let problems = $derived(calendars.filter((c) => c.active && c.last_error));
 	let today = $derived(todayIso());
 </script>
+
+{#snippet ahead(iso: string)}
+	{#each plannedOn(iso) as e (e.id)}<PlannedRow entry={e} />{/each}
+{/snippet}
 
 {#snippet due(iso: string)}
 	{#each dueOn(iso) as t (t.id)}
@@ -209,7 +225,7 @@
 							class:selected={c.iso === selected}
 							role="gridcell"
 							aria-selected={c.iso === selected}
-							aria-label="{longDate(c.iso)}, {c.list.length} événement{c.list.length > 1 ? 's' : ''}"
+							aria-label="{longDate(c.iso)}, {c.list.length + plannedOn(c.iso).length} événement{c.list.length + plannedOn(c.iso).length > 1 ? 's' : ''}"
 							onclick={() => pick(c.iso)}
 						>
 							<span class="num">{Number(c.iso.slice(8))}</span>
@@ -220,6 +236,9 @@
 								</span>
 							{/each}
 							{#if c.list.length > 3}<span class="more">+{c.list.length - 3}</span>{/if}
+							{#each plannedOn(c.iso).slice(0, 2) as e (e.id)}
+								<span class="chip planned-chip">{#if e.start_time}<b>{e.start_time.replace(/^0/, '')}</b>{/if} {e.title || e.body.slice(0, 40)}</span>
+							{/each}
 							{#if dueOn(c.iso).length}<span class="due-mark">{dueOn(c.iso).length} à rendre</span>{/if}
 							{#if c.list.length}<span class="dots" aria-hidden="true">{#each c.list.slice(0, 4) as e (e.id)}<i style="background: {e.color || 'var(--decision)'}"></i>{/each}</span>{/if}
 						</button>
@@ -229,21 +248,23 @@
 			<section class="dayview" aria-label={longDate(selected || day)}>
 				<h2><a href="/journal/{selected || day}">{longDate(selected || day)}</a> <small>{listFor(selected || day).length || ''}</small></h2>
 				{@render due(selected || day)}
+				{@render ahead(selected || day)}
 				{#each listFor(selected || day) as e (e.id)}
 					<EventRow event={e} choosePlace onchanged={changed} onreload={() => load(range.start, range.days)} />
 				{:else}
-					{#if !dueOn(selected || day).length}<p class="muted">Rien ce jour-là.</p>{/if}
+					{#if !dueOn(selected || day).length && !plannedOn(selected || day).length}<p class="muted">Rien ce jour-là.</p>{/if}
 				{/each}
 			</section>
 		{:else}
 			{#each days as d (d.iso)}
 				<section class:today={d.iso === today} aria-label={longDate(d.iso)}>
-					<h2><a href="/journal/{d.iso}">{longDate(d.iso)}</a> <small>{d.list.length || ''}</small></h2>
+					<h2><a href="/journal/{d.iso}">{longDate(d.iso)}</a> <small>{d.list.length + plannedOn(d.iso).length || ''}</small></h2>
 					{@render due(d.iso)}
+					{@render ahead(d.iso)}
 					{#each d.list as e (e.id)}
 						<EventRow event={e} choosePlace onchanged={changed} onreload={() => load(range.start, range.days)} />
 					{:else}
-						{#if !dueOn(d.iso).length}<p class="muted">—</p>{/if}
+						{#if !dueOn(d.iso).length && !plannedOn(d.iso).length}<p class="muted">—</p>{/if}
 					{/each}
 				</section>
 			{/each}
@@ -464,6 +485,10 @@
 		.wrap {
 			padding: 16px;
 		}
+	}
+	.planned-chip {
+		--cal: var(--muted);
+		font-style: italic;
 	}
 	.due {
 		display: flex;

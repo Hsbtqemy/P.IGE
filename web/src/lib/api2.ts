@@ -420,6 +420,8 @@ export const v2 = {
 	frame: (day: string, tz: string) => request<DayFrame>('GET', `/api/v2/days/${day}/frame?tz=${encodeURIComponent(tz)}`),
 	updateFrame: (day: string, tz: string, patch: FramePatch) =>
 		request<DayFrame>('PATCH', `/api/v2/days/${day}/frame?tz=${encodeURIComponent(tz)}`, patch),
+	planned: (start: string, days: number, tz: string) =>
+		request<Entry[]>('GET', `/api/v2/planned?start=${start}&days=${days}&tz=${encodeURIComponent(tz)}`),
 	week: (day: string, tz: string) => request<WeekReport>('GET', `/api/v2/weeks/${day}?tz=${encodeURIComponent(tz)}`),
 	validateDay: (day: string, tz: string) =>
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),

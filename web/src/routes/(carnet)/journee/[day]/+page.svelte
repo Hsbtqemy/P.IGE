@@ -2,10 +2,11 @@
 	import { onDestroy, tick as nextTick } from 'svelte';
 	import { page } from '$app/state';
 	import EventRow from '#lib/carnet/EventRow.svelte';
+	import PlannedRow from '#lib/carnet/PlannedRow.svelte';
 	import DayPlan from '#lib/carnet/DayPlan.svelte';
 	import DayFrame from '#lib/carnet/DayFrame.svelte';
 	import DoneToday from '#lib/carnet/DoneToday.svelte';
-	import { v2, type AgendaEvent, type CountedBlock, type DayReport, type OverlapMode, type Target, type Task, type TimeBlock, type WeekReport } from '#lib/api2.js';
+	import { v2, type AgendaEvent, type CountedBlock, type DayReport, type OverlapMode, type Target, type Task, type TimeBlock, type WeekReport, type Entry } from '#lib/api2.js';
 	import {
 		carnet,
 		duration,
@@ -23,6 +24,8 @@
 	let week = $state<WeekReport | null>(null);
 	let span = $state<'day' | 'week'>('day'); // the Bilan: this day or its week
 	let meetings = $state<AgendaEvent[]>([]);
+	let allDay = $state<AgendaEvent[]>([]); // leave, a conference: the whole day
+	let planned = $state<Entry[]>([]); // written ahead in the journal for this day
 	let openTasks = $state<Task[]>([]); // open tasks of active projects: the day's plan
 	let doneKey = $state(0); // reloads « Fait aujourd'hui » after a change in the plan
 	let message = $state('');
@@ -67,18 +70,21 @@
 
 	async function load(current = day) {
 		try {
-			const [r, timers, doing, agenda, w] = await Promise.all([
+			const [r, timers, doing, agenda, w, ahead] = await Promise.all([
 				v2.day(current, timeZone()),
 				v2.timers(),
 				v2.openTasks(true),
 				v2.agenda(current, 1, timeZone()).catch(() => [] as AgendaEvent[]),
-				v2.week(current, timeZone()).catch(() => null)
+				v2.week(current, timeZone()).catch(() => null),
+				v2.planned(current, 1, timeZone()).catch(() => [] as Entry[])
 			]);
 			doneKey += 1;
 			if (current !== day) return;
 			report = r;
 			week = w;
 			meetings = agenda.filter((m) => !m.all_day);
+			allDay = agenda.filter((m) => m.all_day && m.status !== 'cancelled' && m.status !== 'removed');
+			planned = ahead;
 			carnet.timers = timers;
 			openTasks = doing;
 			for (const t of doing) taskTitles[t.id] = t.title;
@@ -352,9 +358,13 @@
 		/>
 
 		<div class="today">
-			{#if meetings.length}
+			{#if meetings.length || allDay.length || planned.length}
 				<section aria-labelledby="meet-title">
-					<h2 id="meet-title">Rendez-vous <small>{meetings.length}</small></h2>
+					<h2 id="meet-title">Rendez-vous <small>{meetings.length + allDay.length + planned.length}</small></h2>
+					{#if allDay.length}
+						<p class="all-day"><span>Toute la journée</span> {allDay.map((e) => e.title).join(' · ')}</p>
+					{/if}
+					{#each planned as e (e.id)}<PlannedRow entry={e} />{/each}
 					{#each meetings as m (m.id)}
 						<EventRow
 							event={m}
@@ -603,6 +613,21 @@
 	}
 	.info {
 		background: var(--soft);
+	}
+	.all-day {
+		margin: 0;
+		padding: 6px 0 6px 12px;
+		border-left: 3px solid var(--decision);
+		border-bottom: 1px solid var(--line);
+	}
+	.all-day span {
+		font-family: var(--sans);
+		font-size: 0.6875rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--muted);
+		margin-right: 6px;
 	}
 	.summary-head {
 		display: flex;

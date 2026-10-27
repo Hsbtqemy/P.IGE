@@ -1130,6 +1130,24 @@ class ModelStore:
                 self.conn.execute("INSERT INTO entry_tags(entry_id, tag_id) VALUES (?, ?)", (entry_id, tid))
             return self.get_entry(entry_id)
 
+    def planned_entries(self, start: date, end: date, tz: tzinfo) -> list[Entry]:
+        """Entries written ahead for a day of [start, end) (a training, leave, a meeting noted
+        before it happens): what is planned, shown with the agenda. Entries noted from a calendar
+        event are left out, the event itself being shown."""
+        rows = self.conn.execute(
+            "SELECT e.* FROM entries e WHERE e.entry_date >= ? AND e.entry_date < ?"
+            " AND NOT EXISTS (SELECT 1 FROM calendar_events c WHERE c.entry_id = e.id)"
+            " ORDER BY e.entry_date, coalesce(e.start_time, '00:00'), e.created_at",
+            (start.isoformat(), end.isoformat()),
+        ).fetchall()
+        out = []
+        for r in rows:
+            written = _parse_utc(r["created_at"]).astimezone(tz).date().isoformat()
+            if written < r["entry_date"]:
+                applied = r["decision_applied"]
+                out.append(_row_to(Entry, r, decision_applied=None if applied is None else bool(applied)))
+        return out
+
     def get_entry(self, entry_id: str) -> Entry:
         row = self._require("entries", entry_id)
         applied = row["decision_applied"]

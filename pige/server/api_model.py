@@ -624,6 +624,13 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         )
         return _entry_views(entries)
 
+    @router.get("/planned")
+    def planned(
+        start: date, days: int = Query(default=7, ge=1, le=62), tz: str = Query(default=default_timezone, max_length=64)
+    ) -> list[dict[str, Any]]:
+        """What was written ahead for these days (shown with the agenda and in Ma journée)."""
+        return _entry_views(store.planned_entries(start, start + timedelta(days=days), _zone(tz)))
+
     @router.get("/journal/days")
     def journal_days(month: str = Query(pattern=r"^\d{4}-\d{2}$")) -> list[str]:
         """Days of the month that have a page in the journal (for the little calendar)."""
