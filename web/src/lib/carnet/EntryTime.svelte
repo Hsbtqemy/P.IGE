@@ -16,7 +16,8 @@
 	let saving = $state(false);
 	let input: HTMLInputElement | undefined = $state();
 
-	let minutes = $derived(entry.cancelled ? null : rangeMinutes(entry.start_time, entry.end_time)); // cancelled: nothing counted
+	// Cancelled, or an Agenda event not counted yet: no duration shown as counted.
+	let minutes = $derived(entry.cancelled || entry.counted === false ? null : rangeMinutes(entry.start_time, entry.end_time));
 
 	async function open() {
 		text = entry.start_time ? formatRange(entry.start_time, entry.end_time) + (entry.end_time ? '' : '-') : '';

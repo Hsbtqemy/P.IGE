@@ -12,6 +12,21 @@
 	let busy = $state(false);
 	let message = $state('');
 
+	// An event added in the Agenda counts its time only once « Compter » is clicked.
+	let countable = $derived(!!entry.agenda && !!entry.start_time && !!entry.end_time && !entry.cancelled);
+
+	async function count() {
+		busy = true;
+		message = '';
+		try {
+			onchanged?.(await v2.updateEntry(entry.id, { expected_revision: entry.revision, counted: true }));
+		} catch (err) {
+			message = failure(err, '');
+		} finally {
+			busy = false;
+		}
+	}
+
 	async function toggle() {
 		busy = true;
 		message = '';
@@ -35,6 +50,11 @@
 		</span>
 	</a>
 	<span class="tools">
+		{#if countable && entry.counted}
+			<span class="counted" title="Temps compté dans Ma journée">✓ compté</span>
+		{:else if countable}
+			<button class="btn count" disabled={busy} onclick={count} title="Compter ce temps dans Ma journée">Compter</button>
+		{/if}
 	<NotesButton notes={entry.notes} what={title} create={async () => (await v2.entryNotes(entry.id)).entry_id} />
 	<button
 		class="bin"
@@ -102,6 +122,18 @@
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
+	}
+	.counted {
+		font-family: var(--sans);
+		font-size: 0.8125rem;
+		color: var(--muted);
+		white-space: nowrap;
+		margin-right: 4px;
+	}
+	.count {
+		font-size: 0.8125rem;
+		padding: 2px 8px;
+		margin-right: 4px;
 	}
 	.tools {
 		display: inline-flex;
