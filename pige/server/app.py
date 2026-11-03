@@ -120,6 +120,7 @@ def create_app(
     if model_store is None:
         # New model (/api/v2). The server's data never sits in a synced folder: WAL is fine.
         model_store = ModelStore(settings.data_dir / DB_FILE_NAME, wal=True)
+        model_store.backfill_conversations()  # mails kept before conversations existed
     signer = SessionSigner(
         settings.session_secret,
         settings.session_days * 86400,

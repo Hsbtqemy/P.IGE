@@ -288,7 +288,7 @@ export interface Target {
 }
 
 export interface SearchHit {
-	kind: 'entry' | 'task';
+	kind: 'entry' | 'task' | 'mail';
 	id: string;
 	title: string;
 	snippet: string;
@@ -297,6 +297,41 @@ export interface SearchHit {
 	entry_date: string | null;
 	status: TaskStatus | null;
 	done_at?: string | null;
+}
+
+export type ConversationState = 'none' | 'to_answer' | 'waiting' | 'answered' | 'filed';
+
+/** The mails of one exchange (filed in the journal or in a task's follow-up). */
+export interface Conversation {
+	id: string;
+	space_id: string;
+	project_id: string | null;
+	task_id: string | null;
+	subject: string;
+	state: ConversationState;
+	state_since: string;
+	last_at: string;
+	created_at: string;
+	count: number;
+	people: string[];
+	task: { id: string; title: string; status: TaskStatus } | null;
+	last: { direction: 'sent' | 'received'; author: string; at: string; day: string; excerpt: string } | null;
+}
+
+export interface ConversationMail {
+	id: string;
+	kind: 'entry' | 'followup';
+	message_id: string;
+	direction: 'sent' | 'received';
+	at: string;
+	day: string;
+	author: string;
+	recipients: string;
+	subject: string;
+	body: string;
+	attachments: string;
+	entry_id: string | null;
+	task_id: string | null;
 }
 
 export interface CalendarInfo {
@@ -489,6 +524,11 @@ export const v2 = {
 		request<{ entry_id: string; created: boolean; event: AgendaEvent }>('POST', `/api/v2/agenda/${encodeURIComponent(id)}/notes?${q({ tz })}`, target),
 	entryNotes: (id: string) => request<{ entry_id: string; created: boolean }>('POST', `/api/v2/entries/${id}/notes`),
 	setAbout: (id: string, about: { entry_id?: string; event_id?: string }) => request<Entry>('POST', `/api/v2/entries/${id}/about`, about),
+	conversations: (params: { project_id?: string; space_id?: string; without_project?: boolean; state?: string; q?: string; limit?: number }) =>
+		request<Conversation[]>('GET', `/api/v2/conversations?${q(params)}`),
+	conversation: (id: string) => request<Conversation & { mails: ConversationMail[] }>('GET', `/api/v2/conversations/${id}`),
+	setConversationState: (id: string, state: ConversationState) =>
+		request<Conversation>('PATCH', `/api/v2/conversations/${id}`, { state }),
 	countEvent: (id: string, target: Target) =>
 		request<{ block_id: string; created: boolean; event: AgendaEvent }>('POST', `/api/v2/agenda/${id}/count`, target),
 	tasksInProgress: () => request<Task[]>('GET', '/api/v2/tasks/in-progress'),

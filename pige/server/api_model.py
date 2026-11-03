@@ -6,6 +6,8 @@ for the current web app and the Thunderbird extension until they move here.
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any, Callable, Literal
@@ -157,6 +159,7 @@ class EntryIn(_In):
     person_ids: list[Annotated[str, Field(pattern=HEX)]] = Field(default_factory=list, max_length=50)
     tags: list[ShortText] = Field(default_factory=list, max_length=50)
     agenda: bool = False  # an event added in the Agenda: its time counts only once « Compter »
+    references: list[Annotated[str, Field(max_length=998)]] = Field(default_factory=list, max_length=100)  # a mail's
 
 
 class EntryPatch(_In):
@@ -174,6 +177,10 @@ class EntryPatch(_In):
     people: list[ShortText] | None = Field(default=None, max_length=50)
     person_ids: list[Annotated[str, Field(pattern=HEX)]] | None = Field(default=None, max_length=50)
     tags: list[ShortText] | None = Field(default=None, max_length=50)
+
+
+class ConversationPatch(_In):
+    state: Literal["none", "to_answer", "waiting", "answered", "filed"]
 
 
 class AboutIn(_In):
@@ -526,6 +533,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
                 author=body.author, recipients=body.recipients, subject=body.subject, body=body.body,
                 attachments=body.attachments,
             )
+            store.file_followup_mail(mail.id, body.references)
             response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
             return {"task": _out(store.get_task(task_id)), "mail": _out(mail), "created": created}
 
@@ -687,12 +695,15 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
 
     def _create_entry(body: EntryIn) -> Entry:
         data = body.model_dump()
+        references = data.pop("references")
         data["new_id"] = data.pop("id")
         data["start_time"] = data["start_time"] or None
         data["end_time"] = data["end_time"] or None
         with store.transaction():
             entry = store.create_entry(**data)
             store.sync_entry_block(entry.id, _zone(default_timezone))
+            if entry.source == "mail" and entry.mail_message_id:
+                store.file_mail_entry(entry.id, references)
             return entry
 
     @router.post("/entries/{entry_id}/about")
@@ -731,6 +742,51 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             )
             store.set_about(text.id, entry_id)
             return {"entry_id": text.id, "created": True}
+
+    def _conversation_view(conv: Any, mails: list[Any] | None = None) -> dict[str, Any]:
+        mails = store.conversation_mails(conv.id) if mails is None else mails
+        people: list[str] = []
+        for m in mails:
+            who = re.sub(r"\s*<[^>]*>", "", m.author).strip().strip('"') if m.direction == "received" else ""
+            if who and who not in people:
+                people.append(who)
+        task = None
+        if conv.task_id:
+            try:
+                t = store.get_task(conv.task_id)
+                task = {"id": t.id, "title": t.title, "status": t.status}
+            except NotFoundError:
+                task = None
+        last = mails[-1] if mails else None
+        return {
+            **_out(conv), "count": len(mails), "people": people, "task": task,
+            "last": {"direction": last.direction, "author": last.author, "at": last.at, "day": last.day,
+                     "excerpt": " ".join(last.body.split())[:160]} if last else None,
+        }
+
+    @router.get("/conversations")
+    def conversations(
+        project_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{32}$"),
+        space_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{32}$"),
+        without_project: bool = False,
+        state: str = Query(default="", max_length=100),
+        q: str = Query(default="", max_length=200),
+        limit: int = Query(default=100, ge=1, le=300),
+    ) -> list[dict[str, Any]]:
+        """The conversations (mails of one exchange) of a project or a space, most recent first."""
+        convs = store.conversations(project_id=project_id, space_id=space_id, without_project=without_project,
+                                    states=[x for x in state.split(",") if x], query=q, limit=limit)
+        return [_conversation_view(c) for c in convs]
+
+    @router.get("/conversations/{conv_id}")
+    def conversation(conv_id: IdPath) -> dict[str, Any]:
+        conv = store.get_conversation(conv_id)
+        mails = store.conversation_mails(conv_id)
+        return {**_conversation_view(conv, mails), "mails": _out(mails)}
+
+    @router.patch("/conversations/{conv_id}")
+    def update_conversation(conv_id: IdPath, body: ConversationPatch) -> dict[str, Any]:
+        return _conversation_view(store.set_conversation_state(conv_id, body.state))
 
     @router.get("/entries/{entry_id}/tasks")
     def entry_tasks(entry_id: IdPath) -> list[dict[str, Any]]:

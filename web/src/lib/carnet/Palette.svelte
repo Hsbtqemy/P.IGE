@@ -151,6 +151,15 @@
 								: `${h.project_id ? `/projets/${h.project_id}` : `/espaces/${h.space_id}`}?tache=${h.id}`
 						)
 				});
+			} else if (h.kind === 'mail') {
+				out.push({
+					key: `mail:${h.id}`,
+					group: 'Mails',
+					label: h.title,
+					detail: where,
+					snippet: h.snippet,
+					run: () => go(`${h.project_id ? `/projets/${h.project_id}` : `/espaces/${h.space_id}`}?conv=${h.id}`)
+				});
 			} else {
 				out.push({
 					key: `entry:${h.id}`,
