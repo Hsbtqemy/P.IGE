@@ -124,6 +124,14 @@
 		color: var(--muted);
 		text-decoration: line-through;
 	}
+	.rendered :global(img) {
+		display: block;
+		max-width: 100%;
+		max-height: 28em;
+		margin: 6px 0;
+		border-radius: 4px;
+		border: 1px solid var(--line);
+	}
 	.rendered :global(blockquote) {
 		margin: 0.4em 0;
 		padding-left: 0.9em;

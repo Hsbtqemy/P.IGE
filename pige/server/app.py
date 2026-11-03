@@ -22,6 +22,7 @@ from pige.core.models import Task
 from pige.core.service import INBOX_TAG, PigeService
 from pige.core.storage import Storage
 from pige.model import DB_FILE_NAME, ConflictError, ModelStore, NotFoundError
+from pige.server.api_files import FileStore, build_files_router
 from pige.server.api_model import build_router
 from pige.server.api_security import build_security_router
 from pige.server.api_code import build_code_router
@@ -301,6 +302,10 @@ def create_app(
             names = {p.id: p.name for p in service.list_projects("all")}
         return _task_out(task, names)
 
+    app.state.model_store = model_store
+    file_store = FileStore(settings.data_dir / "files")
+    file_store.sweep(model_store)
+    app.include_router(build_files_router(model_store, file_store, require_auth))
     app.include_router(build_router(model_store, require_auth, settings.timezone))
     app.include_router(build_security_router(settings, auth_store, throttle, require_session, sign_in))
     vault = Vault(settings.session_secret)

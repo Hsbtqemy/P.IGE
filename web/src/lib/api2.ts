@@ -59,6 +59,7 @@ export interface Entry {
 	version: number;
 	revision: number;
 	cancelled?: boolean;
+	files?: { id: string; name: string; width: number | null; height: number | null; url: string }[]; // pictures
 	agenda?: boolean; // added in the Agenda as an event
 	counted?: boolean; // its time range counts (an Agenda event: once « Compter »)
 	about_entry_id?: string | null;
@@ -427,6 +428,7 @@ export interface NewEntry {
 	people?: string[];
 	tags?: string[];
 	agenda?: boolean;
+	file_ids?: string[];
 }
 
 export interface EntryPatch {

@@ -161,6 +161,7 @@ class EntryIn(_In):
     agenda: bool = False  # an event added in the Agenda: its time counts only once « Compter »
     references: list[Annotated[str, Field(max_length=998)]] = Field(default_factory=list, max_length=100)  # a mail's
     to_answer: bool = False  # a mail filed « À répondre »: its conversation waits for a reply
+    file_ids: list[Annotated[str, Field(pattern=HEX)]] = Field(default_factory=list, max_length=30)  # images
 
 
 class EntryPatch(_In):
@@ -667,11 +668,14 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         tags = store.tags_for_entries(ids)
         code = store.code_summaries([e.id for e in entries if e.source == "import"])
         written = store.notes_for(ids)
+        attached = store.files_for(ids)
         zone_ = _zone(default_timezone)
         return [
             {**_out(e), "people": _out(people[e.id]), "tags": _out(tags[e.id]),
              **({"code": code[e.id]} if e.id in code else {}),
              "notes": notes_.notes_ref(written.get(e.id)),
+             "files": [{"id": f.id, "name": f.name, "width": f.width, "height": f.height,
+                        "url": f"/api/v2/files/{f.id}"} for f in attached[e.id]],
              "about": notes_.about_view(store, e, zone_) if e.source == "writing" else None}
             for e in entries
         ]
@@ -762,6 +766,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         data = body.model_dump()
         references = data.pop("references")
         data.pop("to_answer")
+        file_ids = data.pop("file_ids")
         data["new_id"] = data.pop("id")
         data["start_time"] = data["start_time"] or None
         data["end_time"] = data["end_time"] or None
@@ -770,6 +775,8 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             store.sync_entry_block(entry.id, _zone(default_timezone))
             if entry.source == "mail" and entry.mail_message_id:
                 store.file_mail_entry(entry.id, references)
+            if file_ids:
+                store.attach_files(entry.id, file_ids)
             return entry
 
     @router.post("/entries/{entry_id}/about")
