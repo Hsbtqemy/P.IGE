@@ -684,3 +684,31 @@ def test_mails_kept_before_conversations_are_grouped(tmp_path):
     assert store.backfill_conversations() == 2 and store.backfill_conversations() == 0
     [conv] = store.conversations(space_id=space.id)
     assert (conv.subject, conv.task_id, len(store.conversation_mails(conv.id))) == ("Demande", task.id, 2)
+
+
+def test_a_mail_to_answer_until_the_reply_is_sent(client, tree):
+    dico = tree["dico"]["id"]
+    mail = ok(client.post("/api/v2/entries", json={
+        "entry_date": "2026-11-02", "project_id": dico, "title": "Question sur le mémoire",
+        "body": "Mail de Akiona <a@b.fr>\n\nPouvez-vous relire ?", "source": "mail",
+        "mail_message_id": "<q1@b.fr>", "to_answer": True}), 201)
+    [conv] = ok(client.get("/api/v2/conversations?state=to_answer"))
+    assert conv["subject"] == "Question sur le mémoire" and conv["last_received"] == "<q1@b.fr>"
+    sent = {"message_id": "<a1@me>", "references": ["<q1@b.fr>"], "direction": "sent",
+            "sent_at": "2026-11-03T10:00:00+01:00", "day": "2026-11-03", "recipients": "Akiona",
+            "subject": "Re: Question sur le mémoire", "body": "Oui, je regarde demain."}
+    r = ok(client.post("/api/v2/mails/sent", json=sent), 201)
+    assert r["answered"] is True and r["task"] is None and r["conversation"]["state"] == "answered"
+    assert ok(client.post("/api/v2/mails/sent", json=sent))["created"] is False  # a resend
+    full = ok(client.get(f"/api/v2/conversations/{conv['id']}"))
+    assert [(m["direction"], m["recipients"], m["body"]) for m in full["mails"]][1] == ("sent", "Akiona", "Oui, je regarde demain.")
+    day = ok(client.get("/api/v2/conversations?state=answered,filed&changed_from=2000-01-01T00:00:00Z"))
+    assert [c["id"] for c in day] == [conv["id"]]
+    # Waiting for their answer: a mail of theirs filed puts it back to answer.
+    ok(client.patch(f"/api/v2/conversations/{conv['id']}", json={"state": "waiting"}))
+    ok(client.post("/api/v2/entries", json={
+        "entry_date": "2026-11-04", "project_id": dico, "title": "RE: Question", "body": "Mail de Akiona\n\nMerci",
+        "source": "mail", "mail_message_id": "<q2@b.fr>", "references": ["<a1@me>"]}), 201)
+    assert ok(client.get(f"/api/v2/conversations/{conv['id']}"))["state"] == "to_answer"
+    assert client.post("/api/v2/mails/sent", json={**sent, "message_id": "<x@me>", "references": ["<unknown@x>"]}).status_code == 404
+    assert mail["id"]

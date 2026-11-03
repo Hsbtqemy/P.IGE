@@ -87,7 +87,7 @@ export function menuItems(tree, action, parentId) {
 /** "task|p|<id>" -> { action: 'task', target: { project_id } } ; null for groups and separators. */
 export function parseMenuId(id) {
   const [action, kind, value] = String(id).split('|');
-  if (!['task', 'note'].includes(action) || !value) return null;
+  if (!['task', 'note', 'answer'].includes(action) || !value) return null;
   if (kind === 'p') return { action, target: { project_id: value } };
   if (kind === 's') return { action, target: { space_id: value } };
   return null;

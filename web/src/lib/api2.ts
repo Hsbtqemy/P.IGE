@@ -316,6 +316,8 @@ export interface Conversation {
 	people: string[];
 	task: { id: string; title: string; status: TaskStatus } | null;
 	last: { direction: 'sent' | 'received'; author: string; at: string; day: string; excerpt: string } | null;
+	/** Message-ID of the last mail received, to open it. */
+	last_received: string | null;
 }
 
 export interface ConversationMail {
@@ -524,7 +526,16 @@ export const v2 = {
 		request<{ entry_id: string; created: boolean; event: AgendaEvent }>('POST', `/api/v2/agenda/${encodeURIComponent(id)}/notes?${q({ tz })}`, target),
 	entryNotes: (id: string) => request<{ entry_id: string; created: boolean }>('POST', `/api/v2/entries/${id}/notes`),
 	setAbout: (id: string, about: { entry_id?: string; event_id?: string }) => request<Entry>('POST', `/api/v2/entries/${id}/about`, about),
-	conversations: (params: { project_id?: string; space_id?: string; without_project?: boolean; state?: string; q?: string; limit?: number }) =>
+	conversations: (params: {
+		project_id?: string;
+		space_id?: string;
+		without_project?: boolean;
+		state?: string;
+		q?: string;
+		changed_from?: string;
+		changed_to?: string;
+		limit?: number;
+	}) =>
 		request<Conversation[]>('GET', `/api/v2/conversations?${q(params)}`),
 	conversation: (id: string) => request<Conversation & { mails: ConversationMail[] }>('GET', `/api/v2/conversations/${id}`),
 	setConversationState: (id: string, state: ConversationState) =>
