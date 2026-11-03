@@ -122,7 +122,7 @@ async function* listOf(messages) {
 async function popupAction({ action, target, tabId }) {
   const shown = await displayedMessages({ id: tabId });
   if (!shown.length) return { ok: false, error: 'Aucun mail affiché.' };
-  if (!['task', 'note', 'follow'].includes(action)) return { ok: false };
+  if (!['task', 'note', 'answer', 'follow'].includes(action)) return { ok: false };
   // Answer at once so the popup closes; the outcome comes as a notification.
   const work = action === 'follow' ? followMails(listOf(shown)) : fileMails({ action, target }, listOf(shown));
   work.catch((err) => notify('Rien n’a été envoyé', String(err?.message || err)));
@@ -152,6 +152,7 @@ async function buildMenu() {
     browser.menus.create({ id: 'configure', parentId: ROOT_MENU, title: 'Configurer l’extension…', contexts: CONTEXTS });
     return;
   }
+  browser.menus.create({ id: 'answer', parentId: ROOT_MENU, title: 'À répondre', contexts: CONTEXTS });
   browser.menus.create({ id: 'task', parentId: ROOT_MENU, title: 'Créer une tâche', contexts: CONTEXTS });
   browser.menus.create({ id: 'note', parentId: ROOT_MENU, title: 'Noter dans le journal', contexts: CONTEXTS });
   browser.menus.create({ id: 'follow', parentId: ROOT_MENU, title: 'Ajouter au suivi de la tâche', contexts: CONTEXTS });
@@ -162,7 +163,7 @@ async function buildMenu() {
     browser.menus.create({ id: 'offline', parentId: ROOT_MENU, title: 'Serveur injoignable', enabled: false, contexts: CONTEXTS });
     return;
   }
-  for (const action of ['task', 'note']) {
+  for (const action of ['answer', 'task', 'note']) {
     for (const item of menuItems(tree, action, action)) browser.menus.create({ ...item, contexts: CONTEXTS });
   }
 }
@@ -243,7 +244,9 @@ async function fileMail(header, action, target, people) {
   const references = msgId ? await referencesOf(header.id) : [];
   const entry = await api('POST', '/api/v2/entries', {
     ...entryForMail({ id: entryId, header, text, attachments, target, personIds: known ? [known.id] : [] }),
-    references
+    references,
+    // « À répondre »: the conversation waits for a reply, listed in Ma journée until it comes.
+    to_answer: action === 'answer'
   });
   if (action === 'task') {
     // A mail already in P.IGE (noted earlier, elsewhere) comes back as it was: the task goes
@@ -313,6 +316,8 @@ async function fileMails(choice, headers) {
     notify('Envoi incomplet', `${failures.length} sur ${done + failures.length} non envoyés (${failures[0]}).`);
   } else if (choice.action === 'task') {
     notify(done > 1 ? `${done} tâches créées` : 'Tâche créée', `Dans ${where}.`);
+  } else if (choice.action === 'answer') {
+    notify(done > 1 ? `${done} mails à répondre` : 'À répondre', `Dans ${where} : listé dans Ma journée jusqu’à ta réponse.`);
   } else {
     notify(done > 1 ? `${done} mails notés` : 'Mail noté', `Dans le journal, ${where}.`);
   }
@@ -451,7 +456,7 @@ browser.compose.onAfterSend.addListener(async (tab, sendInfo) => {
     const sentId = sendInfo.headerMessageId || sendInfo.messages?.[0]?.headerMessageId || `${crypto.randomUUID()}@pige.local`;
     const result = await api(
       'POST',
-      '/api/v2/mail-followups',
+      '/api/v2/mails/sent',
       followUpFor({
         messageId: sentId,
         references,
@@ -465,9 +470,10 @@ browser.compose.onAfterSend.addListener(async (tab, sendInfo) => {
       })
     );
     await refreshOpenTabs();
-    notify('Réponse ajoutée au suivi', `Tâche « ${result.task.title} ».`);
+    if (result.answered) notify('Répondu', `« ${result.conversation?.subject || pending.subject || 'Mail'} » n’est plus à répondre.`);
+    else if (result.task) notify('Réponse ajoutée au suivi', `Tâche « ${result.task.title} ».`);
   } catch {
-    /* no task behind this mail (404), or server unreachable: nothing to say */
+    /* nothing of this exchange in P.IGE (404), or server unreachable: nothing to say */
   }
 });
 

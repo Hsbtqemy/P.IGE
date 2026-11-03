@@ -2432,6 +2432,10 @@ class ModelStore:
 
     # ------------------------------------------------------------ conversations
 
+    def conversation_of(self, message_ids: Iterable[str]) -> str | None:
+        """The conversation one of these Message-IDs belongs to."""
+        return self._conversation_of(message_ids)
+
     def _conversation_of(self, message_ids: Iterable[str]) -> str | None:
         ids = [m.strip() for m in message_ids if m and m.strip()][:100]
         if not ids:
@@ -2527,9 +2531,13 @@ class ModelStore:
         out: list[ConversationMail] = []
         for r in self.conn.execute("SELECT * FROM entries WHERE conversation_id = ?", (conv_id,)).fetchall():
             author, text = _mail_parts(r["body"])
-            out.append(ConversationMail(r["id"], "entry", r["mail_message_id"] or "", "received",
-                                        _entry_moment(r["entry_date"], r["created_at"]), r["entry_date"], author, "",
-                                        r["title"], text, "", r["id"], r["task_id"]))
+            recipients, direction = "", "received"
+            first, _, rest = r["body"].partition("\n")
+            if first.startswith("Envoyé à "):  # a reply sent from Thunderbird, kept in the journal
+                recipients, direction, author, text = first[9:].strip(), "sent", "", rest.strip()
+            out.append(ConversationMail(r["id"], "entry", r["mail_message_id"] or "", direction,
+                                        _entry_moment(r["entry_date"], r["created_at"]), r["entry_date"], author,
+                                        recipients, r["title"], text, "", r["id"], r["task_id"]))
         for r in self.conn.execute("SELECT * FROM task_mails WHERE conversation_id = ?", (conv_id,)).fetchall():
             out.append(ConversationMail(r["id"], "followup", r["message_id"], r["direction"], r["sent_at"], r["day"],
                                         r["author"], r["recipients"], r["subject"], r["body"], r["attachments"],
@@ -2545,6 +2553,8 @@ class ModelStore:
         without_project: bool = False,
         states: Sequence[str] = (),
         query: str = "",
+        changed_from: str | None = None,
+        changed_to: str | None = None,
         limit: int = 100,
     ) -> list[Conversation]:
         """Conversations that still hold a mail, the most recent first."""
@@ -2562,6 +2572,12 @@ class ModelStore:
         if states:
             where.append(f"c.state IN ({','.join('?' * len(states))})")
             params += list(states)
+        if changed_from is not None:
+            where.append("c.state_since >= ?")
+            params.append(changed_from)
+        if changed_to is not None:
+            where.append("c.state_since < ?")
+            params.append(changed_to)
         words = [w for w in query.lower().split() if w][:8]
         for w in words:
             like = f"%{w}%"

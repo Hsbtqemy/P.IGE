@@ -85,6 +85,22 @@
 		void toggle(c).then(() => tick()).then(() => document.getElementById(`conv-${id}`)?.scrollIntoView({ block: 'center' }));
 	});
 
+	async function setState(c: Conversation, state: ConversationState) {
+		const next = c.state === state ? 'none' : state; // a second click takes it off
+		try {
+			const updated = await v2.setConversationState(c.id, next);
+			list = (list ?? []).map((x) => (x.id === c.id ? { ...x, state: updated.state, state_since: updated.state_since } : x));
+		} catch (err) {
+			message = failure(err, 'État non modifié : ');
+		}
+	}
+	const CHOICES: [ConversationState, string][] = [
+		['to_answer', 'À répondre'],
+		['waiting', 'J’attends sa réponse'],
+		['answered', 'Répondu'],
+		['filed', 'Classé']
+	];
+
 	const date = (iso: string) => new Date(iso.length > 10 ? iso : `${iso}T12:00:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 	const firstLine = (text: string) => text.split('\n').find((l) => l.trim())?.trim() ?? '';
 	let shown = $derived(list ? (showAll || query.trim() ? list : list.slice(0, FIRST)) : []);
@@ -120,6 +136,11 @@
 						<a class="task" href="?tache={c.task.id}" title="La tâche liée à cette conversation">☐ {c.task.title}</a>
 					{/if}
 					{#if openId === c.id}
+						<div class="states" role="group" aria-label="État de la conversation">
+							{#each CHOICES as [value, label] (value)}
+								<button class:on={c.state === value} aria-pressed={c.state === value} onclick={() => setState(c, value)}>{label}</button>
+							{/each}
+						</div>
 						<ol class="thread">
 							{#each mails as m (m.id)}
 								<li class:sent={m.direction === 'sent'}>
@@ -242,6 +263,28 @@
 		font-size: 0.8125rem;
 		color: var(--muted);
 	}
+	.states {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		margin: 0 0 6px 66px;
+	}
+	.states button {
+		padding: 1px 8px;
+		border: 1px solid var(--line);
+		border-radius: 12px;
+		background: none;
+		font: inherit;
+		font-family: var(--sans);
+		font-size: 0.75rem;
+		color: var(--muted);
+		cursor: pointer;
+	}
+	.states button.on {
+		background: var(--soft);
+		color: var(--ink);
+		font-weight: 700;
+	}
 	.thread {
 		margin: 0 0 8px 66px;
 		border-left: 2px solid var(--line);
@@ -335,6 +378,7 @@
 			display: none;
 		}
 		.task,
+		.states,
 		.thread {
 			margin-left: 0;
 		}

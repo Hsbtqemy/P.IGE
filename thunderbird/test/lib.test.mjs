@@ -44,6 +44,7 @@ test('menu: À trier first, then spaces with their projects', () => {
   assert.equal(new Set(items.map((i) => i.id)).size, items.length);
   assert.deepEqual(parseMenuId('task|p|p1'), { action: 'task', target: { project_id: 'p1' } });
   assert.deepEqual(parseMenuId('note|s|s2'), { action: 'note', target: { space_id: 's2' } });
+  assert.deepEqual(parseMenuId('answer|p|p1'), { action: 'answer', target: { project_id: 'p1' } });
   assert.equal(parseMenuId('task|g|s1'), null);
   assert.equal(parseMenuId('task|sep'), null);
   assert.equal(parseMenuId('other|p|x'), null);

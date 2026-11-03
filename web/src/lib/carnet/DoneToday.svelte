@@ -1,7 +1,7 @@
 <script lang="ts">
 	// What was finished on a day (by the moment it was ticked), grouped by project: the day's
 	// record in the journal and in Ma journée. « Rouvrir » undoes a click.
-	import { v2, type Priority, type Task } from '../api2.js';
+	import { v2, type Conversation, type Priority, type Task } from '../api2.js';
 	import { byPlace } from './plan.js';
 	import { failure, placeName, reload, shiftDay, timeZone } from './state.svelte.js';
 
@@ -17,20 +17,26 @@
 	// (a priority that is a task shows up as that task).
 	let priorities = $state<Priority[]>([]);
 	let all = $state<Priority[]>([]);
+	// Mails answered (or put away) that day: the conversation changed state then.
+	let mails = $state<Conversation[]>([]);
 	let message = $state('');
 
 	async function load(target: string) {
 		try {
 			const start = new Date(`${target}T00:00:00`);
 			const end = new Date(`${shiftDay(target, 1)}T00:00:00`);
-			const [list, frame] = await Promise.all([
+			const [list, frame, answered] = await Promise.all([
 				v2.doneTasks(start.toISOString()),
-				v2.frame(target, timeZone()).catch(() => null)
+				v2.frame(target, timeZone()).catch(() => null),
+				v2
+					.conversations({ state: 'answered,filed', changed_from: start.toISOString(), changed_to: end.toISOString() })
+					.catch(() => [] as Conversation[])
 			]);
 			if (target !== day) return;
 			tasks = list.filter((t) => t.done_at && new Date(t.done_at) < end);
 			all = frame?.priorities ?? [];
 			priorities = all.filter((p) => !p.task_id && p.done);
+			mails = answered;
 		} catch (err) {
 			if (target === day) message = failure(err, 'Tâches terminées non chargées : ');
 		}
@@ -53,6 +59,17 @@
 		}
 	}
 
+	async function reopenMail(c: Conversation) {
+		message = '';
+		try {
+			await v2.setConversationState(c.id, 'to_answer');
+			mails = mails.filter((x) => x.id !== c.id);
+			onreopen?.();
+		} catch (err) {
+			message = failure(err, 'Non remis à répondre : ');
+		}
+	}
+
 	async function reopenPriority(p: Priority) {
 		message = '';
 		try {
@@ -69,15 +86,34 @@
 	const clock = (iso: string) => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 </script>
 
-{#if tasks.length || priorities.length || message}
+{#if tasks.length || priorities.length || mails.length || message}
 	<section class="done" aria-label={title}>
 		<h2>
 			{title}
 			<small>
-				{#if tasks.length}{tasks.length} tâche{tasks.length > 1 ? 's' : ''} terminée{tasks.length > 1 ? 's' : ''}{/if}{#if tasks.length && priorities.length}{' · '}{/if}{#if priorities.length}{priorities.length} priorité{priorities.length > 1 ? 's' : ''}{/if}
+				{#if tasks.length}{tasks.length} tâche{tasks.length > 1 ? 's' : ''} terminée{tasks.length > 1 ? 's' : ''}{/if}{#if tasks.length && priorities.length}{' · '}{/if}{#if priorities.length}{priorities.length} priorité{priorities.length > 1 ? 's' : ''}{/if}{#if (tasks.length || priorities.length) && mails.length}{' · '}{/if}{#if mails.length}{mails.length} mail{mails.length > 1 ? 's' : ''}{/if}
 			</small>
 		</h2>
 		{#if message}<p class="warn" role="alert">{message}</p>{/if}
+		{#if mails.length}
+			<div class="place">
+				<h3>Mails</h3>
+				<ul>
+					{#each mails as c (c.id)}
+						<li>
+							<span class="tick" aria-hidden="true">✓</span>
+							<span class="title">
+								{c.state === 'answered' ? 'Répondu' : 'Classé'} :
+								<a href="{c.project_id ? `/projets/${c.project_id}` : `/espaces/${c.space_id}`}?conv={c.id}">{c.subject || '(sans objet)'}</a>
+								<small>· {placeName(c)}</small>
+							</span>
+							<small>{new Date(c.state_since).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</small>
+							<button class="reopen" onclick={() => reopenMail(c)} title="Pas encore réglé ? Le remettre à répondre">Rouvrir</button>
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
 		{#if priorities.length}
 			<div class="place">
 				<h3>Priorités du jour</h3>

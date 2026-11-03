@@ -160,6 +160,7 @@ class EntryIn(_In):
     tags: list[ShortText] = Field(default_factory=list, max_length=50)
     agenda: bool = False  # an event added in the Agenda: its time counts only once « Compter »
     references: list[Annotated[str, Field(max_length=998)]] = Field(default_factory=list, max_length=100)  # a mail's
+    to_answer: bool = False  # a mail filed « À répondre »: its conversation waits for a reply
 
 
 class EntryPatch(_In):
@@ -533,9 +534,61 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
                 author=body.author, recipients=body.recipients, subject=body.subject, body=body.body,
                 attachments=body.attachments,
             )
-            store.file_followup_mail(mail.id, body.references)
+            conv_id = store.file_followup_mail(mail.id, body.references)
+            state = store.get_conversation(conv_id).state
+            if body.direction == "received" and state == "waiting":
+                store.set_conversation_state(conv_id, "to_answer")
+            elif body.direction == "sent" and state == "to_answer":
+                store.set_conversation_state(conv_id, "answered")
             response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
             return {"task": _out(store.get_task(task_id)), "mail": _out(mail), "created": created}
+
+    @router.post("/mails/sent")
+    def mail_sent(body: MailFollowUpIn, response: Response) -> dict[str, Any]:
+        """A reply sent from Thunderbird: kept in its task's follow-up if a task comes from the
+        exchange, else in its conversation (as a journal entry). A conversation that was
+        waiting for an answer is then « répondu ». 404 when nothing in P.IGE knows the exchange."""
+        if body.sent_at.tzinfo is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "sent_at: a time with its offset is expected")
+        refs = [*body.references, body.message_id]
+        with store.transaction():
+            task_id = store.task_for_mail(refs)
+            task = store.get_task(task_id) if task_id else None
+            created = False
+            if task is not None:
+                mail, created = store.add_task_mail(
+                    task.id, message_id=body.message_id, direction="sent", sent_at=body.sent_at, day=body.day,
+                    author=body.author, recipients=body.recipients, subject=body.subject, body=body.body,
+                    attachments=body.attachments,
+                )
+                conv_id: str | None = store.file_followup_mail(mail.id, body.references)
+            else:
+                conv_id = store.conversation_of(refs)
+                if conv_id is None:
+                    raise HTTPException(status.HTTP_404_NOT_FOUND, "Aucun mail de cet échange n'est dans P.IGE")
+                conv = store.get_conversation(conv_id)
+                existing = store.entry_by_mail(body.message_id)
+                if existing is None:
+                    text = f"Envoyé à {body.recipients or '—'}\n\n{body.body}".rstrip() + "\n"
+                    if body.attachments:
+                        text += f"\nPièces jointes : {body.attachments}\n"
+                    entry = store.create_entry(
+                        entry_date=body.day, project_id=conv.project_id,
+                        space_id=None if conv.project_id else conv.space_id, title=(body.subject or conv.subject)[:500],
+                        body=text, source="mail", mail_message_id=body.message_id,
+                    )
+                    store.file_mail_entry(entry.id, body.references)
+                    created = True
+            answered = False
+            if conv_id is not None and store.get_conversation(conv_id).state == "to_answer":
+                store.set_conversation_state(conv_id, "answered")
+                answered = True
+            response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+            return {
+                "task": _out(task) if task else None,
+                "conversation": _conversation_view(store.get_conversation(conv_id)) if conv_id else None,
+                "answered": answered, "created": created,
+            }
 
     @router.delete("/task-mails/{mail_id}", status_code=status.HTTP_204_NO_CONTENT)
     def delete_task_mail(mail_id: IdPath) -> Response:
@@ -664,9 +717,9 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
                 if store.entry_exists(body.id):
                     response.status_code = status.HTTP_200_OK  # a resend after a lost reply
                     _complete_mail(body.id, body)
-                    return _entry_view(body.id)
+                    return _filed(body.id, body)
                 if not body.mail_message_id:
-                    return _entry_view(_create_entry(body).id)
+                    return _filed(_create_entry(body).id, body)
         if body.mail_message_id:
             # The extension may resend after a lost reply: the same mail gives the same entry.
             # Checked inside the write transaction, so two simultaneous resends cannot both insert.
@@ -675,9 +728,21 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
                 if existing is not None:
                     response.status_code = status.HTTP_200_OK
                     _complete_mail(existing.id, body)
-                    return _entry_view(existing.id)
-                return _entry_view(_create_entry(body).id)
-        return _entry_view(_create_entry(body).id)
+                    return _filed(existing.id, body)
+                return _filed(_create_entry(body).id, body)
+        return _filed(_create_entry(body).id, body)
+
+    def _filed(entry_id: str, body: EntryIn) -> dict[str, Any]:
+        """A mail filed: into its conversation; « À répondre » marks it so, and a mail coming in
+        on a conversation waiting for an answer puts it back to answer."""
+        if body.source == "mail" and body.mail_message_id:
+            with store.transaction():
+                conv_id = store.file_mail_entry(entry_id, body.references)
+                if conv_id is not None:
+                    state = store.get_conversation(conv_id).state
+                    if body.to_answer or state == "waiting":
+                        store.set_conversation_state(conv_id, "to_answer")
+        return _entry_view(entry_id)
 
     def _complete_mail(entry_id: str, body: EntryIn) -> None:
         """A mail filed again by a newer extension brings its full text: it replaces the short
@@ -696,6 +761,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
     def _create_entry(body: EntryIn) -> Entry:
         data = body.model_dump()
         references = data.pop("references")
+        data.pop("to_answer")
         data["new_id"] = data.pop("id")
         data["start_time"] = data["start_time"] or None
         data["end_time"] = data["end_time"] or None
@@ -758,10 +824,12 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             except NotFoundError:
                 task = None
         last = mails[-1] if mails else None
+        received = [m for m in mails if m.direction == "received" and m.message_id]
         return {
             **_out(conv), "count": len(mails), "people": people, "task": task,
             "last": {"direction": last.direction, "author": last.author, "at": last.at, "day": last.day,
                      "excerpt": " ".join(last.body.split())[:160]} if last else None,
+            "last_received": received[-1].message_id if received else None,
         }
 
     @router.get("/conversations")
@@ -771,11 +839,16 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         without_project: bool = False,
         state: str = Query(default="", max_length=100),
         q: str = Query(default="", max_length=200),
+        changed_from: datetime | None = None,
+        changed_to: datetime | None = None,
         limit: int = Query(default=100, ge=1, le=300),
     ) -> list[dict[str, Any]]:
-        """The conversations (mails of one exchange) of a project or a space, most recent first."""
+        """The conversations (mails of one exchange) of a project or a space, most recent first;
+        ``changed_from``/``changed_to``: whose state changed then (« Répondu » on a day)."""
         convs = store.conversations(project_id=project_id, space_id=space_id, without_project=without_project,
-                                    states=[x for x in state.split(",") if x], query=q, limit=limit)
+                                    states=[x for x in state.split(",") if x], query=q, limit=limit,
+                                    changed_from=_out(changed_from) if changed_from else None,
+                                    changed_to=_out(changed_to) if changed_to else None)
         return [_conversation_view(c) for c in convs]
 
     @router.get("/conversations/{conv_id}")

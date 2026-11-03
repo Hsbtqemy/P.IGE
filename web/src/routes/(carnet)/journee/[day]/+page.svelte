@@ -4,6 +4,7 @@
 	import EventRow from '#lib/carnet/EventRow.svelte';
 	import PlannedRow from '#lib/carnet/PlannedRow.svelte';
 	import DayPlan from '#lib/carnet/DayPlan.svelte';
+	import MailsToAnswer from '#lib/carnet/MailsToAnswer.svelte';
 	import DayFrame from '#lib/carnet/DayFrame.svelte';
 	import DoneToday from '#lib/carnet/DoneToday.svelte';
 	import { v2, type AgendaEvent, type CountedBlock, type DayReport, type OverlapMode, type Target, type Task, type TimeBlock, type WeekReport, type Entry } from '#lib/api2.js';
@@ -377,6 +378,7 @@
 				</section>
 			{/if}
 			<DayPlan tasks={openTasks} {day} isToday={day === todayIso()} onchanged={() => void load()} onstart={startOnTask} />
+			<MailsToAnswer refreshKey={doneKey} onchanged={() => (doneKey += 1)} />
 		</div>
 
 		<h2 class="time-title">Temps</h2>
