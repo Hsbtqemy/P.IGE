@@ -261,6 +261,8 @@ class Entry:
     revision: int
     cancelled: bool = False
     about_entry_id: str | None = None  # notes (a long text) taken for that entry of the agenda
+    agenda: bool = False  # added in the Agenda as an event
+    counted: bool = True  # its time range counts (an Agenda event: only once « Compter »)
 
 
 @dataclass(frozen=True)
@@ -368,7 +370,8 @@ class SearchHit:
 def _entry_row(row: sqlite3.Row) -> Entry:
     applied = row["decision_applied"]
     return cast(Entry, _row_to(Entry, row, decision_applied=None if applied is None else bool(applied),
-                               cancelled=bool(row["cancelled"])))
+                               cancelled=bool(row["cancelled"]), agenda=bool(row["agenda"]),
+                               counted=bool(row["counted"])))
 
 
 def _row_to(cls: Any, row: sqlite3.Row, **overrides: Any) -> Any:
@@ -1156,6 +1159,7 @@ class ModelStore:
         person_ids: Iterable[str] = (),
         tags: Iterable[str] = (),
         new_id: str | None = None,
+        agenda: bool = False,
     ) -> Entry:
         with self._tx():
             space, project = self._target(project_id, space_id, task_id)
@@ -1164,12 +1168,12 @@ class ModelStore:
             try:
                 self.conn.execute(
                     "INSERT INTO entries(id, space_id, project_id, task_id, kind, title, body, entry_date, start_time,"
-                    " end_time, decision_applied, source, mail_message_id, created_at, updated_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " end_time, decision_applied, source, mail_message_id, created_at, updated_at, agenda, counted)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (entry_id, space, project, task_id, kind, title.strip(), body,
                      _check_date(entry_date, "entry_date"), _check_time(start_time, "start_time"),
                      _check_time(end_time, "end_time"), 0 if kind == "decision" else None, source,
-                     _clean(mail_message_id), now, now),
+                     _clean(mail_message_id), now, now, int(agenda), 0 if agenda else 1),
                 )
             except sqlite3.IntegrityError as exc:
                 raise InvalidOperationError(_integrity_message(exc)) from exc
@@ -1192,7 +1196,7 @@ class ModelStore:
         out = []
         for r in rows:
             written = _parse_utc(r["created_at"]).astimezone(tz).date().isoformat()
-            if written < r["entry_date"]:
+            if r["agenda"] or written < r["entry_date"]:
                 out.append(_entry_row(r))
         return out
 
@@ -1222,6 +1226,7 @@ class ModelStore:
         end_time: str | None = None,
         decision_applied: bool | None = None,
         cancelled: bool | None = None,
+        counted: bool | None = None,
         expected_revision: int | None = None,
         autosave: bool = False,
     ) -> Entry:
@@ -1266,6 +1271,8 @@ class ModelStore:
                 changes["decision_applied"] = int(decision_applied)
             if cancelled is not None and cancelled != current.cancelled:
                 changes["cancelled"] = int(cancelled)
+            if counted is not None and counted != current.counted:
+                changes["counted"] = int(counted)
             if not changes:
                 return current
             now = _utc(_now())
@@ -2275,7 +2282,7 @@ class ModelStore:
     @staticmethod
     def _entry_span(entry: Entry, tz: tzinfo) -> tuple[datetime, datetime] | None:
         """« 09:30 »–« 11:00 » on the entry's day, as instants; an end before the start is the next day."""
-        if entry.cancelled or not entry.start_time or not entry.end_time:
+        if entry.cancelled or not entry.counted or not entry.start_time or not entry.end_time:
             return None
         day = date.fromisoformat(entry.entry_date)
         start = datetime.combine(day, time.fromisoformat(entry.start_time), tzinfo=tz)

@@ -608,3 +608,18 @@ def test_notes_for_something_planned(client, tree):
     assert linked["about"]["title"] == "Formation François"
     assert ok(client.post(f"/api/v2/entries/{other['id']}/about", json={}))["about"] is None
     assert client.post(f"/api/v2/entries/{other['id']}/about", json={"entry_id": other["id"]}).status_code == 400
+
+
+def test_an_event_added_in_the_agenda_counts_only_once_counted(client, tree):
+    dico = tree["dico"]["id"]
+    ev = ok(client.post("/api/v2/entries", json={
+        "entry_date": "2026-10-15", "project_id": dico, "title": "Comité", "body": "Comité",
+        "start_time": "14:00", "end_time": "16:00", "agenda": True}), 201)
+    assert (ev["agenda"], ev["counted"]) == (True, False)
+    assert ok(client.get("/api/v2/days/2026-10-15"))["blocks"] == []
+    assert [e["id"] for e in ok(client.get("/api/v2/planned?start=2026-10-15&days=1"))] == [ev["id"]]  # a past day
+    ev = ok(client.patch(f"/api/v2/entries/{ev['id']}", json={"expected_revision": ev["revision"], "counted": True}))
+    [c] = ok(client.get("/api/v2/days/2026-10-15?tz=Europe/Paris"))["blocks"]
+    assert c["counted_seconds"] == 7200
+    ok(client.patch(f"/api/v2/entries/{ev['id']}", json={"expected_revision": ev["revision"], "counted": False}))
+    assert ok(client.get("/api/v2/days/2026-10-15"))["blocks"] == []

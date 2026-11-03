@@ -59,6 +59,8 @@ export interface Entry {
 	version: number;
 	revision: number;
 	cancelled?: boolean;
+	agenda?: boolean; // added in the Agenda as an event
+	counted?: boolean; // its time range counts (an Agenda event: once « Compter »)
 	about_entry_id?: string | null;
 	notes?: NoteRef | null; // the long text of notes taken for it
 	about?: About | null; // a long text: what it is the notes of
@@ -387,6 +389,7 @@ export interface NewEntry {
 	source?: 'journal' | 'writing' | 'capture' | 'mail' | 'import';
 	people?: string[];
 	tags?: string[];
+	agenda?: boolean;
 }
 
 export interface EntryPatch {
@@ -399,6 +402,7 @@ export interface EntryPatch {
 	start_time?: string | null;
 	end_time?: string | null;
 	cancelled?: boolean;
+	counted?: boolean;
 	people?: string[];
 	tags?: string[];
 }

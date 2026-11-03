@@ -447,6 +447,13 @@ MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE entries ADD COLUMN about_entry_id TEXT REFERENCES entries(id) ON DELETE SET NULL;
     CREATE INDEX entries_about ON entries(about_entry_id) WHERE about_entry_id IS NOT NULL;
     """,
+    # ------------------------------------------------------------------ 12
+    # An event added in the Agenda: shown there whatever the day it was written, and its time
+    # counted only once « Compter » is clicked (counted = 0 until then).
+    """
+    ALTER TABLE entries ADD COLUMN agenda INTEGER NOT NULL DEFAULT 0 CHECK (agenda IN (0, 1));
+    ALTER TABLE entries ADD COLUMN counted INTEGER NOT NULL DEFAULT 1 CHECK (counted IN (0, 1));
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

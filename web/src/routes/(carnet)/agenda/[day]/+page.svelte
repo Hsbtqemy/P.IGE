@@ -4,6 +4,7 @@
 	import { v2, type AgendaEvent, type CalendarInfo, type Entry, type Task } from '#lib/api2.js';
 	import EventRow from '#lib/carnet/EventRow.svelte';
 	import PlannedRow from '#lib/carnet/PlannedRow.svelte';
+	import AddEvent from '#lib/carnet/AddEvent.svelte';
 	import { failure, isDay, longDate, placeName, shiftDay, timeZone, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let day = $derived(isDay(page.params.day ?? '') ? (page.params.day as string) : '');
@@ -246,7 +247,7 @@
 				</div>
 			</div>
 			<section class="dayview" aria-label={longDate(selected || day)}>
-				<h2><a href="/journal/{selected || day}">{longDate(selected || day)}</a> <small>{listFor(selected || day).length || ''}</small></h2>
+				<h2><a href="/journal/{selected || day}">{longDate(selected || day)}</a> <small>{listFor(selected || day).length + plannedOn(selected || day).length || ''}</small></h2>
 				{@render due(selected || day)}
 				{@render ahead(selected || day)}
 				{#each listFor(selected || day) as e (e.id)}
@@ -254,6 +255,7 @@
 				{:else}
 					{#if !dueOn(selected || day).length && !plannedOn(selected || day).length}<p class="muted">Rien ce jour-là.</p>{/if}
 				{/each}
+				{#key selected || day}<AddEvent day={selected || day} onadded={(e) => (planned = [...planned, e])} />{/key}
 			</section>
 		{:else}
 			{#each days as d (d.iso)}
@@ -266,6 +268,7 @@
 					{:else}
 						{#if !dueOn(d.iso).length && !plannedOn(d.iso).length}<p class="muted">—</p>{/if}
 					{/each}
+					<AddEvent day={d.iso} onadded={(e) => (planned = [...planned, e])} />
 				</section>
 			{/each}
 		{/if}
