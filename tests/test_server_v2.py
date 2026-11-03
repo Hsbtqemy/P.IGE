@@ -623,3 +623,64 @@ def test_an_event_added_in_the_agenda_counts_only_once_counted(client, tree):
     assert c["counted_seconds"] == 7200
     ok(client.patch(f"/api/v2/entries/{ev['id']}", json={"expected_revision": ev["revision"], "counted": False}))
     assert ok(client.get("/api/v2/days/2026-10-15"))["blocks"] == []
+
+
+def test_conversations_gather_the_mails_of_an_exchange(client, tree):
+    dico = tree["dico"]["id"]
+    first = ok(client.post("/api/v2/entries", json={
+        "entry_date": "2026-10-16", "project_id": dico, "title": "Demande de rendez-vous",
+        "body": "Mail de Akiona <a@b.fr>\n\nBonjour, pourrions-nous nous voir ?", "source": "mail",
+        "mail_message_id": "<m1@b.fr>"}), 201)
+    task = ok(client.post("/api/v2/tasks", json={"title": "Mail Akiona", "project_id": dico,
+                                                  "origin_entry_id": first["id"]}), 201)
+    reply = {"message_id": "<r1@me>", "references": ["<m1@b.fr>"], "direction": "sent",
+             "sent_at": "2026-10-21T10:00:00+02:00", "day": "2026-10-21", "author": "Moi",
+             "recipients": "Akiona", "subject": "Re: Demande de rendez-vous", "body": "Volontiers, mardi ?"}
+    ok(client.post("/api/v2/mail-followups", json=reply), 201)
+    ok(client.post("/api/v2/mail-followups", json={**reply, "message_id": "<m2@b.fr>", "references": ["<m1@b.fr>", "<r1@me>"],
+                                                     "direction": "received", "author": "Akiona",
+                                                     "sent_at": "2026-10-23T09:00:00+02:00", "day": "2026-10-23",
+                                                     "body": "Mardi 10h, parfait."}), 201)
+    # A mail filed in the journal that answers the exchange joins it too.
+    ok(client.post("/api/v2/entries", json={
+        "entry_date": "2026-10-24", "project_id": dico, "title": "RE: Demande de rendez-vous",
+        "body": "Mail de Akiona <a@b.fr>\n\nÀ mardi !", "source": "mail", "mail_message_id": "<m3@b.fr>",
+        "references": ["<m2@b.fr>"]}), 201)
+    other = ok(client.post("/api/v2/entries", json={
+        "entry_date": "2026-09-15", "project_id": dico, "title": "Directeur de recherche M1",
+        "body": "Mail de Akiona <a@b.fr>\n\nJe cherche…", "source": "mail", "mail_message_id": "<m0@b.fr>"}), 201)
+    convs = ok(client.get(f"/api/v2/conversations?project_id={dico}"))
+    assert [(c["subject"], c["count"]) for c in convs] == [("Demande de rendez-vous", 4), ("Directeur de recherche M1", 1)]
+    conv = convs[0]
+    assert conv["task"] == {"id": task["id"], "title": "Mail Akiona", "status": "open"}
+    assert conv["people"] == ["Akiona"] and conv["last"]["excerpt"] == "À mardi !"
+    full = ok(client.get(f"/api/v2/conversations/{conv['id']}"))
+    assert [(m["kind"], m["direction"]) for m in full["mails"]] == [
+        ("entry", "received"), ("followup", "sent"), ("followup", "received"), ("entry", "received")]
+    assert full["mails"][0]["body"] == "Bonjour, pourrions-nous nous voir ?"
+    assert [c["id"] for c in ok(client.get(f"/api/v2/conversations?project_id={dico}&q=mardi 10h"))] == [conv["id"]]
+    hits = ok(client.get("/api/v2/search?q=mardi 10h"))
+    assert any(h["kind"] == "mail" and h["id"] == conv["id"] for h in hits)
+    state = ok(client.patch(f"/api/v2/conversations/{conv['id']}", json={"state": "to_answer"}))
+    assert state["state"] == "to_answer"
+    assert [c["id"] for c in ok(client.get("/api/v2/conversations?state=to_answer,waiting"))] == [conv["id"]]
+    # The conversation follows its task when moved.
+    portail = tree["portail"]["id"]
+    ok(client.post(f"/api/v2/tasks/{task['id']}/move", json={"project_id": portail}))
+    assert ok(client.get(f"/api/v2/conversations/{conv['id']}"))["project_id"] == portail
+    assert other["id"]
+
+
+def test_mails_kept_before_conversations_are_grouped(tmp_path):
+    from datetime import datetime, timezone
+    from pige.model.store import ModelStore
+    store = ModelStore(tmp_path / "m.sqlite3")
+    space = store.create_space("Akiona")
+    mail = store.create_entry(entry_date="2026-10-16", space_id=space.id, title="Demande", body="Mail de A\n\nx",
+                              source="mail", mail_message_id="<m1@b>")
+    task = store.create_task("Mail Akiona", space_id=space.id, origin_entry_id=mail.id)
+    store.add_task_mail(task.id, message_id="<r1@me>", direction="sent",
+                        sent_at=datetime(2026, 10, 21, 8, tzinfo=timezone.utc), day="2026-10-21", subject="Re: Demande")
+    assert store.backfill_conversations() == 2 and store.backfill_conversations() == 0
+    [conv] = store.conversations(space_id=space.id)
+    assert (conv.subject, conv.task_id, len(store.conversation_mails(conv.id))) == ("Demande", task.id, 2)

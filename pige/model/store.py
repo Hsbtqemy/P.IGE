@@ -266,6 +266,38 @@ class Entry:
 
 
 @dataclass(frozen=True)
+class Conversation:
+    id: str
+    space_id: str
+    project_id: str | None
+    task_id: str | None
+    subject: str
+    state: str  # none | to_answer | waiting | answered | filed
+    state_since: str
+    last_at: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class ConversationMail:
+    """One mail of a conversation, wherever it is kept: filed in the journal (``entry``) or in
+    a task's follow-up (``followup``)."""
+    id: str
+    kind: Literal["entry", "followup"]
+    message_id: str
+    direction: str
+    at: str
+    day: str
+    author: str
+    recipients: str
+    subject: str
+    body: str
+    attachments: str
+    entry_id: str | None
+    task_id: str | None
+
+
+@dataclass(frozen=True)
 class DayFrame:
     day: str
     started_at: datetime | None
@@ -356,7 +388,7 @@ class CalendarEvent:
 
 @dataclass(frozen=True)
 class SearchHit:
-    kind: Literal["entry", "task"]
+    kind: Literal["entry", "task", "mail"]
     id: str
     title: str
     snippet: str
@@ -378,6 +410,27 @@ def _row_to(cls: Any, row: sqlite3.Row, **overrides: Any) -> Any:
     data = {k: row[k] for k in row.keys() if k in cls.__dataclass_fields__}
     data.update(overrides)
     return cls(**data)
+
+
+_SUBJECT_PREFIX = re.compile(r"^\s*(?:(?:re|tr|fw|fwd|réf|ref|aw|wg)\s*(?:\[\d+\])?\s*:\s*)+", re.IGNORECASE)
+
+
+def bare_subject(subject: str) -> str:
+    """« Re: TR: Demande de rendez-vous » -> « Demande de rendez-vous »."""
+    return _SUBJECT_PREFIX.sub("", subject or "").strip()
+
+
+def _mail_parts(body: str) -> tuple[str, str]:
+    """A filed mail's text: « Mail de X » first, then the text: (author, text)."""
+    first, _, rest = body.partition("\n")
+    if first.startswith("Mail de "):
+        return first[8:].strip(), rest.strip()
+    return "", body
+
+
+def _entry_moment(entry_date: str, created_at: str) -> str:
+    """When a filed mail took place, for ordering: the moment it was filed if that was its day."""
+    return created_at if created_at[:10] == entry_date else f"{entry_date}T12:00:00.000000Z"
 
 
 _CHECK_LINE = re.compile(r"^(\s*[-*+]\s+)\[([ xX])\](\s+)(.*?)\s*$")
@@ -959,6 +1012,11 @@ class ModelStore:
                 self.conn.execute("INSERT INTO task_tags(task_id, tag_id) VALUES (?, ?)", (task_id, tid))
             for label in steps:
                 self.add_step(task_id, label)
+            if origin_entry_id is not None:
+                # A task made from a mail: the mail's conversation knows it.
+                self.conn.execute(
+                    "UPDATE conversations SET task_id = ? WHERE task_id IS NULL"
+                    " AND id = (SELECT conversation_id FROM entries WHERE id = ?)", (task_id, origin_entry_id))
             return self.get_task(task_id)
 
     _TASK_SELECT = """
@@ -1104,6 +1162,8 @@ class ModelStore:
             self.conn.execute(
                 "UPDATE time_blocks SET space_id = ?, project_id = ? WHERE task_id = ?", (space, project, task_id)
             )
+            self.conn.execute("UPDATE conversations SET space_id = ?, project_id = ? WHERE task_id = ?",
+                              (space, project, task_id))
             return self.get_task(task_id)
 
     def add_step(self, task_id: str, label: str) -> Step:
@@ -1323,6 +1383,10 @@ class ModelStore:
                 " WHERE id = ?",
                 (space, project, task_id, _utc(_now()), entry_id),
             )
+            # A mail's conversation moves with it.
+            self.conn.execute(
+                "UPDATE conversations SET space_id = ?, project_id = ?"
+                " WHERE id = (SELECT conversation_id FROM entries WHERE id = ?)", (space, project, entry_id))
             # The time of its range moves along.
             self.conn.execute(
                 "UPDATE time_blocks SET space_id = ?, project_id = ?, task_id = ?, validated = 0"
@@ -2090,6 +2154,29 @@ class ModelStore:
         ):
             scored.append((r["score"], SearchHit("task", r["id"], r["title"], r["snip"], r["space_id"],
                                                  r["project_id"], status=r["status"], done_at=r["done_at"])))
+        # Mails of tasks' follow-ups (not in the journal's text): by conversation.
+        words = [w for w in text.lower().split() if len(w) >= 2][:6]
+        if words:
+            cond = " AND ".join(
+                "(lower(m.subject) LIKE ? OR lower(m.author) LIKE ? OR lower(m.recipients) LIKE ? OR lower(m.body) LIKE ?)"
+                for _ in words)
+            params: list[Any] = [p for w in words for p in [f"%{w}%"] * 4]
+            seen: set[str] = set()
+            for r in self.conn.execute(
+                "SELECT m.conversation_id, m.subject, m.author, m.body, c.space_id, c.project_id FROM task_mails m"
+                f" JOIN conversations c ON c.id = m.conversation_id WHERE {cond}"
+                + (" AND c.space_id = ?" if space_id else "") + " ORDER BY m.sent_at DESC LIMIT ?",
+                (*params, *([space_id] if space_id else []), limit),
+            ):
+                if r["conversation_id"] in seen:
+                    continue
+                seen.add(r["conversation_id"])
+                body = " ".join((r["body"] or "").split())
+                at = body.lower().find(words[0])
+                snip = f"{r['author']} · …{body[max(0, at - 40):at + 80]}…" if at >= 0 else r["author"]
+                # Ranked after the best journal and task hits, before weak ones.
+                scored.append((-0.5, SearchHit("mail", r["conversation_id"], bare_subject(r["subject"]) or "(sans objet)",
+                                               snip, r["space_id"], r["project_id"])))
         scored.sort(key=lambda item: item[0])
         return [hit for _, hit in scored[:limit]]
 
@@ -2342,6 +2429,164 @@ class ModelStore:
             by_space[c.block.space_id] = by_space.get(c.block.space_id, 0) + c.counted_seconds
             by_project[c.block.project_id] = by_project.get(c.block.project_id, 0) + c.counted_seconds
         return DayReport(day, counted, presence_seconds(spans), by_space, by_project, stale)
+
+    # ------------------------------------------------------------ conversations
+
+    def _conversation_of(self, message_ids: Iterable[str]) -> str | None:
+        ids = [m.strip() for m in message_ids if m and m.strip()][:100]
+        if not ids:
+            return None
+        marks = ",".join("?" * len(ids))
+        row = self.conn.execute(f"SELECT conversation_id FROM mail_ids WHERE message_id IN ({marks}) LIMIT 1",
+                                tuple(ids)).fetchone()
+        return str(row["conversation_id"]) if row else None
+
+    def _new_conversation(self, *, space_id: str, project_id: str | None, subject: str, at: str,
+                          task_id: str | None = None) -> str:
+        conv_id = _new_id()
+        now = _utc(_now())
+        self.conn.execute(
+            "INSERT INTO conversations(id, space_id, project_id, task_id, subject, state, state_since, last_at,"
+            " created_at) VALUES (?, ?, ?, ?, ?, 'none', ?, ?, ?)",
+            (conv_id, space_id, project_id, task_id, bare_subject(subject)[:500], now, at, now),
+        )
+        return conv_id
+
+    def _join(self, conv_id: str, message_id: str | None, at: str) -> None:
+        if message_id and message_id.strip():
+            self.conn.execute("INSERT OR IGNORE INTO mail_ids(message_id, conversation_id) VALUES (?, ?)",
+                              (message_id.strip(), conv_id))
+        self.conn.execute("UPDATE conversations SET last_at = max(last_at, ?) WHERE id = ?", (at, conv_id))
+
+    def file_mail_entry(self, entry_id: str, references: Iterable[str] = ()) -> str | None:
+        """Put a mail filed in the journal in its conversation (the one of a mail it answers,
+        else a new one). Returns the conversation, None for an entry that is not a mail."""
+        with self._tx():
+            row = self._require("entries", entry_id)
+            if row["source"] != "mail" or not row["mail_message_id"]:
+                return None
+            if row["conversation_id"]:
+                return str(row["conversation_id"])
+            at = _entry_moment(row["entry_date"], row["created_at"])
+            conv_id = self._conversation_of([row["mail_message_id"], *references]) or self._new_conversation(
+                space_id=row["space_id"], project_id=row["project_id"], subject=row["title"], at=at)
+            self.conn.execute("UPDATE entries SET conversation_id = ? WHERE id = ?", (conv_id, entry_id))
+            self._join(conv_id, row["mail_message_id"], at)
+            return conv_id
+
+    def file_followup_mail(self, mail_id: str, references: Iterable[str] = ()) -> str:
+        """Put a mail of a task's follow-up in its conversation: the one of a mail it answers,
+        else the task's (that of the mail it came from, or of its other mails), else a new one."""
+        with self._tx():
+            row = self._require("task_mails", mail_id)
+            if row["conversation_id"]:
+                return str(row["conversation_id"])
+            task = self.get_task(row["task_id"])
+            conv_id = self._conversation_of([row["message_id"], *references])
+            if conv_id is None and task.origin_entry_id:
+                origin = self._one("SELECT conversation_id FROM entries WHERE id = ?", (task.origin_entry_id,))
+                conv_id = origin["conversation_id"] if origin and origin["conversation_id"] else None
+            if conv_id is None:
+                other = self._one("SELECT conversation_id FROM task_mails WHERE task_id = ? AND conversation_id IS NOT NULL"
+                                  " ORDER BY sent_at LIMIT 1", (task.id,))
+                conv_id = other["conversation_id"] if other else None
+            if conv_id is None:
+                conv_id = self._new_conversation(space_id=task.space_id, project_id=task.project_id,
+                                                 subject=row["subject"] or task.title, at=row["sent_at"], task_id=task.id)
+            self.conn.execute("UPDATE task_mails SET conversation_id = ? WHERE id = ?", (conv_id, mail_id))
+            self.conn.execute("UPDATE conversations SET task_id = ? WHERE id = ? AND task_id IS NULL", (task.id, conv_id))
+            self._join(conv_id, row["message_id"], row["sent_at"])
+            return str(conv_id)
+
+    def backfill_conversations(self) -> int:
+        """Group the mails kept before conversations existed (or by an older path). Idempotent."""
+        done = 0
+        with self._tx():
+            for r in self.conn.execute(
+                "SELECT id FROM entries WHERE source = 'mail' AND mail_message_id IS NOT NULL"
+                " AND conversation_id IS NULL ORDER BY entry_date, created_at"
+            ).fetchall():
+                if self.file_mail_entry(r["id"]):
+                    done += 1
+            for r in self.conn.execute(
+                "SELECT id FROM task_mails WHERE conversation_id IS NULL ORDER BY sent_at"
+            ).fetchall():
+                self.file_followup_mail(r["id"])
+                done += 1
+            self.conn.execute(
+                "UPDATE conversations SET task_id = (SELECT t.id FROM tasks t JOIN entries e ON e.id = t.origin_entry_id"
+                " WHERE e.conversation_id = conversations.id ORDER BY t.created_at LIMIT 1) WHERE task_id IS NULL"
+            )
+        return done
+
+    def get_conversation(self, conv_id: str) -> Conversation:
+        return cast(Conversation, _row_to(Conversation, self._require("conversations", conv_id)))
+
+    def conversation_mails(self, conv_id: str) -> list[ConversationMail]:
+        """The mails of a conversation, oldest first."""
+        out: list[ConversationMail] = []
+        for r in self.conn.execute("SELECT * FROM entries WHERE conversation_id = ?", (conv_id,)).fetchall():
+            author, text = _mail_parts(r["body"])
+            out.append(ConversationMail(r["id"], "entry", r["mail_message_id"] or "", "received",
+                                        _entry_moment(r["entry_date"], r["created_at"]), r["entry_date"], author, "",
+                                        r["title"], text, "", r["id"], r["task_id"]))
+        for r in self.conn.execute("SELECT * FROM task_mails WHERE conversation_id = ?", (conv_id,)).fetchall():
+            out.append(ConversationMail(r["id"], "followup", r["message_id"], r["direction"], r["sent_at"], r["day"],
+                                        r["author"], r["recipients"], r["subject"], r["body"], r["attachments"],
+                                        r["entry_id"], r["task_id"]))
+        out.sort(key=lambda m: m.at)
+        return out
+
+    def conversations(
+        self,
+        *,
+        project_id: str | None = None,
+        space_id: str | None = None,
+        without_project: bool = False,
+        states: Sequence[str] = (),
+        query: str = "",
+        limit: int = 100,
+    ) -> list[Conversation]:
+        """Conversations that still hold a mail, the most recent first."""
+        where = ["(EXISTS (SELECT 1 FROM entries e WHERE e.conversation_id = c.id)"
+                 " OR EXISTS (SELECT 1 FROM task_mails m WHERE m.conversation_id = c.id))"]
+        params: list[Any] = []
+        if project_id is not None:
+            where.append("(c.project_id = ? OR c.project_id IN (SELECT id FROM projects WHERE parent_id = ?))")
+            params += [project_id, project_id]
+        if space_id is not None:
+            where.append("c.space_id = ?")
+            params.append(space_id)
+        if without_project:
+            where.append("c.project_id IS NULL")
+        if states:
+            where.append(f"c.state IN ({','.join('?' * len(states))})")
+            params += list(states)
+        words = [w for w in query.lower().split() if w][:8]
+        for w in words:
+            like = f"%{w}%"
+            where.append(
+                "(lower(c.subject) LIKE ? OR EXISTS (SELECT 1 FROM entries e WHERE e.conversation_id = c.id"
+                " AND (lower(e.title) LIKE ? OR lower(e.body) LIKE ?)) OR EXISTS (SELECT 1 FROM task_mails m"
+                " WHERE m.conversation_id = c.id AND (lower(m.subject) LIKE ? OR lower(m.author) LIKE ?"
+                " OR lower(m.recipients) LIKE ? OR lower(m.body) LIKE ?)))"
+            )
+            params += [like] * 7
+        rows = self.conn.execute(
+            f"SELECT c.* FROM conversations c WHERE {' AND '.join(where)} ORDER BY c.last_at DESC LIMIT ?",
+            (*params, int(limit)),
+        ).fetchall()
+        return [cast(Conversation, _row_to(Conversation, r)) for r in rows]
+
+    def set_conversation_state(self, conv_id: str, state: str) -> Conversation:
+        if state not in ("none", "to_answer", "waiting", "answered", "filed"):
+            raise InvalidOperationError(f"unknown state {state!r}")
+        with self._tx():
+            current = self.get_conversation(conv_id)
+            if current.state != state:
+                self.conn.execute("UPDATE conversations SET state = ?, state_since = ? WHERE id = ?",
+                                  (state, _utc(_now()), conv_id))
+            return self.get_conversation(conv_id)
 
     # ------------------------------------------------------------ day frame
 

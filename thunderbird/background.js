@@ -239,11 +239,12 @@ async function fileMail(header, action, target, people) {
     /* no list: the text is enough */
   }
   const entryId = msgId ? await stableId(msgId, 'entry') : crypto.randomUUID().replaceAll('-', '');
-  const entry = await api(
-    'POST',
-    '/api/v2/entries',
-    entryForMail({ id: entryId, header, text, attachments, target, personIds: known ? [known.id] : [] })
-  );
+  // Its References: a mail answering one already kept joins that conversation.
+  const references = msgId ? await referencesOf(header.id) : [];
+  const entry = await api('POST', '/api/v2/entries', {
+    ...entryForMail({ id: entryId, header, text, attachments, target, personIds: known ? [known.id] : [] }),
+    references
+  });
   if (action === 'task') {
     // A mail already in P.IGE (noted earlier, elsewhere) comes back as it was: the task goes
     // where it was asked, and the mail follows unless it belongs to another task's thread.

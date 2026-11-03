@@ -454,6 +454,35 @@ MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE entries ADD COLUMN agenda INTEGER NOT NULL DEFAULT 0 CHECK (agenda IN (0, 1));
     ALTER TABLE entries ADD COLUMN counted INTEGER NOT NULL DEFAULT 1 CHECK (counted IN (0, 1));
     """,
+    # ------------------------------------------------------------------ 13
+    # Conversations: the mails of one exchange (filed in the journal, or in a task's follow-up)
+    # grouped by their Message-ID / References, in a project or a space, with a state.
+    # mail_ids knows every Message-ID seen, to put a reply in its conversation.
+    """
+    CREATE TABLE conversations (
+        id          TEXT PRIMARY KEY,
+        space_id    TEXT NOT NULL REFERENCES spaces(id) ON DELETE RESTRICT,
+        project_id  TEXT REFERENCES projects(id) ON DELETE SET NULL,
+        task_id     TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+        subject     TEXT NOT NULL DEFAULT '',
+        state       TEXT NOT NULL DEFAULT 'none'
+                    CHECK (state IN ('none', 'to_answer', 'waiting', 'answered', 'filed')),
+        state_since TEXT NOT NULL,
+        last_at     TEXT NOT NULL,
+        created_at  TEXT NOT NULL
+    );
+    CREATE INDEX conversations_project ON conversations(project_id, last_at);
+    CREATE INDEX conversations_space ON conversations(space_id, last_at);
+    CREATE INDEX conversations_state ON conversations(state) WHERE state IN ('to_answer', 'waiting');
+    CREATE TABLE mail_ids (
+        message_id      TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE
+    );
+    ALTER TABLE entries ADD COLUMN conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL;
+    ALTER TABLE task_mails ADD COLUMN conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL;
+    CREATE INDEX entries_conversation ON entries(conversation_id) WHERE conversation_id IS NOT NULL;
+    CREATE INDEX task_mails_conversation ON task_mails(conversation_id) WHERE conversation_id IS NOT NULL;
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

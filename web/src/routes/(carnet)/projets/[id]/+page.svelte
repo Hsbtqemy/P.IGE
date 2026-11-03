@@ -9,6 +9,7 @@
 	import PersonPicker from '#lib/carnet/PersonPicker.svelte';
 	import ProjectPeople from '#lib/carnet/ProjectPeople.svelte';
 	import CodePanel from '#lib/carnet/CodePanel.svelte';
+	import ConversationList from '#lib/carnet/ConversationList.svelte';
 	import { carnet, failure, isDay, projectOf, reload, spaceOf, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let id = $derived(page.params.id ?? '');
@@ -717,6 +718,7 @@
 				{/each}
 			</section>
 		</div>
+		<ConversationList projectId={project.id} />
 	{:else}
 		<p>Chargement…</p>
 	{/if}

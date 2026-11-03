@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { ApiError } from '#lib/api.js';
 	import { v2, type Entry, type Task } from '#lib/api2.js';
+	import ConversationList from '#lib/carnet/ConversationList.svelte';
 	import { onMailFiled } from '#lib/carnet/thunderbird.svelte.js';
 	import MailOpen from '#lib/carnet/MailOpen.svelte';
 	import { carnet, failure, longDate, reload } from '#lib/carnet/state.svelte.js';
@@ -285,6 +286,7 @@
 				{/if}
 			</section>
 		</div>
+		<ConversationList spaceId={id} />
 	{:else}
 		<p>Chargement…</p>
 	{/if}
