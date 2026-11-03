@@ -1,24 +1,5 @@
 // Thin client for the P.IGE server API (same origin).
 
-export interface Task {
-	id: string;
-	project_id: string;
-	project_name: string;
-	title: string;
-	status: 'open' | 'in_progress' | 'done';
-	created_at: string;
-	due_date: string | null;
-	note: string | null;
-	mail_message_id: string | null;
-}
-
-export interface NewTask {
-	id: string;
-	title: string;
-	project_id?: string;
-	mail_message_id?: string;
-}
-
 /** Thrown for HTTP errors; `status` 0 means the network was unreachable. */
 export class ApiError extends Error {
 	constructor(
@@ -62,11 +43,7 @@ export async function request<T>(method: string, path: string, body?: unknown): 
 export const api = {
 	session: () => request<{ authenticated: boolean }>('GET', '/api/session'),
 	login: (password: string) => request<{ authenticated: boolean }>('POST', '/api/login', { password }),
-	logout: () => request<{ authenticated: boolean }>('POST', '/api/logout'),
-	tasks: () => request<Task[]>('GET', '/api/tasks?status=open'),
-	createTask: (task: NewTask) => request<Task>('POST', '/api/tasks', task),
-	setStatus: (id: string, status: Task['status']) =>
-		request<Task>('PATCH', `/api/tasks/${id}`, { status })
+	logout: () => request<{ authenticated: boolean }>('POST', '/api/logout')
 };
 
 /** 32 lowercase hex characters, the id format the server expects. */
