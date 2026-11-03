@@ -214,7 +214,6 @@
 				</details>
 				<div class="foot">
 					<a class="old" href="/reglages" aria-current={path.startsWith('/reglages') ? 'page' : undefined}>Réglages</a>
-					<a class="old" href="/">Écran de saisie actuel</a>
 				</div>
 			</aside>
 			<main>{@render children()}</main>
