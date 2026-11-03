@@ -81,6 +81,30 @@ class BulletWidget extends WidgetType {
 	}
 }
 const bullet = new BulletWidget();
+
+/** « ![nom](/api/v2/files/…) » alone on its line: the picture itself, out of the line being edited. */
+const IMAGE_LINE = /^\s*!\[([^\]]*)\]\((\/api\/v2\/files\/[0-9a-f]{32})\)\s*$/;
+
+class ImageWidget extends WidgetType {
+	constructor(
+		readonly src: string,
+		readonly alt: string
+	) {
+		super();
+	}
+	eq(other: ImageWidget) {
+		return other.src === this.src && other.alt === this.alt;
+	}
+	toDOM() {
+		const img = document.createElement('img');
+		img.src = this.src;
+		img.alt = this.alt;
+		img.title = this.alt;
+		img.loading = 'lazy';
+		img.className = 'cm-image';
+		return img;
+	}
+}
 const doneLine = Decoration.line({ class: 'cm-task-done' });
 
 function hiddenMarks(view: EditorView, onToggle?: ToggleHandler): DecorationSet {
@@ -92,6 +116,14 @@ function hiddenMarks(view: EditorView, onToggle?: ToggleHandler): DecorationSet 
 			from,
 			to,
 			enter: (node) => {
+				if (node.name === 'Image') {
+					const line = state.doc.lineAt(node.from);
+					const m = line.text.match(IMAGE_LINE);
+					if (m && !active.has(line.number)) {
+						ranges.push(Decoration.replace({ widget: new ImageWidget(m[2], m[1]) }).range(line.from, line.to));
+					}
+					return;
+				}
 				if (node.name === 'TaskMarker') {
 					const line = state.doc.lineAt(node.from);
 					const checked = state.doc.sliceString(node.from + 1, node.from + 2) !== ' ';
@@ -163,6 +195,7 @@ const theme = EditorView.theme({
 	'.cm-box': { margin: '0 0.45em 0 0', verticalAlign: '-0.1em', cursor: 'pointer', accentColor: 'var(--accent)' },
 	'.cm-bullet': { color: 'var(--accent)', fontWeight: '700' },
 	'.cm-task-done': { color: 'var(--muted)', textDecoration: 'line-through' },
+	'.cm-image': { display: 'block', maxWidth: '100%', maxHeight: '28em', margin: '4px 0', borderRadius: '4px', border: '1px solid var(--line)' },
 	'&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': { backgroundColor: 'var(--soft)' }
 });
 
@@ -170,9 +203,16 @@ export interface WritingOptions {
 	onChange: (text: string) => void;
 	onSave: () => void;
 	onToggle?: ToggleHandler;
+	/** Images pasted or dropped in the text, with where they go. */
+	onImages?: (files: File[], pos: number) => void;
 }
 
-export function writingExtensions({ onChange, onSave, onToggle }: WritingOptions): Extension[] {
+function images(event: ClipboardEvent | DragEvent): File[] {
+	const list = 'clipboardData' in event ? event.clipboardData?.files : event.dataTransfer?.files;
+	return [...(list ?? [])].filter((f) => f.type.startsWith('image/'));
+}
+
+export function writingExtensions({ onChange, onSave, onToggle, onImages }: WritingOptions): Extension[] {
 	return [
 		history(),
 		keymap.of([{ key: 'Mod-s', preventDefault: true, run: () => (onSave(), true) }, ...defaultKeymap, ...historyKeymap]),
@@ -181,6 +221,23 @@ export function writingExtensions({ onChange, onSave, onToggle }: WritingOptions
 		marksPlugin(onToggle),
 		theme,
 		EditorView.lineWrapping,
+		EditorView.domEventHandlers({
+			paste: (event, view) => {
+				const files = images(event);
+				if (!files.length || !onImages) return false;
+				event.preventDefault();
+				onImages(files, view.state.selection.main.head);
+				return true;
+			},
+			drop: (event, view) => {
+				const files = images(event);
+				if (!files.length || !onImages) return false;
+				event.preventDefault();
+				const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.selection.main.head;
+				onImages(files, pos);
+				return true;
+			}
+		}),
 		EditorView.contentAttributes.of({ 'aria-label': 'Texte', spellcheck: 'true', lang: 'fr' }),
 		EditorView.updateListener.of((update) => {
 			if (update.docChanged) onChange(update.state.doc.toString());

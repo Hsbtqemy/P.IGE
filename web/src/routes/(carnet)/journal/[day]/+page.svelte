@@ -10,6 +10,8 @@
 	import CodeFetch from '#lib/carnet/CodeFetch.svelte';
 	import EntryTime from '#lib/carnet/EntryTime.svelte';
 	import WritingView from '#lib/carnet/WritingView.svelte';
+	import EntryImages from '#lib/carnet/EntryImages.svelte';
+	import { deleteImage, uploadImage, type StoredImage } from '#lib/carnet/images.js';
 	import DayFrameLine from '#lib/carnet/DayFrameLine.svelte';
 	import { newId, prepare } from '#lib/carnet/capture.js';
 	import { outbox, queue } from '#lib/carnet/outbox.svelte.js';
@@ -39,6 +41,25 @@
 	let message = $state('');
 
 	let draft = $state('');
+	// Pictures joined to the paragraph being written: sent at once, attached when it is saved.
+	let pending = $state<StoredImage[]>([]);
+	let pendingBusy = $state(0);
+	let picker: HTMLInputElement | undefined = $state();
+	async function addPending(files: File[]) {
+		pendingBusy += files.length;
+		for (const file of files) {
+			try {
+				pending = [...pending, await uploadImage(file)];
+			} catch (err) {
+				message = failure(err, 'Image non envoyée : ');
+			} finally {
+				pendingBusy -= 1;
+			}
+		}
+	}
+	function pastedImages(event: ClipboardEvent): File[] {
+		return [...(event.clipboardData?.files ?? [])].filter((f) => f.type.startsWith('image/'));
+	}
 	let meetings = $state<AgendaEvent[]>([]);
 	let draftId: string | null = null;
 	let placeChoice = $state(''); // '' = automatic, 'p:<id>' project, 's:<id>' space
@@ -192,7 +213,8 @@
 				start_time: day === todayIso() ? nowHHMM() : null,
 				source: 'journal',
 				people: r.people,
-				tags: r.tags
+				tags: r.tags,
+				file_ids: pending.map((p) => p.id)
 			});
 		} catch (err) {
 			if (err instanceof ApiError && err.status === 0) {
@@ -220,6 +242,7 @@
 		// From here the paragraph exists: never send it twice.
 		draftId = null;
 		draft = '';
+		pending = [];
 		placeChoice = '';
 		reportTasks(await createTasks(r.tasks, target, entry.id), target, entry.id);
 		await refresh();
@@ -480,6 +503,8 @@
 									rows={Math.max(3, editText.split('\n').length + 1)}
 									onkeydown={(ev) => keys(ev, () => saveEdit(entry), () => closeEdit(entry, true))}
 								></textarea>
+								<EntryImages files={entry.files ?? []} entryId={entry.id} editable
+									onchanged={(files) => (entries = entries.map((x) => (x.id === entry.id ? { ...x, files } : x)))} />
 								<div class="row">
 									<select bind:value={editPlace} aria-label="Ranger dans">
 										{#if !projectOf(entry.project_id) && !spaceOf(entry.project_id ? null : entry.space_id)}
@@ -536,6 +561,7 @@
 								{#if folded(entry)}
 									<button class="plain more" onclick={() => (unfolded = new Set([...unfolded, entry.id]))}>Lire tout le mail</button>
 								{/if}
+								{#if entry.files?.length}<EntryImages files={entry.files} />{/if}
 								<span class="where-inline">{placeLabel(entry)}</span>
 							</div>
 						{/if}
@@ -557,7 +583,25 @@
 							rows={Math.max(3, draft.split('\n').length + 1)}
 							placeholder="Écrire…"
 							onkeydown={(ev) => keys(ev, add)}
+							onpaste={(ev) => {
+								const files = pastedImages(ev);
+								if (files.length) {
+									ev.preventDefault();
+									void addPending(files);
+								}
+							}}
 						></textarea>
+						{#if pending.length || pendingBusy}
+							<div class="pending">
+								{#each pending as img (img.id)}
+									<span class="pthumb">
+										<img src={img.url} alt={img.name} />
+										<button aria-label="Retirer {img.name}" onclick={() => { pending = pending.filter((p) => p.id !== img.id); void deleteImage(img.id); }}>×</button>
+									</span>
+								{/each}
+								{#if pendingBusy}<small>Envoi…</small>{/if}
+							</div>
+						{/if}
 						{#if draft.trim()}
 							<div class="preview" aria-live="polite">
 								<span class="label">Le {longDate(day).toLocaleLowerCase('fr')}, rangé dans</span>
@@ -593,7 +637,15 @@
 								<span class="hint">Crée d’abord un espace pour pouvoir écrire.</span>
 							{/if}
 							<span class="grow"></span>
-							<button class="btn primary" disabled={!draft.trim() || saving || !place} onclick={add}>Ajouter au feuillet</button>
+							<button class="btn" disabled={pendingBusy > 0 || !place} onclick={() => picker?.click()} title="Joindre des images (ou colle-les dans le texte)">🖼 Image</button>
+							<input bind:this={picker} type="file" accept="image/*" multiple hidden
+								onchange={(e) => {
+									const input = e.currentTarget as HTMLInputElement;
+									const files = [...(input.files ?? [])];
+									input.value = '';
+									if (files.length) void addPending(files);
+								}} />
+							<button class="btn primary" disabled={!draft.trim() || saving || !place || pendingBusy > 0} onclick={add}>Ajouter au feuillet</button>
 						</div>
 					</div>
 				</div>
@@ -725,6 +777,38 @@
 		position: relative;
 		padding-bottom: 16px;
 		min-width: 0;
+	}
+	.pending {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		align-items: center;
+		margin: 6px 0;
+	}
+	.pthumb {
+		position: relative;
+	}
+	.pthumb img {
+		display: block;
+		height: 72px;
+		width: auto;
+		max-width: 140px;
+		object-fit: cover;
+		border-radius: 6px;
+		border: 1px solid var(--line);
+	}
+	.pthumb button {
+		position: absolute;
+		top: 2px;
+		right: 2px;
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		border: 0;
+		border-radius: 50%;
+		background: rgba(0, 0, 0, 0.55);
+		color: #fff;
+		cursor: pointer;
 	}
 	.where-inline {
 		display: none;

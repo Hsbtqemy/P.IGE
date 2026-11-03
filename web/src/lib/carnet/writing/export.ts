@@ -45,6 +45,7 @@ const PAGE_CSS = `
 	blockquote { margin-left: 0; padding-left: 1em; border-left: 3px solid #7a2e3a; color: #58625a; }
 	code { font-family: Menlo, Consolas, monospace; font-size: 0.9em; }
 	table { border-collapse: collapse; } td, th { border: 1px solid #d6dbd4; padding: 4px 8px; }
+	img { max-width: 100%; height: auto; }
 	@page { margin: 2cm; }
 `;
 
@@ -53,9 +54,31 @@ function page(title: string, text: string): string {
 	return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${safeTitle}</title><style>${PAGE_CSS}</style></head><body>${toHtml(text)}</body></html>`;
 }
 
+/** The images kept by P.IGE written into the HTML itself, for what leaves the site (a Word
+ * file, a copy pasted into a mail): there, P.IGE's address would not show them. */
+export async function withImagesInside(html: string): Promise<string> {
+	const urls = [...new Set([...html.matchAll(/src="(\/api\/v2\/files\/[0-9a-f]{32})"/g)].map((m) => m[1]))];
+	let out = html;
+	for (const url of urls) {
+		try {
+			const blob = await (await fetch(url, { credentials: 'same-origin' })).blob();
+			const data = await new Promise<string>((resolve, reject) => {
+				const reader = new FileReader();
+				reader.onload = () => resolve(String(reader.result));
+				reader.onerror = () => reject(reader.error);
+				reader.readAsDataURL(blob);
+			});
+			out = out.replaceAll(`src="${url}"`, `src="${data}"`);
+		} catch {
+			/* an image not reachable: left as a link */
+		}
+	}
+	return out;
+}
+
 /** A .doc that Word and LibreOffice open as a formatted document. */
-export function downloadWord(title: string, text: string) {
-	download(fileName(title, 'doc'), 'application/msword;charset=utf-8', `﻿${page(title, text)}`);
+export async function downloadWord(title: string, text: string) {
+	download(fileName(title, 'doc'), 'application/msword;charset=utf-8', `﻿${await withImagesInside(page(title, text))}`);
 }
 
 /** Opens the formatted text alone and the print dialog, where « Enregistrer en PDF » is offered. */
@@ -63,7 +86,8 @@ export function printPdf(title: string, text: string): boolean {
 	const win = window.open('', '_blank');
 	if (!win) return false;
 	win.document.open();
-	win.document.write(page(title, text));
+	// The print window has no address of its own: images need P.IGE's full address.
+	win.document.write(page(title, text).replaceAll('src="/api/v2/files/', `src="${location.origin}/api/v2/files/`));
 	win.document.close();
 	win.focus();
 	setTimeout(() => win.print(), 250);
@@ -89,7 +113,7 @@ export function mailLink(title: string, text: string): { href: string; tooLong: 
 }
 
 export async function copyFormatted(text: string): Promise<void> {
-	const html = toHtml(text);
+	const html = await withImagesInside(toHtml(text));
 	const plain = plainText(text);
 	if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
 		await navigator.clipboard.write([

@@ -26,6 +26,7 @@ export function failure(err: unknown, prefix = ''): string {
 	}
 	if (err instanceof ApiError && err.status === 0) return `${prefix}hors connexion.`;
 	if (err instanceof ApiError) return `${prefix}${err.message}`;
+	console.error(err); // a bug, not a refusal: keep its trace for the console
 	return `${prefix}erreur inattendue.`;
 }
 

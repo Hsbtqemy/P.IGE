@@ -6,6 +6,7 @@
 	import { segments } from '../feuillet.js';
 	import MailOpen from './MailOpen.svelte';
 	import WritingView from './WritingView.svelte';
+	import EntryImages from './EntryImages.svelte';
 	import CodeDayView from './CodeDayView.svelte';
 	import { failure, longDate, placeName } from './state.svelte.js';
 
@@ -85,6 +86,7 @@
 					</div>
 				{:else}
 					{#if e.code}<CodeDayView code={e.code} day={e.entry_date} />{/if}
+					{#if e.files?.length}<EntryImages files={e.files} />{/if}
 					<div class="body">
 						{#each lines(e) as line, i (i)}
 							{#if line.trim()}

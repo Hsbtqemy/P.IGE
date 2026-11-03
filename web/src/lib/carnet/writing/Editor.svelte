@@ -8,12 +8,14 @@
 		value,
 		onchange,
 		onsave,
-		ontoggle
+		ontoggle,
+		onimages
 	}: {
 		value: string;
 		onchange: (text: string) => void;
 		onsave: () => void;
 		ontoggle?: (title: string, done: boolean) => void; // a box ticked in the text
+		onimages?: (files: File[], pos: number) => void; // images pasted or dropped
 	} = $props();
 
 	let host: HTMLDivElement;
@@ -27,7 +29,8 @@
 				extensions: writingExtensions({
 					onChange: (text) => onchange(text),
 					onSave: () => onsave(),
-					onToggle: (title, done) => ontoggle?.(title, done)
+					onToggle: (title, done) => ontoggle?.(title, done),
+					onImages: (files, pos) => onimages?.(files, pos)
 				})
 			})
 		});
@@ -47,6 +50,24 @@
 		const target = view.state.doc.line(Math.min(Math.max(line, 1), view.state.doc.lines));
 		view.dispatch({ selection: { anchor: target.from }, effects: EditorView.scrollIntoView(target.from, { y: 'start', yMargin: 24 }) });
 		view.focus();
+	}
+
+	/** Put text at a position (an image's Markdown), on a line of its own, cursor after it. */
+	export function insertAt(pos: number, text: string) {
+		if (!view) return;
+		const doc = view.state.doc;
+		const at = Math.min(Math.max(pos, 0), doc.length);
+		const line = doc.lineAt(at);
+		const before = line.text.trim() && at > line.from ? '\n' : '';
+		const after = at < line.to || !doc.sliceString(at, at + 1).startsWith('\n') ? '\n' : '';
+		const insert = `${before}${text}${after}`;
+		view.dispatch({ changes: { from: at, insert }, selection: { anchor: at + insert.length } });
+		view.focus();
+	}
+
+	/** Where the cursor is (to insert an image chosen from a button). */
+	export function cursor(): number {
+		return view?.state.selection.main.head ?? 0;
 	}
 
 	export function focus() {

@@ -483,6 +483,23 @@ MIGRATIONS: tuple[str, ...] = (
     CREATE INDEX entries_conversation ON entries(conversation_id) WHERE conversation_id IS NOT NULL;
     CREATE INDEX task_mails_conversation ON task_mails(conversation_id) WHERE conversation_id IS NOT NULL;
     """,
+    # ------------------------------------------------------------------ 14
+    # Images (and later attachments): the file sits on disk (data/files/), the row says what
+    # it is and which entry holds it (a paragraph's pictures, an image in a long text).
+    # Without an entry yet: uploaded while writing, attached when the paragraph is saved.
+    """
+    CREATE TABLE files (
+        id          TEXT PRIMARY KEY,
+        entry_id    TEXT REFERENCES entries(id) ON DELETE CASCADE,
+        name        TEXT NOT NULL DEFAULT '',
+        mime        TEXT NOT NULL,
+        size        INTEGER NOT NULL,
+        width       INTEGER,
+        height      INTEGER,
+        created_at  TEXT NOT NULL
+    );
+    CREATE INDEX files_entry ON files(entry_id);
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

@@ -266,6 +266,18 @@ class Entry:
 
 
 @dataclass(frozen=True)
+class StoredFile:
+    id: str
+    entry_id: str | None
+    name: str
+    mime: str
+    size: int
+    width: int | None
+    height: int | None
+    created_at: str
+
+
+@dataclass(frozen=True)
 class Conversation:
     id: str
     space_id: str
@@ -2429,6 +2441,55 @@ class ModelStore:
             by_space[c.block.space_id] = by_space.get(c.block.space_id, 0) + c.counted_seconds
             by_project[c.block.project_id] = by_project.get(c.block.project_id, 0) + c.counted_seconds
         return DayReport(day, counted, presence_seconds(spans), by_space, by_project, stale)
+
+    # ------------------------------------------------------------ files
+
+    def add_file(self, file_id: str, *, mime: str, size: int, name: str = "", width: int | None = None,
+                 height: int | None = None, entry_id: str | None = None) -> StoredFile:
+        with self._tx():
+            if entry_id is not None:
+                self._require("entries", entry_id)
+            self.conn.execute(
+                "INSERT INTO files(id, entry_id, name, mime, size, width, height, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (file_id, entry_id, name.strip()[:200], mime, size, width, height, _utc(_now())),
+            )
+            return self.get_file(file_id)
+
+    def get_file(self, file_id: str) -> StoredFile:
+        return cast(StoredFile, _row_to(StoredFile, self._require("files", file_id)))
+
+    def files_for(self, entry_ids: Sequence[str]) -> dict[str, list[StoredFile]]:
+        out: dict[str, list[StoredFile]] = {e: [] for e in entry_ids}
+        if not entry_ids:
+            return out
+        marks = ",".join("?" * len(entry_ids))
+        for r in self.conn.execute(f"SELECT * FROM files WHERE entry_id IN ({marks}) ORDER BY created_at",
+                                   tuple(entry_ids)):
+            out[r["entry_id"]].append(cast(StoredFile, _row_to(StoredFile, r)))
+        return out
+
+    def attach_files(self, entry_id: str, file_ids: Iterable[str]) -> None:
+        """Files uploaded while writing a paragraph, attached once it is saved (only loose ones)."""
+        with self._tx():
+            self._require("entries", entry_id)
+            for fid in file_ids:
+                self.conn.execute("UPDATE files SET entry_id = ? WHERE id = ? AND entry_id IS NULL", (entry_id, fid))
+
+    def delete_file(self, file_id: str) -> None:
+        self._delete("files", file_id, "file cannot be deleted")
+
+    def file_ids(self) -> set[str]:
+        return {r["id"] for r in self.conn.execute("SELECT id FROM files")}
+
+    def drop_loose_files(self, before: datetime) -> list[str]:
+        """Files never attached to anything (a paragraph abandoned): forgotten after a while."""
+        with self._tx():
+            ids = [r["id"] for r in self.conn.execute(
+                "SELECT id FROM files WHERE entry_id IS NULL AND created_at < ?", (_utc(before),))]
+            for fid in ids:
+                self.conn.execute("DELETE FROM files WHERE id = ?", (fid,))
+            return ids
 
     # ------------------------------------------------------------ conversations
 

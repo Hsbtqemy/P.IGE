@@ -15,6 +15,7 @@
 	} from '#lib/carnet/writing/export.js';
 	import { outline } from '#lib/carnet/writing/livePreview.js';
 	import { boxes, sameTitle } from '#lib/carnet/writing/boxes.js';
+	import { markdownImage, uploadImage } from '#lib/carnet/images.js';
 	import { carnet, failure, isDay, placeName, reload, timeZone } from '#lib/carnet/state.svelte.js';
 	import { showRange } from '#lib/carnet/timerange.js';
 
@@ -297,6 +298,27 @@
 
 	let mail = $derived(mailLink(titleDraft.trim() || 'Texte', text));
 
+	// Images pasted, dropped or chosen: sent, then their Markdown put where they were dropped.
+	let sendingImages = $state(0);
+	async function onimages(files: File[], pos: number) {
+		if (!entry) return;
+		sendingImages += files.length;
+		let at = pos;
+		for (const file of files) {
+			try {
+				const img = await uploadImage(file, entry.id);
+				const md = markdownImage(img);
+				editor?.insertAt(at, md);
+				at += md.length + 2;
+			} catch (err) {
+				failed = failure(err, 'Image non envoyée : ');
+			} finally {
+				sendingImages -= 1;
+			}
+		}
+	}
+	let picker: HTMLInputElement | undefined = $state();
+
 	let deleting = $state(false); // once deleted, nothing is saved any more
 
 	async function remove() {
@@ -359,6 +381,16 @@
 					{#if !carnet.tree?.spaces.some((s) => s.id === entry?.space_id)}<option value="s:{entry.space_id}">{placeName(entry)}</option>{/if}
 				</select>
 				<input type="date" value={entry.entry_date} onchange={(e) => setDate((e.currentTarget as HTMLInputElement).value)} aria-label="Date" />
+				<button class="image-btn" onclick={() => picker?.click()} disabled={sendingImages > 0} title="Insérer une image (ou colle-la, ou glisse-la dans le texte)">
+					{sendingImages ? 'Envoi…' : '🖼 Image'}
+				</button>
+				<input bind:this={picker} type="file" accept="image/*" multiple hidden
+					onchange={(e) => {
+						const input = e.currentTarget as HTMLInputElement;
+						const files = [...(input.files ?? [])];
+						input.value = '';
+						if (files.length) void onimages(files, editor?.cursor() ?? text.length);
+					}} />
 				{#if entry.about}
 					{@const a = entry.about}
 					<span class="about">
@@ -391,7 +423,7 @@
 		<div class="cols">
 			<div class="page">
 				{#key entry.id}
-					<Editor bind:this={editor} value={entry.body} {onchange} onsave={() => flush(true)} {ontoggle} />
+					<Editor bind:this={editor} value={entry.body} {onchange} onsave={() => flush(true)} {ontoggle} {onimages} />
 				{/key}
 			</div>
 			<aside>
@@ -540,6 +572,20 @@
 		flex-wrap: wrap;
 		gap: 8px;
 		align-items: center;
+	}
+	.image-btn {
+		padding: 2px 8px;
+		border: 1px solid var(--line);
+		border-radius: 6px;
+		background: none;
+		font: inherit;
+		font-family: var(--sans);
+		font-size: 0.8125rem;
+		color: var(--muted);
+		cursor: pointer;
+	}
+	.image-btn:hover {
+		color: var(--accent);
 	}
 	.about {
 		font-size: 0.875rem;
