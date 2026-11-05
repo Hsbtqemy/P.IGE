@@ -23,6 +23,8 @@
       <p class="help">Créé sur le serveur avec <code>python -m pige.server new-token</code>.</p>
       <label class="check"><input id="followReplies" type="checkbox" checked /> Garder mes réponses dans P.IGE (suivi des tâches, conversations « à répondre » marquées répondues)</label>
       <p class="help">Quand tu réponds à un mail dont tu as fait une tâche, ta réponse s’ajoute au « Suivi » de la tâche (une entrée par jour).</p>
+      <label class="check"><input id="keepAttachments" type="checkbox" /> Garder les pièces jointes dans P.IGE</label>
+      <p class="help">Quand tu ranges un mail (ou l’ajoutes au suivi d’une tâche), ses pièces jointes de 8 Mo au plus sont enregistrées sur le serveur, téléchargeables depuis la conversation. Les images incluses dans le texte (signatures) sont ignorées.</p>
       <button type="submit">Enregistrer et tester</button>
     </form>
     <p id="result" role="status"></p>

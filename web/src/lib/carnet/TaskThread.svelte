@@ -5,6 +5,7 @@
 	import { ApiError } from '../api.js';
 	import { v2, type Entry, type TaskMail } from '../api2.js';
 	import TaskOrigin from './TaskOrigin.svelte';
+	import Attachments from './Attachments.svelte';
 	import { failure, longDate, todayIso } from './state.svelte.js';
 
 	let { taskId, originEntryId }: { taskId: string; originEntryId: string | null | undefined } = $props();
@@ -129,7 +130,7 @@
 								{#if open.has(m.id)}
 									<div class="full">
 										{#if m.body.trim()}{m.body}{:else}<em>(texte non copié)</em>{/if}
-										{#if m.attachments}<small>Pièces jointes : {m.attachments}</small>{/if}
+										{#if m.files?.length}<Attachments files={m.files} />{:else if m.attachments}<small>Pièces jointes : {m.attachments}</small>{/if}
 									</div>
 								{/if}
 							</li>

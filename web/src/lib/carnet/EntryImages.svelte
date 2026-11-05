@@ -4,7 +4,8 @@
 	import { deleteImage, uploadImage } from './images.js';
 	import { failure } from './state.svelte.js';
 
-	type Img = { id: string; name: string; width: number | null; height: number | null; url: string };
+	import type { FileRef } from '../api2.js';
+	type Img = FileRef;
 
 	let {
 		files,
@@ -12,6 +13,10 @@
 		editable = false,
 		onchanged
 	}: { files: Img[]; entryId?: string; editable?: boolean; onchanged?: (files: Img[]) => void } = $props();
+
+	// A mail's attachments are listed apart (links), only images are shown here.
+	let images = $derived(files.filter((f) => f.kind !== 'attachment'));
+	let others = $derived(files.filter((f) => f.kind === 'attachment'));
 
 	let busy = $state(0);
 	let message = $state('');
@@ -37,16 +42,16 @@
 		if (!confirm(`Retirer l’image « ${img.name || 'sans nom'} » ?`)) return;
 		try {
 			await deleteImage(img.id);
-			onchanged?.(files.filter((f) => f.id !== img.id));
+			onchanged?.([...images.filter((f) => f.id !== img.id), ...others]);
 		} catch (err) {
 			message = failure(err, '');
 		}
 	}
 </script>
 
-{#if files.length || editable}
+{#if images.length || editable}
 	<div class="images">
-		{#each files as img (img.id)}
+		{#each images as img (img.id)}
 			<span class="thumb">
 				<a href={img.url} target="_blank" rel="noopener" title={img.name}>
 					<img src={img.url} alt={img.name} loading="lazy" width={img.width ?? undefined} height={img.height ?? undefined} />

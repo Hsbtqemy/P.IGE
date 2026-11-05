@@ -3,11 +3,19 @@ const serverInput = document.getElementById('serverUrl');
 const tokenInput = document.getElementById('token');
 const result = document.getElementById('result');
 const followInput = document.getElementById('followReplies');
+const keepInput = document.getElementById('keepAttachments');
 
-browser.storage.local.get(['serverUrl', 'token', 'followReplies']).then(({ serverUrl = '', token = '', followReplies = true }) => {
-  serverInput.value = serverUrl;
-  tokenInput.value = token;
-  followInput.checked = followReplies;
+browser.storage.local
+  .get(['serverUrl', 'token', 'followReplies', 'keepAttachments'])
+  .then(({ serverUrl = '', token = '', followReplies = true, keepAttachments = false }) => {
+    serverInput.value = serverUrl;
+    tokenInput.value = token;
+    followInput.checked = followReplies;
+    keepInput.checked = keepAttachments;
+  });
+
+keepInput.addEventListener('change', () => {
+  void browser.storage.local.set({ keepAttachments: keepInput.checked });
 });
 
 // The follow-up option is saved at once, without testing the server again.

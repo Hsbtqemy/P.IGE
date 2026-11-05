@@ -11,6 +11,7 @@
 	import EntryTime from '#lib/carnet/EntryTime.svelte';
 	import WritingView from '#lib/carnet/WritingView.svelte';
 	import EntryImages from '#lib/carnet/EntryImages.svelte';
+	import Attachments from '#lib/carnet/Attachments.svelte';
 	import { deleteImage, uploadImage, type StoredImage } from '#lib/carnet/images.js';
 	import DayFrameLine from '#lib/carnet/DayFrameLine.svelte';
 	import { newId, prepare } from '#lib/carnet/capture.js';
@@ -561,7 +562,7 @@
 								{#if folded(entry)}
 									<button class="plain more" onclick={() => (unfolded = new Set([...unfolded, entry.id]))}>Lire tout le mail</button>
 								{/if}
-								{#if entry.files?.length}<EntryImages files={entry.files} />{/if}
+								{#if entry.files?.length}<EntryImages files={entry.files} /><Attachments files={entry.files} />{/if}
 								<span class="where-inline">{placeLabel(entry)}</span>
 							</div>
 						{/if}

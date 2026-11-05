@@ -59,7 +59,7 @@ export interface Entry {
 	version: number;
 	revision: number;
 	cancelled?: boolean;
-	files?: { id: string; name: string; width: number | null; height: number | null; url: string }[]; // pictures
+	files?: FileRef[]; // pictures, and a filed mail's attachments
 	agenda?: boolean; // added in the Agenda as an event
 	counted?: boolean; // its time range counts (an Agenda event: once « Compter »)
 	about_entry_id?: string | null;
@@ -166,6 +166,7 @@ export interface TaskMail {
 	subject: string;
 	body: string;
 	attachments: string;
+	files?: FileRef[];
 }
 
 export interface Step {
@@ -321,6 +322,17 @@ export interface Conversation {
 	last_received: string | null;
 }
 
+/** A file held by an entry or a mail: an image (thumbnail) or a mail's attachment (to download). */
+export interface FileRef {
+	id: string;
+	kind?: 'image' | 'attachment';
+	name: string;
+	size?: number;
+	width: number | null;
+	height: number | null;
+	url: string;
+}
+
 export interface ConversationMail {
 	id: string;
 	kind: 'entry' | 'followup';
@@ -335,6 +347,7 @@ export interface ConversationMail {
 	attachments: string;
 	entry_id: string | null;
 	task_id: string | null;
+	files?: FileRef[];
 }
 
 export interface CalendarInfo {

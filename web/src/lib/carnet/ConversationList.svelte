@@ -6,6 +6,7 @@
 	import { page } from '$app/state';
 	import { v2, type Conversation, type ConversationMail, type ConversationState } from '../api2.js';
 	import MailOpen from './MailOpen.svelte';
+	import Attachments from './Attachments.svelte';
 	import { failure } from './state.svelte.js';
 
 	let { projectId, spaceId }: { projectId?: string; spaceId?: string } = $props();
@@ -153,7 +154,7 @@
 									{#if unfolded.has(m.id)}
 										<div class="full">
 											{#if m.body.trim()}{m.body}{:else}<em>(texte non copié)</em>{/if}
-											{#if m.attachments}<small>Pièces jointes : {m.attachments}</small>{/if}
+											{#if m.files?.length}<Attachments files={m.files} />{:else if m.attachments}<small>Pièces jointes : {m.attachments}</small>{/if}
 											<span class="links">
 												{#if m.message_id}<MailOpen messageId={m.message_id} class="link" label="Ouvrir le mail" />{/if}
 												{#if m.kind === 'entry'}<a class="link" href="/journal/{m.day}#e-{m.entry_id}">dans le journal</a>{:else if m.task_id}<a class="link" href="?tache={m.task_id}">dans le suivi de la tâche</a>{/if}

@@ -301,6 +301,12 @@ def _zone(name: str) -> ZoneInfo:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown time zone {name!r}") from exc
 
 
+def _file_ref(f: Any) -> dict[str, Any]:
+    """A file as entries and mails show it: an image (thumbnail) or a mail's attachment (link)."""
+    return {"id": f.id, "kind": f.kind, "name": f.name, "size": f.size, "width": f.width, "height": f.height,
+            "url": f"/api/v2/files/{f.id}"}
+
+
 def build_router(store: ModelStore, require_auth: Callable[..., str], default_timezone: str) -> APIRouter:
     def require_v2(request: Request, auth: str = Depends(require_auth)) -> str:
         # API tokens (Thunderbird extension, scripts) capture and read; only the
@@ -503,7 +509,9 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
     @router.get("/tasks/{task_id}/mails")
     def task_mails(task_id: IdPath) -> list[dict[str, Any]]:
         store.get_task(task_id)
-        return _out(store.task_mails(task_id))
+        mails = store.task_mails(task_id)
+        kept = store.files_for_mails([m.id for m in mails])
+        return [{**_out(m), "files": [_file_ref(f) for f in kept[m.id]]} for m in mails]
 
     @router.post("/tasks/{task_id}/followups", status_code=status.HTTP_201_CREATED)
     def add_followup(task_id: IdPath, body: FollowUpIn) -> dict[str, Any]:
@@ -674,8 +682,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             {**_out(e), "people": _out(people[e.id]), "tags": _out(tags[e.id]),
              **({"code": code[e.id]} if e.id in code else {}),
              "notes": notes_.notes_ref(written.get(e.id)),
-             "files": [{"id": f.id, "name": f.name, "width": f.width, "height": f.height,
-                        "url": f"/api/v2/files/{f.id}"} for f in attached[e.id]],
+             "files": [_file_ref(f) for f in attached[e.id]],
              "about": notes_.about_view(store, e, zone_) if e.source == "writing" else None}
             for e in entries
         ]
@@ -862,7 +869,13 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
     def conversation(conv_id: IdPath) -> dict[str, Any]:
         conv = store.get_conversation(conv_id)
         mails = store.conversation_mails(conv_id)
-        return {**_conversation_view(conv, mails), "mails": _out(mails)}
+        by_entry = store.files_for([m.entry_id for m in mails if m.kind == "entry" and m.entry_id])
+        by_mail = store.files_for_mails([m.id for m in mails if m.kind == "followup"])
+        views = []
+        for m in mails:
+            kept = by_entry.get(m.entry_id or "", []) if m.kind == "entry" else by_mail.get(m.id, [])
+            views.append({**_out(m), "files": [_file_ref(f) for f in kept if f.kind == "attachment"]})
+        return {**_conversation_view(conv, mails), "mails": views}
 
     @router.patch("/conversations/{conv_id}")
     def update_conversation(conv_id: IdPath, body: ConversationPatch) -> dict[str, Any]:

@@ -67,3 +67,31 @@ def test_only_real_images_and_cleanup(setup):
     from pige.server.api_files import FileStore
     assert FileStore(root / "files").sweep(c.app.state.model_store) == 1
     assert list((root / "files").glob("*/*.*")) == []
+
+
+def test_attachments_of_a_mail_are_kept_once_and_downloaded(setup):
+    c, root, space = setup
+    mail = c.post("/api/v2/entries", json={"entry_date": "2026-11-05", "space_id": space["id"], "title": "Convention",
+                                           "body": "Mail de A\n\nCi-joint.", "source": "mail",
+                                           "mail_message_id": "<c1@x>"}).json()
+    pdf = b"%PDF-1.4\n" + b"x" * 100
+    url = f"/api/v2/files?attachment=1&entry_id={mail['id']}&name=convention%20sign%C3%A9e.pdf"
+    first = c.post(url, content=pdf, headers={"content-type": "application/pdf"})
+    assert first.status_code == 201, first.text
+    f = first.json()
+    assert (f["kind"], f["mime"]) == ("attachment", "application/pdf")
+    assert c.post(url, content=pdf, headers={"content-type": "application/pdf"}).json()["id"] == f["id"]  # filed twice
+    got = c.get(f["url"])
+    assert got.content == pdf and got.headers["content-disposition"].startswith("attachment; filename*=UTF-8''convention")
+    assert "sandbox" in got.headers["content-security-policy"]
+    # HTML pretending to be anything: kept, but only ever downloaded as bytes.
+    html = c.post(f"/api/v2/files?attachment=1&entry_id={mail['id']}&name=page.html", content=b"<script>x</script>",
+                  headers={"content-type": "text/html"}).json()
+    served = c.get(html["url"])
+    assert served.headers["content-type"] == "application/octet-stream"
+    entry = c.get(f"/api/v2/entries/{mail['id']}").json()
+    assert sorted(x["kind"] for x in entry["files"]) == ["attachment", "attachment"]
+    convs = c.get(f"/api/v2/conversations?space_id={space['id']}").json()
+    full = c.get(f"/api/v2/conversations/{convs[0]['id']}").json()
+    assert [x["name"] for x in full["mails"][0]["files"]] == ["convention signée.pdf", "page.html"]
+    assert c.post("/api/v2/files?attachment=1&name=x.pdf", content=pdf).status_code == 400  # belongs to a mail
