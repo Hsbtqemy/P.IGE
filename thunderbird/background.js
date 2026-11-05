@@ -20,12 +20,13 @@ const CONTEXTS = ['message_list', 'page', 'selection'];
 let cache = { at: 0, tree: null, people: [] };
 
 async function settings() {
-  const { serverUrl = '', token = '', followReplies = true } = await browser.storage.local.get([
+  const { serverUrl = '', token = '', followReplies = true, keepAttachments = false } = await browser.storage.local.get([
     'serverUrl',
     'token',
-    'followReplies'
+    'followReplies',
+    'keepAttachments'
   ]);
-  return { serverUrl: serverUrl.replace(/\/+$/, ''), token, followReplies };
+  return { serverUrl: serverUrl.replace(/\/+$/, ''), token, followReplies, keepAttachments };
 }
 
 function originOf(url) {
@@ -248,6 +249,7 @@ async function fileMail(header, action, target, people) {
     // « À répondre »: the conversation waits for a reply, listed in Ma journée until it comes.
     to_answer: action === 'answer'
   });
+  const files = await keepAttachments(header.id, attachments, { entry_id: entry.id });
   if (action === 'task') {
     // A mail already in P.IGE (noted earlier, elsewhere) comes back as it was: the task goes
     // where it was asked, and the mail follows unless it belongs to another task's thread.
@@ -265,7 +267,7 @@ async function fileMail(header, action, target, people) {
     // The same mail made a task before: filing it again moves that task here.
     if (elsewhere(task, target)) await api('POST', `/api/v2/tasks/${task.id}/move`, target);
   }
-  return entry;
+  return { entry, files };
 }
 
 function placeName(tree, target) {
@@ -301,25 +303,32 @@ async function fileMails(choice, headers) {
     return;
   }
   let done = 0;
+  let kept = 0;
+  let tooBig = 0;
   const failures = [];
   for await (const header of headers) {
     try {
-      await fileMail(header, choice.action, choice.target, known.people);
+      const { files } = await fileMail(header, choice.action, choice.target, known.people);
+      kept += files.kept;
+      tooBig += files.tooBig;
       done += 1;
     } catch (err) {
       failures.push(String(err?.message || err));
     }
   }
   const where = placeName(known.tree, choice.target);
+  const extra =
+    (kept ? ` ${kept} pièce${kept > 1 ? 's' : ''} jointe${kept > 1 ? 's' : ''} gardée${kept > 1 ? 's' : ''}.` : '') +
+    (tooBig ? ` ${tooBig} trop lourde${tooBig > 1 ? 's' : ''} (plus de 8 Mo), restée${tooBig > 1 ? 's' : ''} dans le mail.` : '');
   if (done) await refreshOpenTabs();
   if (failures.length) {
     notify('Envoi incomplet', `${failures.length} sur ${done + failures.length} non envoyés (${failures[0]}).`);
   } else if (choice.action === 'task') {
-    notify(done > 1 ? `${done} tâches créées` : 'Tâche créée', `Dans ${where}.`);
+    notify(done > 1 ? `${done} tâches créées` : 'Tâche créée', `Dans ${where}.${extra}`);
   } else if (choice.action === 'answer') {
-    notify(done > 1 ? `${done} mails à répondre` : 'À répondre', `Dans ${where} : listé dans Ma journée jusqu’à ta réponse.`);
+    notify(done > 1 ? `${done} mails à répondre` : 'À répondre', `Dans ${where} : listé dans Ma journée jusqu’à ta réponse.${extra}`);
   } else {
-    notify(done > 1 ? `${done} mails notés` : 'Mail noté', `Dans le journal, ${where}.`);
+    notify(done > 1 ? `${done} mails notés` : 'Mail noté', `Dans le journal, ${where}.${extra}`);
   }
 }
 
@@ -355,6 +364,36 @@ async function referencesOf(messageId) {
   }
 }
 
+/** The mail's attachments sent to P.IGE (option « Garder les pièces jointes »), held by the
+ * filed mail (entry_id) or the follow-up mail (task_mail_id). Inline pictures (signatures,
+ * logos: they have a Content-ID) and files over 8 MB are left in the mail. */
+const ATTACHMENT_MAX = 8 * 1024 * 1024;
+async function keepAttachments(messageId, attachments, holder) {
+  const { keepAttachments: wanted, serverUrl, token } = await settings();
+  const out = { kept: 0, tooBig: 0 };
+  if (!wanted) return out;
+  for (const a of attachments || []) {
+    if (!a?.partName || a.contentId) continue;
+    if (a.size > ATTACHMENT_MAX) {
+      out.tooBig += 1;
+      continue;
+    }
+    try {
+      const file = await browser.messages.getAttachmentFile(messageId, a.partName);
+      const params = new URLSearchParams({ attachment: '1', name: a.name || file.name || 'pièce jointe', ...holder });
+      const response = await fetch(`${serverUrl}/api/v2/files?${params}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': a.contentType || file.type || 'application/octet-stream' },
+        body: file
+      });
+      if (response.ok) out.kept += 1;
+    } catch {
+      /* this file stays in the mail */
+    }
+  }
+  return out;
+}
+
 async function attachmentsOf(messageId) {
   try {
     return await browser.messages.listAttachments(messageId);
@@ -384,6 +423,7 @@ async function followMails(headers) {
     try {
       const references = await referencesOf(header.id);
       const sent = isSentFolder(header.folder);
+      const listed = await attachmentsOf(header.id);
       const result = await api(
         'POST',
         '/api/v2/mail-followups',
@@ -396,9 +436,10 @@ async function followMails(headers) {
           recipients: header.recipients,
           subject: header.subject,
           text: await mailText(header.id),
-          attachments: await attachmentsOf(header.id)
+          attachments: listed
         })
       );
+      if (result.mail?.id) await keepAttachments(header.id, listed, { task_mail_id: result.mail.id });
       added += 1;
       taskTitle = result.task.title;
     } catch (err) {

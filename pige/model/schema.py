@@ -500,6 +500,14 @@ MIGRATIONS: tuple[str, ...] = (
     );
     CREATE INDEX files_entry ON files(entry_id);
     """,
+    # ------------------------------------------------------------------ 15
+    # Attachments of mails kept in P.IGE (when asked from Thunderbird): files of any kind,
+    # held by the filed mail (entry) or by a mail of a task's follow-up.
+    """
+    ALTER TABLE files ADD COLUMN kind TEXT NOT NULL DEFAULT 'image' CHECK (kind IN ('image', 'attachment'));
+    ALTER TABLE files ADD COLUMN task_mail_id TEXT REFERENCES task_mails(id) ON DELETE CASCADE;
+    CREATE INDEX files_task_mail ON files(task_mail_id) WHERE task_mail_id IS NOT NULL;
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

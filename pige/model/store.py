@@ -275,6 +275,8 @@ class StoredFile:
     width: int | None
     height: int | None
     created_at: str
+    kind: str = "image"  # image | attachment (of a mail)
+    task_mail_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2445,16 +2447,37 @@ class ModelStore:
     # ------------------------------------------------------------ files
 
     def add_file(self, file_id: str, *, mime: str, size: int, name: str = "", width: int | None = None,
-                 height: int | None = None, entry_id: str | None = None) -> StoredFile:
+                 height: int | None = None, entry_id: str | None = None, kind: str = "image",
+                 task_mail_id: str | None = None) -> StoredFile:
         with self._tx():
             if entry_id is not None:
                 self._require("entries", entry_id)
+            if task_mail_id is not None:
+                self._require("task_mails", task_mail_id)
             self.conn.execute(
-                "INSERT INTO files(id, entry_id, name, mime, size, width, height, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (file_id, entry_id, name.strip()[:200], mime, size, width, height, _utc(_now())),
+                "INSERT INTO files(id, entry_id, name, mime, size, width, height, created_at, kind, task_mail_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (file_id, entry_id, name.strip()[:200], mime, size, width, height, _utc(_now()), kind, task_mail_id),
             )
             return self.get_file(file_id)
+
+    def same_attachment(self, *, entry_id: str | None, task_mail_id: str | None, name: str,
+                        size: int) -> StoredFile | None:
+        """The attachment already kept for this mail (a mail filed twice keeps its files once)."""
+        row = self.conn.execute(
+            "SELECT * FROM files WHERE kind = 'attachment' AND entry_id IS ? AND task_mail_id IS ? AND name = ?"
+            " AND size = ?", (entry_id, task_mail_id, name.strip()[:200], size)).fetchone()
+        return cast(StoredFile, _row_to(StoredFile, row)) if row else None
+
+    def files_for_mails(self, task_mail_ids: Sequence[str]) -> dict[str, list[StoredFile]]:
+        out: dict[str, list[StoredFile]] = {m: [] for m in task_mail_ids}
+        if not task_mail_ids:
+            return out
+        marks = ",".join("?" * len(task_mail_ids))
+        for r in self.conn.execute(f"SELECT * FROM files WHERE task_mail_id IN ({marks}) ORDER BY created_at",
+                                   tuple(task_mail_ids)):
+            out[r["task_mail_id"]].append(cast(StoredFile, _row_to(StoredFile, r)))
+        return out
 
     def get_file(self, file_id: str) -> StoredFile:
         return cast(StoredFile, _row_to(StoredFile, self._require("files", file_id)))
@@ -2486,7 +2509,8 @@ class ModelStore:
         """Files never attached to anything (a paragraph abandoned): forgotten after a while."""
         with self._tx():
             ids = [r["id"] for r in self.conn.execute(
-                "SELECT id FROM files WHERE entry_id IS NULL AND created_at < ?", (_utc(before),))]
+                "SELECT id FROM files WHERE entry_id IS NULL AND task_mail_id IS NULL AND created_at < ?",
+                (_utc(before),))]
             for fid in ids:
                 self.conn.execute("DELETE FROM files WHERE id = ?", (fid,))
             return ids
