@@ -4,7 +4,7 @@
 	import '@fontsource/newsreader/latin-600.css';
 	import '#lib/carnet/carnet.css';
 	import { onMount, tick } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { v2 } from '#lib/api2.js';
 	import { page } from '$app/state';
 	import { api, ApiError } from '#lib/api.js';
@@ -15,6 +15,9 @@
 
 	let { children } = $props();
 	let searchOpen = $state(false);
+	// On a phone the menu folds behind « ☰ »: the page comes first.
+	let menuOpen = $state(false);
+	afterNavigate(() => (menuOpen = false));
 
 	// « + » in the side column: a project in a space, or a new space.
 	let adding = $state<string | null>(null);
@@ -108,7 +111,22 @@
 	{:else}
 		<div class="shell">
 			<aside aria-label="Navigation">
-				<a class="brand" href="/journal/{todayIso()}">P.IGE</a>
+				<div class="topbar">
+					<a class="brand" href="/journee/{todayIso()}">P.IGE</a>
+					<button class="icon" onclick={() => (searchOpen = true)} aria-label="Rechercher">
+						<svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></svg>
+					</button>
+					<button class="icon burger" onclick={() => (menuOpen = !menuOpen)} aria-expanded={menuOpen} aria-controls="menu" aria-label={menuOpen ? 'Fermer le menu' : 'Menu'}>
+						{#if menuOpen}
+							<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></svg>
+						{:else}
+							<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+						{/if}
+						{#if !menuOpen && (carnet.timers.length || outbox.pending.length)}<span class="dot" aria-hidden="true"></span>{/if}
+					</button>
+				</div>
+				<div class="menu" id="menu" class:open={menuOpen}>
+				<a class="brand desk" href="/journal/{todayIso()}">P.IGE</a>
 				<button class="search" onclick={() => (searchOpen = true)}>
 					<svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4.5 4.5" /></svg>
 					<span>Rechercher</span>
@@ -214,6 +232,7 @@
 				</details>
 				<div class="foot">
 					<a class="old" href="/reglages" aria-current={path.startsWith('/reglages') ? 'page' : undefined}>Réglages</a>
+				</div>
 				</div>
 			</aside>
 			<main>{@render children()}</main>
@@ -520,15 +539,84 @@
 	main {
 		min-width: 0;
 	}
+	/* Wide screens: the menu is the side column, as it always was. */
+	.menu {
+		display: contents;
+	}
+	.topbar {
+		display: none;
+	}
 	@media (max-width: 760px) {
 		.shell {
 			grid-template-columns: 1fr;
 		}
 		aside {
-			position: static;
+			position: sticky;
+			top: 0;
+			z-index: 5;
 			height: auto;
+			max-height: 100dvh;
+			padding: 8px 12px;
+			gap: 0;
 			border-right: 0;
 			border-bottom: 1px solid var(--line);
+		}
+		.topbar {
+			display: flex;
+			align-items: center;
+			gap: 4px;
+		}
+		.topbar .brand {
+			flex: 1;
+		}
+		.icon {
+			position: relative;
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			width: 40px;
+			height: 40px;
+			padding: 0;
+			border: 0;
+			border-radius: 8px;
+			background: none;
+			color: var(--ink);
+			cursor: pointer;
+		}
+		.icon:hover,
+		.icon[aria-expanded='true'] {
+			background: var(--soft);
+		}
+		.icon svg {
+			width: 22px;
+			height: 22px;
+			fill: none;
+			stroke: currentColor;
+			stroke-width: 1.8;
+			stroke-linecap: round;
+		}
+		.dot {
+			position: absolute;
+			top: 8px;
+			right: 8px;
+			width: 7px;
+			height: 7px;
+			border-radius: 50%;
+			background: var(--accent);
+		}
+		.menu {
+			display: none;
+		}
+		.menu.open {
+			display: flex;
+			flex-direction: column;
+			gap: 14px;
+			padding: 10px 0 8px;
+			overflow-y: auto;
+			max-height: calc(100dvh - 60px);
+		}
+		.brand.desk {
+			display: none;
 		}
 	}
 </style>
