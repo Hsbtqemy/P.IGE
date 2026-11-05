@@ -233,6 +233,7 @@ class FramePatch(_In):
     ended_at: datetime | None = None
     priorities: list[PriorityIn] | None = Field(default=None, max_length=10)
     tomorrow: str | None = Field(default=None, max_length=5000)
+    review: str | None = Field(default=None, max_length=20_000)  # the day's review
 
 
 class TimerStop(_In):
@@ -1089,6 +1090,7 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             "ended_at": _out(frame.ended_at),
             "priorities": priorities,
             "tomorrow": frame.tomorrow,
+            "review": frame.review,
             "from_before": {"day": before.day, "text": before.tomorrow} if before else None,
             "span": _span(day, zone_),
         }
@@ -1111,6 +1113,8 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
             args["priorities"] = [p.model_dump() for p in body.priorities]
         if body.tomorrow is not None:
             args["tomorrow"] = body.tomorrow
+        if body.review is not None:
+            args["review"] = body.review
         store.set_day_frame(day, **args)
         return _frame_view(day, _zone(tz))
 

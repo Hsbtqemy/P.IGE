@@ -318,6 +318,7 @@ class DayFrame:
     ended_at: datetime | None
     priorities: list[dict[str, Any]]
     tomorrow: str
+    review: str = ""  # the day's review, written when closing it
 
 
 @dataclass(frozen=True)
@@ -2701,6 +2702,7 @@ class ModelStore:
             _parse_utc(row["ended_at"]) if row["ended_at"] else None,
             json.loads(row["priorities"]),
             row["tomorrow"],
+            row["review"],
         )
 
     _UNSET: Any = object()
@@ -2713,6 +2715,7 @@ class ModelStore:
         ended_at: datetime | None = _UNSET,
         priorities: list[dict[str, Any]] | None = None,
         tomorrow: str | None = None,
+        review: str | None = None,
     ) -> DayFrame:
         """Change what is given (None clears a time); the rest stays."""
         with self._tx():
@@ -2729,13 +2732,14 @@ class ModelStore:
                 raise InvalidOperationError("a day cannot last more than 24 hours")
             items = current.priorities if priorities is None else [self._priority(p) for p in priorities]
             note = current.tomorrow if tomorrow is None else tomorrow.strip()
+            text = current.review if review is None else review.strip()
             self.conn.execute(
-                "INSERT INTO day_frames(day, started_at, ended_at, priorities, tomorrow, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(day) DO UPDATE SET started_at = excluded.started_at,"
+                "INSERT INTO day_frames(day, started_at, ended_at, priorities, tomorrow, review, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(day) DO UPDATE SET started_at = excluded.started_at,"
                 " ended_at = excluded.ended_at, priorities = excluded.priorities, tomorrow = excluded.tomorrow,"
-                " updated_at = excluded.updated_at",
+                " review = excluded.review, updated_at = excluded.updated_at",
                 (day.isoformat(), _utc(start) if start else None, _utc(end) if end else None,
-                 json.dumps(items, ensure_ascii=False), note, _utc(_now())),
+                 json.dumps(items, ensure_ascii=False), note, text, _utc(_now())),
             )
             return self.day_frame(day)
 

@@ -138,6 +138,27 @@
 		border-left: 3px solid var(--accent);
 		color: var(--muted);
 	}
+	.rendered :global(pre) {
+		max-width: 100%;
+		overflow-x: auto;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	.rendered :global(table) {
+		display: block;
+		max-width: 100%;
+		overflow-x: auto;
+		border-collapse: collapse;
+	}
+	.rendered :global(td),
+	.rendered :global(th) {
+		padding: 2px 8px;
+		border-bottom: 1px solid var(--line);
+		/* Words whole in a cell: a wide table scrolls sideways instead. */
+		overflow-wrap: normal;
+		word-break: normal;
+		min-width: 5em;
+	}
 	.rendered :global(code) {
 		font-family: ui-monospace, Menlo, Consolas, monospace;
 		font-size: 0.9em;

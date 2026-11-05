@@ -126,7 +126,7 @@
 		flex-direction: column;
 		gap: 1px;
 		min-width: 0;
-		flex: 1;
+		flex: 1 1 220px;
 		overflow-wrap: anywhere;
 	}
 	.what a {

@@ -31,6 +31,9 @@
 		{/if}
 		{#if frame.started_at}<a href="/journee/{day}">Ma journée →</a>{/if}
 	</p>
+	{#if frame.review}
+		<div class="review"><span>Bilan de la journée</span>{frame.review}</div>
+	{/if}
 {/if}
 
 <style>
@@ -42,6 +45,24 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px 12px;
+	}
+	.review {
+		margin: 4px 0 0;
+		padding: 8px 12px;
+		background: var(--soft);
+		border-radius: 8px;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		font-size: 0.9375rem;
+	}
+	.review span {
+		display: block;
+		font-family: var(--sans);
+		font-size: 0.6875rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--muted);
 	}
 	.frame-line:empty {
 		display: none;

@@ -31,6 +31,7 @@
 	let startClock = $state('');
 	let endClock = $state('');
 	let tomorrowDraft = $state('');
+	let reviewDraft = $state('');
 	let prioDraft = $state('');
 	let now = $state(Date.now());
 
@@ -125,13 +126,14 @@
 					? hhmm(span.end)
 					: '18:00';
 		tomorrowDraft = frame.tomorrow;
+		reviewDraft = frame.review;
 		closing = true;
 	}
 
 	async function close(event: SubmitEvent) {
 		event.preventDefault();
 		if (!closeStart || !closeEnd) return;
-		if (await save({ started_at: closeStart, ended_at: closeEnd, tomorrow: tomorrowDraft }, 'Journée non close')) closing = false;
+		if (await save({ started_at: closeStart, ended_at: closeEnd, tomorrow: tomorrowDraft, review: reviewDraft }, 'Journée non close')) closing = false;
 	}
 
 	async function reopen() {
@@ -261,6 +263,9 @@
 					</ul>
 				{/if}
 				{@render priorities(true)}
+				<label class="tomorrow">Bilan de la journée
+					<textarea bind:value={reviewDraft} rows="3" placeholder="Ce qui s’est passé, ce qui a avancé, ce qui a coincé… (gardé avec la journée, rien à ranger)"></textarea>
+				</label>
 				<label class="tomorrow">À reprendre demain
 					<textarea bind:value={tomorrowDraft} rows="2" placeholder="Où tu t’es arrêté, ce qui attend…"></textarea>
 				</label>
@@ -338,6 +343,7 @@
 				<button class="plain link" onclick={openClosing}>Modifier</button>
 			</div>
 			{@render priorities(false)}
+			{#if frame.review}<p class="carry review"><span class="label">Bilan</span><br />{frame.review}</p>{/if}
 			{#if frame.tomorrow}<p class="carry"><span class="label">Pour demain</span><br />{frame.tomorrow}</p>{/if}
 		{/if}
 	</section>
@@ -390,6 +396,9 @@
 	.warn {
 		margin: 0;
 		font-size: 0.875rem;
+	}
+	.carry.review {
+		background: var(--softer);
 	}
 	.carry {
 		margin: 0;

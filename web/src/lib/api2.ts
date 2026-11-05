@@ -272,6 +272,7 @@ export interface DayFrame {
 	ended_at: string | null;
 	priorities: Priority[];
 	tomorrow: string;
+	review: string; // the day's review, written when closing it
 	from_before: { day: string; text: string } | null;
 	span: DaySpan | null;
 }
@@ -281,6 +282,7 @@ export interface FramePatch {
 	ended_at?: string | null;
 	priorities?: { text: string; task_id: string | null; done: boolean; carried?: boolean }[];
 	tomorrow?: string;
+	review?: string;
 }
 
 export interface Target {

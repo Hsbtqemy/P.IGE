@@ -73,7 +73,7 @@
 		title={minutes !== null ? 'Compté dans Ma journée · cliquer pour modifier' : 'Indiquer une plage horaire (9h30-11h) : elle comptera dans Ma journée'}
 	>
 		{#if entry.start_time}
-			<span class="hours" class:range={!!entry.end_time}>{showRange(entry.start_time, entry.end_time)}</span>
+			<span class="hours" class:range={!!entry.end_time}>{showRange(entry.start_time, entry.end_time).replace('–', '–\u200b')}</span>
 			{#if minutes !== null}<small>{formatMinutes(minutes)}</small>{/if}
 		{:else}
 			<span aria-hidden="true">＋</span><span class="visually-hidden">Indiquer une plage horaire</span>
@@ -100,8 +100,10 @@
 	.hours {
 		white-space: nowrap;
 	}
+	/* A range may break after its dash in a narrow margin (phone). */
 	.hours.range {
 		font-size: 0.8125rem;
+		white-space: normal;
 	}
 	.time:hover .hours {
 		text-decoration: underline dotted;

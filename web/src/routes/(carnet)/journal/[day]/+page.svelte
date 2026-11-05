@@ -550,8 +550,7 @@
 											{#each segments(line) as seg, j (j)}
 												{#if seg.type === 'person'}{@const href = personHref(entry, seg.text)}{#if href}<a class="chip-person" {href}>{seg.text}</a
 														>{:else}<span class="chip-person">{seg.text}</span>{/if}{:else if seg.type === 'tag'}{@const href = tagHref(entry, seg.text)}{#if href}<a class="chip-tag" {href}>{seg.text}</a
-														>{:else}<span class="chip-tag">{seg.text}</span>{/if}
-													>{:else if seg.type === 'decision'}<span class="kind decision">DÉCISION</span
+														>{:else}<span class="chip-tag">{seg.text}</span>{/if}{:else if seg.type === 'decision'}<span class="kind decision">DÉCISION</span
 													>{:else if seg.type === 'task'}<span class="task"
 														><span class="box" aria-hidden="true"></span>{seg.text}<small>tâche</small></span
 													>{:else}{seg.text}{/if}
@@ -916,6 +915,7 @@
 	}
 	.row {
 		display: flex;
+		flex-wrap: wrap;
 		gap: 8px;
 		align-items: center;
 		margin-top: 8px;
@@ -1059,6 +1059,10 @@
 		}
 		.empty {
 			margin-left: 68px;
+		}
+		/* The writing hints on a line of their own, the buttons below. */
+		.syntax {
+			flex-basis: 100%;
 		}
 	}
 	.more {
