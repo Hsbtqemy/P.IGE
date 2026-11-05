@@ -162,3 +162,13 @@
 .carnet a.chip-tag:hover {
 	text-decoration: underline;
 }
+
+/* Nothing wider than the screen: long lines of code and pictures stay inside on a phone. */
+.carnet pre {
+	max-width: 100%;
+	overflow-x: auto;
+}
+.carnet img {
+	max-width: 100%;
+	height: auto;
+}

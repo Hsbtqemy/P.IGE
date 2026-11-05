@@ -521,7 +521,9 @@ def test_day_frame_start_end_priorities_and_tomorrow(client, tree):
     frame = ok(client.get("/api/v2/days/2026-10-15/frame?tz=Europe/Paris"))
     assert frame["span"]["seconds"] == (8 * 60 + 45) * 60 and frame["span"]["estimated"] is True  # end from the block
     frame = ok(client.patch("/api/v2/days/2026-10-15/frame?tz=Europe/Paris", json={
-        "ended_at": "2026-10-15T19:15:00+02:00", "tomorrow": "Finir la relecture"}))
+        "ended_at": "2026-10-15T19:15:00+02:00", "tomorrow": "Finir la relecture",
+        "review": "Bonne journée : chapitre 2 relu."}))
+    assert frame["review"] == "Bonne journée : chapitre 2 relu."
     assert frame["span"] == {**frame["span"], "seconds": 10 * 3600 + 30 * 60, "estimated": False}
     assert frame["priorities"][1]["text"] == "Appeler la MSH"  # untouched by the patch
     nxt = ok(client.get("/api/v2/days/2026-10-16/frame"))

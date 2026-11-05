@@ -508,6 +508,11 @@ MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE files ADD COLUMN task_mail_id TEXT REFERENCES task_mails(id) ON DELETE CASCADE;
     CREATE INDEX files_task_mail ON files(task_mail_id) WHERE task_mail_id IS NOT NULL;
     """,
+    # ------------------------------------------------------------------ 16
+    # The day's review, written when closing it: kept with the day, not as an entry to file.
+    """
+    ALTER TABLE day_frames ADD COLUMN review TEXT NOT NULL DEFAULT '';
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)
