@@ -7,6 +7,7 @@
 	import ConversationList from '#lib/carnet/ConversationList.svelte';
 	import { onMailFiled } from '#lib/carnet/thunderbird.svelte.js';
 	import MailOpen from '#lib/carnet/MailOpen.svelte';
+	import Memo from '#lib/carnet/Memo.svelte';
 	import { carnet, failure, longDate, reload } from '#lib/carnet/state.svelte.js';
 	import TaskThread from '#lib/carnet/TaskThread.svelte';
 
@@ -195,6 +196,7 @@
 			{#if isInbox}
 				<p class="hint">Ce qui arrive sans projet (mails classés depuis Thunderbird, notes du téléphone) : à ranger, terminer ou supprimer.</p>
 			{/if}
+			<Memo ownerId={space.id} />
 			{#if space.projects.length}
 				<nav class="projects" aria-label="Projets de l’espace">
 					{#each space.projects as p (p.id)}

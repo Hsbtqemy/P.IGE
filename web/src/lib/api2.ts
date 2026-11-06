@@ -293,7 +293,7 @@ export interface Target {
 }
 
 export interface SearchHit {
-	kind: 'entry' | 'task' | 'mail';
+	kind: 'entry' | 'task' | 'mail' | 'memo';
 	id: string;
 	title: string;
 	snippet: string;
@@ -302,6 +302,16 @@ export interface SearchHit {
 	entry_date: string | null;
 	status: TaskStatus | null;
 	done_at?: string | null;
+}
+
+/** A few lines kept at hand for a space or a project. */
+export interface Memo {
+	id: string | null;
+	space_id: string | null;
+	project_id: string | null;
+	body: string;
+	revision: number; // 0: not written yet
+	updated_at: string | null;
 }
 
 export type ConversationState = 'none' | 'to_answer' | 'waiting' | 'answered' | 'filed';
@@ -522,6 +532,11 @@ export const v2 = {
 	week: (day: string, tz: string) => request<WeekReport>('GET', `/api/v2/weeks/${day}?tz=${encodeURIComponent(tz)}`),
 	validateDay: (day: string, tz: string) =>
 		request<{ validated: number }>('POST', `/api/v2/days/${day}/validate?tz=${encodeURIComponent(tz)}`),
+	memo: (ownerId: string) => request<Memo>('GET', `/api/v2/memos/${ownerId}`),
+	saveMemo: (ownerId: string, body: string, expected_revision: number) =>
+		request<Memo>('PUT', `/api/v2/memos/${ownerId}`, { body, expected_revision }),
+	memoVersions: (ownerId: string) =>
+		request<{ body: string; saved_at: string }[]>('GET', `/api/v2/memos/${ownerId}/versions`),
 	search: (text: string, limit = 20) => request<SearchHit[]>('GET', `/api/v2/search?${q({ q: text, limit, include_done: true })}`),
 	linkedRepos: () =>
 		request<{ project_id: string; repo: string; last_sync: string | null; last_error: string | null }[]>('GET', '/api/v2/code'),

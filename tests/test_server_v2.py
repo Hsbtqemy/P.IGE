@@ -222,6 +222,32 @@ def test_search_endpoint(client, tree):
     assert client.get("/api/v2/search?q=").status_code == 422
 
 
+def test_memos_of_spaces_and_projects(client, tree):
+    space, project = tree["forellis"]["id"], tree["porfavor"]["id"]
+    empty = ok(client.get(f"/api/v2/memos/{space}"))
+    assert empty["body"] == "" and empty["revision"] == 0 and empty["space_id"] == space
+    first = ok(client.put(f"/api/v2/memos/{space}", json={"body": "Wiki : https://wiki.example\n", "expected_revision": 0}))
+    assert first["revision"] == 1 and first["body"] == "Wiki : https://wiki.example"
+    # Written elsewhere in between: refused.
+    assert client.put(f"/api/v2/memos/{space}", json={"body": "x", "expected_revision": 0}).status_code == 409
+    second = ok(client.put(f"/api/v2/memos/{space}", json={"body": "Identifiant : ptessier", "expected_revision": 1}))
+    assert second["revision"] == 2
+    assert [v["body"] for v in ok(client.get(f"/api/v2/memos/{space}/versions"))] == ["Wiki : https://wiki.example"]
+    ok(client.put(f"/api/v2/memos/{project}", json={"body": "Salle B204 le jeudi", "expected_revision": 0}))
+    assert ok(client.get(f"/api/v2/memos/{project}"))["project_id"] == project
+    hits = [h for h in ok(client.get("/api/v2/search?q=ptessier")) if h["kind"] == "memo"]
+    assert hits == [{**hits[0], "id": space, "space_id": space, "project_id": None}]
+    assert "ptessier" in hits[0]["snippet"] and hits[0]["title"] == "Mémo · FoReLLIS"
+    hit = next(h for h in ok(client.get("/api/v2/search?q=b204")) if h["kind"] == "memo")
+    assert hit["id"] == project and hit["space_id"] == tree["mimmoc"]["id"]
+    assert client.get(f"/api/v2/memos/{'0' * 32}").status_code == 404
+    # Gone with its project.
+    web = TestClient(client.app, headers={CSRF_HEADER: "web"})
+    ok(web.post("/api/login", json={"password": PASSWORD}))
+    assert web.delete(f"/api/v2/projects/{project}").status_code == 204
+    assert not [h for h in ok(client.get("/api/v2/search?q=b204")) if h["kind"] == "memo"]
+
+
 def test_legacy_poc_routes_still_work(client):
     created = ok(client.post("/api/tasks", json={"title": "Depuis Thunderbird"}), 201)
     assert created["title"] == "Depuis Thunderbird"

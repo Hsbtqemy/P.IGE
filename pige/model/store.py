@@ -266,6 +266,17 @@ class Entry:
 
 
 @dataclass(frozen=True)
+class Memo:
+    """The memo of a space or a project (empty until written)."""
+    id: str | None
+    space_id: str | None
+    project_id: str | None
+    body: str
+    revision: int
+    updated_at: str | None
+
+
+@dataclass(frozen=True)
 class StoredFile:
     id: str
     entry_id: str | None
@@ -404,7 +415,7 @@ class CalendarEvent:
 
 @dataclass(frozen=True)
 class SearchHit:
-    kind: Literal["entry", "task", "mail"]
+    kind: Literal["entry", "task", "mail", "memo"]
     id: str
     title: str
     snippet: str
@@ -2193,6 +2204,20 @@ class ModelStore:
                 # Ranked after the best journal and task hits, before weak ones.
                 scored.append((-0.5, SearchHit("mail", r["conversation_id"], bare_subject(r["subject"]) or "(sans objet)",
                                                snip, r["space_id"], r["project_id"])))
+            # Memos (by their space or project): a few lines, so a plain match.
+            mcond = " AND ".join("lower(m.body) LIKE ?" for _ in words)
+            for r in self.conn.execute(
+                "SELECT m.body, m.space_id AS own_space, p.id AS project_id, p.name AS project_name,"
+                " coalesce(m.space_id, p.space_id) AS space_id, s.name AS space_name FROM memos m"
+                " LEFT JOIN projects p ON p.id = m.project_id"
+                " JOIN spaces s ON s.id = coalesce(m.space_id, p.space_id)"
+                f" WHERE {mcond}" + (" AND s.id = ?" if space_id else "") + " LIMIT ?",
+                (*[f"%{w}%" for w in words], *([space_id] if space_id else []), limit),
+            ):
+                line = next((ln.strip() for ln in r["body"].splitlines() if words[0] in ln.lower()), "")
+                owner = r["project_id"] or r["space_id"]
+                title = f"Mémo · {r['project_name'] or r['space_name']}"
+                scored.append((-0.6, SearchHit("memo", owner, title, line[:160], r["space_id"], r["project_id"])))
         scored.sort(key=lambda item: item[0])
         return [hit for _, hit in scored[:limit]]
 
@@ -2445,6 +2470,57 @@ class ModelStore:
             by_space[c.block.space_id] = by_space.get(c.block.space_id, 0) + c.counted_seconds
             by_project[c.block.project_id] = by_project.get(c.block.project_id, 0) + c.counted_seconds
         return DayReport(day, counted, presence_seconds(spans), by_space, by_project, stale)
+
+    # ------------------------------------------------------------ memos
+
+    def _memo_row(self, owner_id: str) -> tuple[str, str, sqlite3.Row | None]:
+        """(column, owner id, row) for a space or a project."""
+        if self.conn.execute("SELECT 1 FROM spaces WHERE id = ?", (owner_id,)).fetchone():
+            column = "space_id"
+        elif self.conn.execute("SELECT 1 FROM projects WHERE id = ?", (owner_id,)).fetchone():
+            column = "project_id"
+        else:
+            raise NotFoundError(f"no space or project {owner_id}")
+        return column, owner_id, self.conn.execute(f"SELECT * FROM memos WHERE {column} = ?", (owner_id,)).fetchone()
+
+    def memo(self, owner_id: str) -> Memo:
+        column, owner, row = self._memo_row(owner_id)
+        if row is None:
+            return Memo(None, owner if column == "space_id" else None, owner if column == "project_id" else None,
+                        "", 0, None)
+        return cast(Memo, _row_to(Memo, row))
+
+    def save_memo(self, owner_id: str, body: str, *, expected_revision: int | None = None) -> Memo:
+        """Write the memo; the text it replaces is kept (the last 50)."""
+        body = body.rstrip()
+        with self._tx():
+            column, owner, row = self._memo_row(owner_id)
+            current = 0 if row is None else int(row["revision"])
+            if expected_revision is not None and expected_revision != current:
+                raise ConflictError(f"memo changed elsewhere (revision {current}, expected {expected_revision})")
+            now = _utc(_now())
+            if row is None:
+                self.conn.execute(
+                    f"INSERT INTO memos(id, {column}, body, revision, updated_at) VALUES (?, ?, ?, 1, ?)",
+                    (_new_id(), owner, body, now))
+            elif row["body"] != body:
+                if row["body"].strip():
+                    self.conn.execute("INSERT INTO memo_versions(memo_id, body, saved_at) VALUES (?, ?, ?)",
+                                      (row["id"], row["body"], row["updated_at"]))
+                    self.conn.execute(
+                        "DELETE FROM memo_versions WHERE memo_id = ? AND id NOT IN"
+                        " (SELECT id FROM memo_versions WHERE memo_id = ? ORDER BY id DESC LIMIT 50)",
+                        (row["id"], row["id"]))
+                self.conn.execute("UPDATE memos SET body = ?, revision = revision + 1, updated_at = ? WHERE id = ?",
+                                  (body, now, row["id"]))
+            return self.memo(owner_id)
+
+    def memo_versions(self, owner_id: str) -> list[dict[str, Any]]:
+        _, _, row = self._memo_row(owner_id)
+        if row is None:
+            return []
+        return [dict(r) for r in self.conn.execute(
+            "SELECT body, saved_at FROM memo_versions WHERE memo_id = ? ORDER BY id DESC", (row["id"],))]
 
     # ------------------------------------------------------------ files
 

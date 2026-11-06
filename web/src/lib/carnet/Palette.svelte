@@ -151,6 +151,14 @@
 								: `${h.project_id ? `/projets/${h.project_id}` : `/espaces/${h.space_id}`}?tache=${h.id}`
 						)
 				});
+			} else if (h.kind === 'memo') {
+				out.push({
+					key: `memo:${h.id}`,
+					group: 'Mémos',
+					label: h.title,
+					snippet: h.snippet || undefined,
+					run: () => go(`${h.project_id ? `/projets/${h.project_id}` : `/espaces/${h.space_id}`}#memo`)
+				});
 			} else if (h.kind === 'mail') {
 				out.push({
 					key: `mail:${h.id}`,

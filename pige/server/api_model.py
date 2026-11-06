@@ -164,6 +164,11 @@ class EntryIn(_In):
     file_ids: list[Annotated[str, Field(pattern=HEX)]] = Field(default_factory=list, max_length=30)  # images
 
 
+class MemoIn(_In):
+    body: str = Field(max_length=50_000)
+    expected_revision: int = Field(ge=0)  # 0: not written yet; protects edits made on another device
+
+
 class EntryPatch(_In):
     expected_revision: int = Field(ge=1)  # required: protects edits made on another device
     autosave: bool = False  # saving while typing: versions only after a pause
@@ -346,6 +351,20 @@ def build_router(store: ModelStore, require_auth: Callable[..., str], default_ti
         limit: int = Query(default=50, ge=1, le=200),
     ) -> list[dict[str, Any]]:
         return _out(store.search(q, limit=limit, space_id=space_id, include_done_tasks=include_done))
+
+    # ------------------------------------------------------------ memos
+
+    @router.get("/memos/{owner_id}")
+    def get_memo(owner_id: IdPath) -> dict[str, Any]:
+        return _out(store.memo(owner_id))
+
+    @router.put("/memos/{owner_id}")
+    def save_memo(owner_id: IdPath, body: MemoIn) -> dict[str, Any]:
+        return _out(store.save_memo(owner_id, body.body, expected_revision=body.expected_revision))
+
+    @router.get("/memos/{owner_id}/versions")
+    def memo_versions(owner_id: IdPath) -> list[dict[str, Any]]:
+        return store.memo_versions(owner_id)
 
     # ------------------------------------------------------------ spaces
 
