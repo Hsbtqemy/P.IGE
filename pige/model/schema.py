@@ -518,6 +518,29 @@ MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE day_frames ADD COLUMN picked_up INTEGER NOT NULL DEFAULT 0 CHECK (picked_up IN (0, 1));
     """,
+    # ------------------------------------------------------------------ 18
+    # Memos: a few lines kept at hand for a space or a project (addresses, user names, numbers,
+    # what not to forget), not dated. Their earlier texts are kept (memo_versions).
+    """
+    CREATE TABLE memos (
+        id          TEXT PRIMARY KEY,
+        space_id    TEXT REFERENCES spaces(id) ON DELETE CASCADE,
+        project_id  TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        body        TEXT NOT NULL DEFAULT '',
+        revision    INTEGER NOT NULL DEFAULT 1,
+        updated_at  TEXT NOT NULL,
+        CHECK ((space_id IS NULL) != (project_id IS NULL))
+    );
+    CREATE UNIQUE INDEX memos_space ON memos(space_id) WHERE space_id IS NOT NULL;
+    CREATE UNIQUE INDEX memos_project ON memos(project_id) WHERE project_id IS NOT NULL;
+    CREATE TABLE memo_versions (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        memo_id   TEXT NOT NULL REFERENCES memos(id) ON DELETE CASCADE,
+        body      TEXT NOT NULL,
+        saved_at  TEXT NOT NULL
+    );
+    CREATE INDEX memo_versions_memo ON memo_versions(memo_id, id);
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

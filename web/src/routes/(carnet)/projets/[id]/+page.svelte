@@ -10,6 +10,7 @@
 	import ProjectPeople from '#lib/carnet/ProjectPeople.svelte';
 	import CodePanel from '#lib/carnet/CodePanel.svelte';
 	import ConversationList from '#lib/carnet/ConversationList.svelte';
+	import Memo from '#lib/carnet/Memo.svelte';
 	import { carnet, failure, isDay, projectOf, reload, spaceOf, todayIso } from '#lib/carnet/state.svelte.js';
 
 	let id = $derived(page.params.id ?? '');
@@ -503,6 +504,8 @@
 					</select>
 				</label>
 			</div>
+			<Memo ownerId={project.id} />
+			<Memo ownerId={project.space_id} label="Mémo de {spaceOf(project.space_id)?.name ?? 'l’espace'}" folded />
 			<ProjectPeople {project} onchange={(p) => (project = p)} />
 			<CodePanel projectId={project.id} />
 			{#if editingDesc}
