@@ -200,6 +200,17 @@
 	}
 </script>
 
+{#snippet carryNote()}
+	{#if frame?.from_before}
+		<div class="carry">
+			<span class="label">À reprendre</span> <small>(noté le {longDate(frame.from_before.day).toLocaleLowerCase('fr')})</small>
+			<button class="plain link done-carry" disabled={busy} onclick={() => save({ picked_up: true }, 'Non enregistré')}
+				title="C’est repris : ne plus l’afficher">✓ Repris</button>
+			<br />{frame.from_before.text}
+		</div>
+	{/if}
+{/snippet}
+
 {#snippet priorities(closingView: boolean)}
 	{#if frame && (frame.priorities.length || phase !== 'closed' || closingView)}
 		<div class="prios">
@@ -279,7 +290,7 @@
 			{#if day > todayIso()}
 				<div class="head"><h3>À venir</h3></div>
 				{#if frame.from_before}
-					<p class="carry"><span class="label">À reprendre</span> <small>(noté le {longDate(frame.from_before.day).toLocaleLowerCase('fr')})</small><br />{frame.from_before.text}</p>
+					{@render carryNote()}
 				{/if}
 				{@render priorities(false)}
 			{:else if isToday}
@@ -288,7 +299,7 @@
 					{#if span}<small>Activité depuis {hhmm(span.start)}</small>{/if}
 				</div>
 				{#if frame.from_before}
-					<p class="carry"><span class="label">À reprendre</span> <small>(noté le {longDate(frame.from_before.day).toLocaleLowerCase('fr')})</small><br />{frame.from_before.text}</p>
+					{@render carryNote()}
 				{/if}
 				{@render priorities(false)}
 				<div class="row">
@@ -333,6 +344,7 @@
 				</div>
 				<button class="btn primary" onclick={openClosing}>Clore la journée</button>
 			</div>
+			{@render carryNote()}
 			{@render priorities(false)}
 		{:else if phase === 'closed' && span}
 			<div class="head">
@@ -399,6 +411,10 @@
 	}
 	.carry.review {
 		background: var(--softer);
+	}
+	.done-carry {
+		float: right;
+		margin-left: 8px;
 	}
 	.carry {
 		margin: 0;
