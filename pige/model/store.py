@@ -319,6 +319,7 @@ class DayFrame:
     priorities: list[dict[str, Any]]
     tomorrow: str
     review: str = ""  # the day's review, written when closing it
+    picked_up: bool = False  # « À reprendre » dealt with that day
 
 
 @dataclass(frozen=True)
@@ -2703,6 +2704,7 @@ class ModelStore:
             json.loads(row["priorities"]),
             row["tomorrow"],
             row["review"],
+            bool(row["picked_up"]),
         )
 
     _UNSET: Any = object()
@@ -2716,6 +2718,7 @@ class ModelStore:
         priorities: list[dict[str, Any]] | None = None,
         tomorrow: str | None = None,
         review: str | None = None,
+        picked_up: bool | None = None,
     ) -> DayFrame:
         """Change what is given (None clears a time); the rest stays."""
         with self._tx():
@@ -2733,13 +2736,14 @@ class ModelStore:
             items = current.priorities if priorities is None else [self._priority(p) for p in priorities]
             note = current.tomorrow if tomorrow is None else tomorrow.strip()
             text = current.review if review is None else review.strip()
+            seen = current.picked_up if picked_up is None else picked_up
             self.conn.execute(
-                "INSERT INTO day_frames(day, started_at, ended_at, priorities, tomorrow, review, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(day) DO UPDATE SET started_at = excluded.started_at,"
+                "INSERT INTO day_frames(day, started_at, ended_at, priorities, tomorrow, review, picked_up, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(day) DO UPDATE SET started_at = excluded.started_at,"
                 " ended_at = excluded.ended_at, priorities = excluded.priorities, tomorrow = excluded.tomorrow,"
-                " review = excluded.review, updated_at = excluded.updated_at",
+                " review = excluded.review, picked_up = excluded.picked_up, updated_at = excluded.updated_at",
                 (day.isoformat(), _utc(start) if start else None, _utc(end) if end else None,
-                 json.dumps(items, ensure_ascii=False), note, text, _utc(_now())),
+                 json.dumps(items, ensure_ascii=False), note, text, int(seen), _utc(_now())),
             )
             return self.day_frame(day)
 
@@ -2753,12 +2757,21 @@ class ModelStore:
         return {"text": text, "task_id": task_id, "done": bool(item.get("done")), "carried": bool(item.get("carried"))}
 
     def previous_tomorrow(self, day: date, *, within: int = 14) -> DayFrame | None:
-        """The last earlier day (within ``within`` days) that left something for « demain »."""
+        """What an earlier day (within ``within`` days) left for « demain », while it is still
+        to pick up: until a later day was started, or the note marked « repris » (that day
+        included)."""
         row = self.conn.execute(
             "SELECT day FROM day_frames WHERE day < ? AND day >= ? AND tomorrow != '' ORDER BY day DESC LIMIT 1",
             (day.isoformat(), (day - timedelta(days=within)).isoformat()),
         ).fetchone()
-        return self.day_frame(date.fromisoformat(row["day"])) if row else None
+        if row is None:
+            return None
+        dealt = self.conn.execute(
+            "SELECT 1 FROM day_frames WHERE (day > ? AND day < ? AND (started_at IS NOT NULL OR picked_up = 1))"
+            " OR (day = ? AND picked_up = 1) LIMIT 1",
+            (row["day"], day.isoformat(), day.isoformat()),
+        ).fetchone()
+        return None if dealt else self.day_frame(date.fromisoformat(row["day"]))
 
     def day_traces(self, day: date, tz: tzinfo) -> tuple[datetime, datetime] | None:
         """First and last sign of work on a local day: entries written, time counted, tasks

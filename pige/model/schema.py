@@ -513,6 +513,11 @@ MIGRATIONS: tuple[str, ...] = (
     """
     ALTER TABLE day_frames ADD COLUMN review TEXT NOT NULL DEFAULT '';
     """,
+    # ------------------------------------------------------------------ 17
+    # « À reprendre » seen and dealt with on that day: no longer shown, then or after.
+    """
+    ALTER TABLE day_frames ADD COLUMN picked_up INTEGER NOT NULL DEFAULT 0 CHECK (picked_up IN (0, 1));
+    """,
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

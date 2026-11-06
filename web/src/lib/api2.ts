@@ -283,6 +283,7 @@ export interface FramePatch {
 	priorities?: { text: string; task_id: string | null; done: boolean; carried?: boolean }[];
 	tomorrow?: string;
 	review?: string;
+	picked_up?: boolean;
 }
 
 export interface Target {

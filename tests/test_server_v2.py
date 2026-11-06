@@ -714,3 +714,17 @@ def test_a_mail_to_answer_until_the_reply_is_sent(client, tree):
     assert ok(client.get(f"/api/v2/conversations/{conv['id']}"))["state"] == "to_answer"
     assert client.post("/api/v2/mails/sent", json={**sent, "message_id": "<x@me>", "references": ["<unknown@x>"]}).status_code == 404
     assert mail["id"]
+
+
+def test_a_note_for_tomorrow_stops_once_picked_up(client, tree):
+    ok(client.patch("/api/v2/days/2026-10-12/frame", json={"tomorrow": "Relancer Paul"}))
+    for day in ("2026-10-13", "2026-10-14"):  # not started: still to pick up
+        assert ok(client.get(f"/api/v2/days/{day}/frame"))["from_before"]["text"] == "Relancer Paul"
+    ok(client.patch("/api/v2/days/2026-10-14/frame", json={"started_at": "2026-10-14T08:00:00+02:00"}))
+    assert ok(client.get("/api/v2/days/2026-10-14/frame"))["from_before"]["text"] == "Relancer Paul"  # that day
+    assert ok(client.get("/api/v2/days/2026-10-15/frame"))["from_before"] is None  # a day was started since
+    ok(client.patch("/api/v2/days/2026-10-16/frame", json={"tomorrow": "Finir le CR"}))
+    assert ok(client.get("/api/v2/days/2026-10-17/frame"))["from_before"]["text"] == "Finir le CR"
+    ok(client.patch("/api/v2/days/2026-10-17/frame", json={"picked_up": True}))  # « Repris »
+    assert ok(client.get("/api/v2/days/2026-10-17/frame"))["from_before"] is None
+    assert ok(client.get("/api/v2/days/2026-10-18/frame"))["from_before"] is None
