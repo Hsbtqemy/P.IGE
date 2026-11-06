@@ -95,3 +95,22 @@ def test_attachments_of_a_mail_are_kept_once_and_downloaded(setup):
     full = c.get(f"/api/v2/conversations/{convs[0]['id']}").json()
     assert [x["name"] for x in full["mails"][0]["files"]] == ["convention signée.pdf", "page.html"]
     assert c.post("/api/v2/files?attachment=1&name=x.pdf", content=pdf).status_code == 400  # belongs to a mail
+
+
+def test_the_attachments_of_a_project_listed_together(setup):
+    c, root, space = setup
+    project = c.post("/api/v2/projects", json={"space_id": space["id"], "name": "Convention"}).json()
+    mail = c.post("/api/v2/entries", json={"entry_date": "2026-11-04", "project_id": project["id"], "title": "Convention",
+                                           "body": "Mail de Service juridique\n\nCi-joint.", "source": "mail",
+                                           "mail_message_id": "<c2@x>"}).json()
+    c.post(f"/api/v2/files?attachment=1&entry_id={mail['id']}&name=convention.pdf", content=b"%PDF-1 a")
+    task = c.post("/api/v2/tasks", json={"title": "Signer", "project_id": project["id"], "origin_entry_id": mail["id"]}).json()
+    follow = c.post("/api/v2/mail-followups", json={
+        "message_id": "<c3@x>", "references": ["<c2@x>"], "direction": "received", "sent_at": "2026-11-05T10:00:00+01:00",
+        "day": "2026-11-05", "author": "Service juridique", "subject": "Re: Convention", "body": "Version signée"}).json()
+    c.post(f"/api/v2/files?attachment=1&task_mail_id={follow['mail']['id']}&name=signee.pdf", content=b"%PDF-1 b")
+    listed = c.get(f"/api/v2/attachments?project_id={project['id']}").json()
+    assert [(a["name"], a["day"], a["author"], a["subject"]) for a in listed] == [
+        ("signee.pdf", "2026-11-05", "Service juridique", "Convention"),
+        ("convention.pdf", "2026-11-04", "Service juridique", "Convention")]
+    assert task["id"] and c.get("/api/v2/attachments").status_code == 400

@@ -199,6 +199,22 @@ def build_files_router(store: ModelStore, files: FileStore, require_auth: Callab
         files.remove(f.id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+    @router.get("/attachments")
+    def attachments(
+        project_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{32}$"),
+        space_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{32}$"),
+        without_project: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Every attachment kept from the mails of a project (or of a space without project)."""
+        if project_id is None and space_id is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Un projet ou un espace")
+        return [
+            {"id": r["id"], "name": r["name"], "mime": r["mime"], "size": r["size"], "url": f"/api/v2/files/{r['id']}",
+             "day": r["mail_day"], "author": (r["mail_author"] or "").strip(),
+             "conversation_id": r["conversation_id"], "subject": r["conversation_subject"]}
+            for r in store.mail_attachments(project_id=project_id, space_id=space_id, without_project=without_project)
+        ]
+
     @router.get("/files")
     def list_files(
         entry_id: str | None = Query(default=None, pattern=r"^[0-9a-f]{32}$"),

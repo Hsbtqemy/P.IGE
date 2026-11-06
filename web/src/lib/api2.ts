@@ -336,6 +336,19 @@ export interface FileRef {
 	url: string;
 }
 
+/** An attachment kept from a mail, with the conversation it came in. */
+export interface KeptAttachment {
+	id: string;
+	name: string;
+	mime: string;
+	size: number;
+	url: string;
+	day: string;
+	author: string;
+	conversation_id: string;
+	subject: string;
+}
+
 export interface ConversationMail {
 	id: string;
 	kind: 'entry' | 'followup';
@@ -558,6 +571,8 @@ export const v2 = {
 	conversation: (id: string) => request<Conversation & { mails: ConversationMail[] }>('GET', `/api/v2/conversations/${id}`),
 	setConversationState: (id: string, state: ConversationState) =>
 		request<Conversation>('PATCH', `/api/v2/conversations/${id}`, { state }),
+	attachments: (params: { project_id?: string; space_id?: string; without_project?: boolean }) =>
+		request<KeptAttachment[]>('GET', `/api/v2/attachments?${q(params)}`),
 	countEvent: (id: string, target: Target) =>
 		request<{ block_id: string; created: boolean; event: AgendaEvent }>('POST', `/api/v2/agenda/${id}/count`, target),
 	tasksInProgress: () => request<Task[]>('GET', '/api/v2/tasks/in-progress'),
