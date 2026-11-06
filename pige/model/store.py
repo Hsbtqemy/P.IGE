@@ -2471,6 +2471,31 @@ class ModelStore:
             " AND size = ?", (entry_id, task_mail_id, name.strip()[:200], size)).fetchone()
         return cast(StoredFile, _row_to(StoredFile, row)) if row else None
 
+    def mail_attachments(self, *, project_id: str | None = None, space_id: str | None = None,
+                         without_project: bool = False, limit: int = 300) -> list[dict[str, Any]]:
+        """The attachments kept from the mails of a project (and its sub-projects) or of a space,
+        the most recent first, with the conversation each came in."""
+        where, params = [], []
+        if project_id is not None:
+            where.append("(c.project_id = ? OR c.project_id IN (SELECT id FROM projects WHERE parent_id = ?))")
+            params += [project_id, project_id]
+        if space_id is not None:
+            where.append("c.space_id = ?")
+            params.append(space_id)
+        if without_project:
+            where.append("c.project_id IS NULL")
+        rows = self.conn.execute(
+            "SELECT f.*, c.id AS conversation_id, c.subject AS conversation_subject,"
+            " coalesce(e.entry_date, m.day) AS mail_day,"
+            " coalesce(m.author, substr(e.body, 9, instr(e.body || char(10), char(10)) - 9)) AS mail_author"
+            " FROM files f LEFT JOIN entries e ON e.id = f.entry_id LEFT JOIN task_mails m ON m.id = f.task_mail_id"
+            " JOIN conversations c ON c.id = coalesce(e.conversation_id, m.conversation_id)"
+            f" WHERE f.kind = 'attachment'{''.join(' AND ' + w for w in where)}"
+            " ORDER BY mail_day DESC, f.created_at DESC LIMIT ?",
+            (*params, int(limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def files_for_mails(self, task_mail_ids: Sequence[str]) -> dict[str, list[StoredFile]]:
         out: dict[str, list[StoredFile]] = {m: [] for m in task_mail_ids}
         if not task_mail_ids:

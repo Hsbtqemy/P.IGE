@@ -4,7 +4,7 @@
 	// A click unfolds the thread, readable without Thunderbird.
 	import { tick } from 'svelte';
 	import { page } from '$app/state';
-	import { v2, type Conversation, type ConversationMail, type ConversationState } from '../api2.js';
+	import { v2, type Conversation, type ConversationMail, type ConversationState, type KeptAttachment } from '../api2.js';
 	import MailOpen from './MailOpen.svelte';
 	import Attachments from './Attachments.svelte';
 	import { failure } from './state.svelte.js';
@@ -19,6 +19,9 @@
 	let unfolded = $state(new Set<string>());
 	let showAll = $state(false);
 	const FIRST = 8;
+	// « Pièces jointes »: every file kept from these mails, in one list.
+	let view = $state<'conversations' | 'files'>('conversations');
+	let files = $state<KeptAttachment[]>([]);
 
 	const STATES: Record<ConversationState, string> = {
 		none: '',
@@ -44,8 +47,24 @@
 		void spaceId;
 		list = null;
 		openId = null;
+		files = [];
+		view = 'conversations';
 		void load('');
+		const params = projectId ? { project_id: projectId } : { space_id: spaceId, without_project: true };
+		v2.attachments(params)
+			.then((found) => (files = found))
+			.catch(() => (files = []));
 	});
+
+	function showConversation(id: string) {
+		view = 'conversations';
+		const c = list?.find((x) => x.id === id);
+		if (!c) return;
+		showAll = true;
+		if (openId !== id) void toggle(c);
+		void tick().then(() => document.getElementById(`conv-${id}`)?.scrollIntoView({ block: 'center' }));
+	}
+	const fileSize = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} Ko` : `${(n / 1024 / 1024).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mo`);
 
 	function search() {
 		clearTimeout(timer);
@@ -110,7 +129,24 @@
 <section class="mails" aria-labelledby="mails-title">
 	<h2 id="mails-title">
 		Mails <small>{list ? `${list.length} conversation${list.length > 1 ? 's' : ''}` : ''}</small>
+		{#if files.length}
+			<span class="tabs" role="group" aria-label="Affichage">
+				<button class:on={view === 'conversations'} aria-pressed={view === 'conversations'} onclick={() => (view = 'conversations')}>Conversations</button>
+				<button class:on={view === 'files'} aria-pressed={view === 'files'} onclick={() => (view = 'files')}>Pièces jointes <small>{files.length}</small></button>
+			</span>
+		{/if}
 	</h2>
+	{#if view === 'files'}
+		<ul class="kept">
+			{#each files as f (f.id)}
+				<li>
+					<a class="name" href={f.url} download={f.name} title="Télécharger">📎 {f.name}</a>
+					<small>{fileSize(f.size)} · {date(f.day)}{#if f.author}{' · '}{f.author.replace(/\s*<[^>]*>/, '')}{/if}</small>
+					<button class="from" onclick={() => showConversation(f.conversation_id)} title="Voir le mail">{f.subject || '(sans objet)'}</button>
+				</li>
+			{/each}
+		</ul>
+	{:else}
 	{#if list && (list.length > 3 || query)}
 		<input class="search" bind:value={query} oninput={search} placeholder="Chercher dans les mails (objet, personne, texte)" aria-label="Chercher dans les mails" />
 	{/if}
@@ -176,6 +212,7 @@
 			<button class="more" onclick={() => (showAll = true)}>Voir les {list.length} conversations</button>
 		{/if}
 	{/if}
+	{/if}
 </section>
 
 <style>
@@ -191,6 +228,69 @@
 		font-weight: 400;
 		color: var(--muted);
 		font-size: 0.8125rem;
+	}
+	.tabs {
+		display: inline-flex;
+		margin-left: 10px;
+		border: 1px solid var(--line);
+		border-radius: 6px;
+		overflow: hidden;
+		vertical-align: middle;
+	}
+	.tabs button {
+		padding: 2px 10px;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-family: var(--sans);
+		font-size: 0.75rem;
+		font-weight: 400;
+		color: var(--muted);
+		cursor: pointer;
+	}
+	.tabs button.on {
+		background: var(--soft);
+		color: var(--ink);
+		font-weight: 700;
+	}
+	.kept {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.kept li {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 2px 12px;
+		padding: 7px 0;
+		border-bottom: 1px solid var(--line);
+		font-family: var(--sans);
+		font-size: 0.875rem;
+	}
+	.kept .name {
+		color: var(--accent);
+		overflow-wrap: anywhere;
+	}
+	.kept .from {
+		grid-column: 1 / -1;
+		justify-self: start;
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		font-size: 0.8125rem;
+		color: var(--muted);
+		text-align: left;
+		cursor: pointer;
+	}
+	.kept .from::before {
+		content: 'dans « ';
+	}
+	.kept .from::after {
+		content: ' »';
+	}
+	.kept .from:hover {
+		text-decoration: underline;
 	}
 	.search {
 		font: inherit;
